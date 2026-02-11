@@ -1915,7 +1915,7 @@ Return ONLY the JSON object, no other text."""
                     # Preserve order: keep existing skills first, then add new ones (avoiding duplicates)
                     existing_set = set(existing_skillset)
                     merged_skillset = existing_skillset + [skill for skill in confirmed_skills if skill not in existing_set]
-                    skillset_json = json.dumps(merged_skillset, ensure_ascii=False)
+                    skillset_str = ", ".join(merged_skillset)  # Store as comma-separated string, not JSON array
                     
                     # Check if vskillset column exists
                     cur.execute("""
@@ -1940,7 +1940,7 @@ Return ONLY the JSON object, no other text."""
                         if 'vskillset' in available_cols:
                             update_values.append(vskillset_json)
                         if 'skillset' in available_cols:
-                            update_values.append(skillset_json)
+                            update_values.append(skillset_str)
                         update_values.append(normalized)
                         
                         cur.execute(update_sql, tuple(update_values))
@@ -2474,11 +2474,11 @@ Return ONLY the JSON object, no other text."""
         
         # Persist to database
         # 1. Store full annotated results in vskillset column (JSON)
-        # 2. Store only High skills in skillset column
+        # 2. Store only High skills in skillset column as comma-separated string
         
         vskillset_json = json.dumps(results, ensure_ascii=False)
         confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
-        skillset_json = json.dumps(confirmed_skills, ensure_ascii=False)
+        skillset_str = ", ".join(confirmed_skills)  # Store as comma-separated string, not JSON array
         
         # Check if vskillset column exists
         cur.execute("""
@@ -2503,7 +2503,7 @@ Return ONLY the JSON object, no other text."""
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
             if 'skillset' in available_cols:
-                update_values.append(skillset_json)
+                update_values.append(skillset_str)
             update_values.extend([normalized, normalized])
             
             cur.execute(update_sql, tuple(update_values))
@@ -6890,7 +6890,7 @@ Return ONLY the JSON object, no other text."""
             
             vskillset_json = json.dumps(results, ensure_ascii=False)
             confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
-            skillset_json = json.dumps(confirmed_skills, ensure_ascii=False)
+            skillset_str = ", ".join(confirmed_skills)  # Store as comma-separated string, not JSON array
             
             # Check if vskillset column exists
             cur.execute("""
@@ -6906,9 +6906,9 @@ Return ONLY the JSON object, no other text."""
                 cur.execute("UPDATE process SET vskillset = %s WHERE linkedinurl = %s", (vskillset_json, linkedinurl))
                 logger.info(f"[vskillset_gen] Persisted vskillset for {linkedinurl[:50]}")
             
-            # Update skillset with High skills only
+            # Update skillset with High skills only as comma-separated string
             if 'skillset' in available_cols:
-                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_json, linkedinurl))
+                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_str, linkedinurl))
                 logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
             
             conn.commit()
