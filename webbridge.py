@@ -1915,7 +1915,8 @@ Return ONLY the JSON object, no other text."""
                     # Preserve order: keep existing skills first, then add new ones (avoiding duplicates)
                     existing_set = set(existing_skillset)
                     merged_skillset = existing_skillset + [skill for skill in confirmed_skills if skill not in existing_set]
-                    skillset_json = json.dumps(merged_skillset, ensure_ascii=False)
+                    # Ensure all skills are strings before joining
+                    skillset_str = ", ".join([str(s) for s in merged_skillset if s])
                     
                     # Check if vskillset column exists
                     cur.execute("""
@@ -1940,7 +1941,7 @@ Return ONLY the JSON object, no other text."""
                         if 'vskillset' in available_cols:
                             update_values.append(vskillset_json)
                         if 'skillset' in available_cols:
-                            update_values.append(skillset_json)
+                            update_values.append(skillset_str)
                         update_values.append(normalized)
                         
                         cur.execute(update_sql, tuple(update_values))
@@ -2474,11 +2475,12 @@ Return ONLY the JSON object, no other text."""
         
         # Persist to database
         # 1. Store full annotated results in vskillset column (JSON)
-        # 2. Store only High skills in skillset column
+        # 2. Store only High skills in skillset column as comma-separated string
         
         vskillset_json = json.dumps(results, ensure_ascii=False)
         confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
-        skillset_json = json.dumps(confirmed_skills, ensure_ascii=False)
+        # Ensure all skills are strings before joining
+        skillset_str = ", ".join([str(s) for s in confirmed_skills if s])
         
         # Check if vskillset column exists
         cur.execute("""
@@ -2503,7 +2505,7 @@ Return ONLY the JSON object, no other text."""
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
             if 'skillset' in available_cols:
-                update_values.append(skillset_json)
+                update_values.append(skillset_str)
             update_values.extend([normalized, normalized])
             
             cur.execute(update_sql, tuple(update_values))
@@ -4107,7 +4109,13 @@ def sourcing_list():
         resp = {"rows": rows}
         if use_paging:
             resp.update({"page": page, "page_size": page_size, "total": total})
-        return jsonify(resp)
+        
+        # Add no-cache headers to ensure fresh data after assessments
+        response = jsonify(resp)
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         logger.warning(f"[Sourcing List] {e}")
         return jsonify({"error": str(e)}), 500
@@ -4978,17 +4986,34 @@ def process_geography():
                         result["geographic"] = inferred
 
                 cur.close(); conn.close()
-                return jsonify(result), 200
+                # Add no-cache headers to ensure fresh data after assessments
+                response = jsonify(result)
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response.headers['Pragma'] = 'no-cache'
+                response.headers['Expires'] = '0'
+                return response, 200
 
         cur.close(); conn.close()
         if not row:
-            return jsonify(None), 404
+            # Add no-cache headers even for 404 responses
+            response = jsonify(None)
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response, 404
 
         result = {}
         for idx, col in enumerate(selected):
             val = row[idx]
             if col == 'cv':
                  result[col] = bool(val)
+            elif col == 'seniority':
+                 # Add "-level" suffix for UI display if not already present
+                 seniority_val = val if val is not None else ""
+                 if seniority_val and not seniority_val.endswith('-level'):
+                     result[col] = seniority_val + '-level'
+                 else:
+                     result[col] = seniority_val
             else:
                  result[col] = val if val is not None else ""
 
@@ -5002,7 +5027,12 @@ def process_geography():
             if inferred:
                 result["geographic"] = inferred
 
-        return jsonify(result), 200
+        # Add no-cache headers to ensure fresh data after assessments
+        response = jsonify(result)
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response, 200
     except Exception as e:
         logger.warning(f"[Process Geography] {e}")
         try:
@@ -5462,6 +5492,19 @@ def process_download_cv():
         logger.error(f"[Download CV] {e}")
         return f"Error: {str(e)}", 500
 
+def _strip_level_suffix(seniority: str) -> str:
+    """
+    Strip '-level' suffix from seniority for database storage.
+    Example: 'Mid-level' -> 'Mid', 'Senior-level' -> 'Senior'
+    
+    This ensures DB stores clean values without '-level' suffix.
+    UI layer should add 'level' back when displaying.
+    """
+    if not seniority:
+        return ""
+    # Remove '-level' suffix (lowercase only, as normalized values use consistent casing)
+    return re.sub(r'-level$', '', seniority).strip()
+
 def _normalize_seniority_to_8_levels(seniority_text: str, total_experience_years=None) -> str:
     """
     Normalize freeform seniority to one of the 8 specified levels:
@@ -5690,9 +5733,10 @@ def _analyze_cv_bytes_sync(pdf_bytes):
                      else:
                          obj[field] = value
              
-             # Normalize seniority to one of the 8 specified levels
+             # Normalize seniority to one of the 8 specified levels, then strip '-level' suffix for DB storage
              if obj.get('seniority'):
-                 obj['seniority'] = _normalize_seniority_to_8_levels(obj['seniority'], obj.get('total_experience_years'))
+                 normalized_seniority = _normalize_seniority_to_8_levels(obj['seniority'], obj.get('total_experience_years'))
+                 obj['seniority'] = _strip_level_suffix(normalized_seniority)
 
         return obj
     except Exception as e:
@@ -6459,6 +6503,13 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         job_title = obj.get("job_title", "")
         country = obj.get("country", "")
         
+        # Log product extraction for debugging
+        if product_list and len(product_list) > 0:
+            truncated = '...' if len(product_list) > 3 else ''
+            logger.info(f"[CV BG] Extracted {len(product_list)} products for {linkedinurl[:50]}: {product_list[:3]}{truncated}")
+        else:
+            logger.warning(f"[CV BG] No products extracted for {linkedinurl[:50]} (company: {company})")
+        
         # Create skillset string without length limits (DB columns now TEXT type)
         skillset_raw = ",".join([str(s).strip() for s in skillset if str(s).strip()])
         skillset_str = skillset_raw
@@ -6851,7 +6902,8 @@ Return ONLY the JSON object, no other text."""
             
             vskillset_json = json.dumps(results, ensure_ascii=False)
             confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
-            skillset_json = json.dumps(confirmed_skills, ensure_ascii=False)
+            # Ensure all skills are strings before joining
+            skillset_str = ", ".join([str(s) for s in confirmed_skills if s])
             
             # Check if vskillset column exists
             cur.execute("""
@@ -6867,9 +6919,9 @@ Return ONLY the JSON object, no other text."""
                 cur.execute("UPDATE process SET vskillset = %s WHERE linkedinurl = %s", (vskillset_json, linkedinurl))
                 logger.info(f"[vskillset_gen] Persisted vskillset for {linkedinurl[:50]}")
             
-            # Update skillset with High skills only
+            # Update skillset with High skills only as comma-separated string
             if 'skillset' in available_cols:
-                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_json, linkedinurl))
+                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_str, linkedinurl))
                 logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
             
             conn.commit()
@@ -6986,6 +7038,14 @@ def process_bulk_assess():
                         product = json.loads(product_str) if product_str.startswith('[') else [s.strip() for s in product_str.split(',') if s.strip()]
                     except:
                         product = [s.strip() for s in product_str.split(',') if s.strip()]
+                    
+                    # Log product loading regardless of whether list is empty
+                    if product:
+                        logger.info(f"[BULK_ASSESS] Loaded {len(product)} products from DB for {linkedinurl[:50]}")
+                    else:
+                        logger.info(f"[BULK_ASSESS] Product field exists but is empty for {linkedinurl[:50]}")
+                else:
+                    logger.info(f"[BULK_ASSESS] No product data in DB for {linkedinurl[:50]}")
             
             # Check if CV is uploaded - if not, skip assessment
             if not cv_data:
