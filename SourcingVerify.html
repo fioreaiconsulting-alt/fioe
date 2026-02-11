@@ -2196,6 +2196,8 @@ async function getProcessGeography(linkedinurl) {
   }
 
   // Constants for retry logic - defined outside tryFetch for performance
+  // Using linear backoff (1s, 2s, 3s) instead of exponential (1s, 2s, 4s)
+  // Linear backoff is gentler on the server and provides adequate retry spacing for transient errors
   const MAX_RETRIES = 3;
   const RETRY_DELAY_MS = 1000;
 
@@ -4346,6 +4348,44 @@ function renderTable(){
     });
   }
 
+  /* Helper function to create error/warning notices in View Details tab */
+  function createViewDetailsNotice(config) {
+    const { type, title, message, reasons, instructions } = config;
+    const isWarning = type === 'warning';
+    
+    const errorNotice = document.createElement('div');
+    errorNotice.style.cssText = isWarning
+      ? 'background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin: 16px 0; color: #92400e; font-size: 14px;'
+      : 'background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin: 16px 0; color: #991b1b; font-size: 14px;';
+    
+    // Create title
+    const titleEl = document.createElement('strong');
+    titleEl.textContent = title;
+    errorNotice.appendChild(titleEl);
+    errorNotice.appendChild(document.createElement('br'));
+    
+    // Add main message
+    if (message) {
+      errorNotice.appendChild(document.createTextNode(message));
+      errorNotice.appendChild(document.createElement('br'));
+    }
+    
+    // Add reasons if provided
+    if (reasons && Array.isArray(reasons)) {
+      reasons.forEach(reason => {
+        errorNotice.appendChild(document.createTextNode('• ' + reason));
+        errorNotice.appendChild(document.createElement('br'));
+      });
+    }
+    
+    // Add instructions
+    if (instructions) {
+      errorNotice.appendChild(document.createTextNode(instructions));
+    }
+    
+    return errorNotice;
+  }
+
   /* REFACTORED: renderNameCardToTab instead of creating a table row */
   function renderNameCardToTab(tr) {
     if(!tr) return null;
@@ -5201,30 +5241,17 @@ function renderTable(){
           // No data returned from database - show empty state message
           sectorEl.textContent = rowCountry || sector || '—';
           
-          // Display user-friendly message in the details container
-          const errorNotice = document.createElement('div');
-          errorNotice.style.cssText = 'background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin: 16px 0; color: #92400e; font-size: 14px;';
-          
-          // Create error message elements safely
-          const warningTitle = document.createElement('strong');
-          warningTitle.textContent = '⚠️ No additional data available';
-          errorNotice.appendChild(warningTitle);
-          errorNotice.appendChild(document.createElement('br'));
-          
-          const warningText = document.createTextNode('The profile data could not be retrieved from the database. This may be due to:');
-          errorNotice.appendChild(warningText);
-          errorNotice.appendChild(document.createElement('br'));
-          
-          const reason1 = document.createTextNode('• The profile has not been fully processed yet');
-          errorNotice.appendChild(reason1);
-          errorNotice.appendChild(document.createElement('br'));
-          
-          const reason2 = document.createTextNode('• Network connectivity issues');
-          errorNotice.appendChild(reason2);
-          errorNotice.appendChild(document.createElement('br'));
-          
-          const instructionText = document.createTextNode('Please try refreshing the profile using the 🔄 Refresh button above.');
-          errorNotice.appendChild(instructionText);
+          // Display user-friendly warning message
+          const errorNotice = createViewDetailsNotice({
+            type: 'warning',
+            title: '⚠️ No additional data available',
+            message: 'The profile data could not be retrieved from the database. This may be due to:',
+            reasons: [
+              'The profile has not been fully processed yet',
+              'Network connectivity issues'
+            ],
+            instructions: 'Please try refreshing the profile using the 🔄 Refresh button above.'
+          });
           
           // Insert notice after the profile picture container
           const firstContainer = content.querySelector('div[style*="text-align: center"]');
@@ -5238,21 +5265,12 @@ function renderTable(){
         console.error('[View Details] Failed to populate process geography for namecard:', e);
         
         // Display user-friendly error message
-        const errorNotice = document.createElement('div');
-        errorNotice.style.cssText = 'background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin: 16px 0; color: #991b1b; font-size: 14px;';
-        
-        // Create error message elements safely
-        const errorTitle = document.createElement('strong');
-        errorTitle.textContent = '❌ Unable to load details';
-        errorNotice.appendChild(errorTitle);
-        errorNotice.appendChild(document.createElement('br'));
-        
-        const errorText = document.createTextNode('An error occurred while retrieving profile data from the database.');
-        errorNotice.appendChild(errorText);
-        errorNotice.appendChild(document.createElement('br'));
-        
-        const instructionText = document.createTextNode('Please try again later or contact support if the problem persists.');
-        errorNotice.appendChild(instructionText);
+        const errorNotice = createViewDetailsNotice({
+          type: 'error',
+          title: '❌ Unable to load details',
+          message: 'An error occurred while retrieving profile data from the database.',
+          instructions: 'Please try again later or contact support if the problem persists.'
+        });
         
         // Insert notice after the profile picture container
         const firstContainer = content.querySelector('div[style*="text-align: center"]');
