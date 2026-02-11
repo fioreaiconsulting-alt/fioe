@@ -2314,6 +2314,31 @@ function updateSectorEnabledState(){
 
           // Now call the analyzer endpoint (webbridge will host /gemini/analyze_jd)
           const analyzePayload = { username: username };
+          
+          // Show loading animation during JD analysis
+          const box = document.getElementById('jdAnalysisBox');
+          const summaryEl = document.getElementById('jdSummary');
+          const tagsEl = document.getElementById('jdTags');
+          
+          if (box) {
+            box.classList.remove('hidden');
+            if (summaryEl) {
+              // Clear existing content and create loading elements programmatically
+              summaryEl.innerHTML = '';
+              const loadingDiv = document.createElement('div');
+              loadingDiv.style.cssText = 'display:flex; align-items:center; gap:8px;';
+              const spinner = document.createElement('span');
+              spinner.className = 'spinner';
+              spinner.style.cssText = 'width:16px; height:16px;';
+              const loadingText = document.createElement('span');
+              loadingText.textContent = 'Analyzing Job Description...';
+              loadingDiv.appendChild(spinner);
+              loadingDiv.appendChild(loadingText);
+              summaryEl.appendChild(loadingDiv);
+            }
+            if (tagsEl) tagsEl.innerHTML = '';
+          }
+          
           const analyzeResp = await fetch('/gemini/analyze_jd', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2327,10 +2352,6 @@ function updateSectorEnabledState(){
 
           // Render the analysis to the JD Analysis box
           if (analyzeData) {
-            const box = document.getElementById('jdAnalysisBox');
-            const summaryEl = document.getElementById('jdSummary');
-            const tagsEl = document.getElementById('jdTags');
-
             if (summaryEl) summaryEl.innerHTML = analyzeData.summary || (analyzeData.observation || '');
             let tagHtml = '';
             if (analyzeData.job_title) tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
