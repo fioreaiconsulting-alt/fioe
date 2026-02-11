@@ -202,6 +202,17 @@
       </div>
   </div>
 
+  <!-- Bulk Upload Progress Indicator -->
+  <div id="bulkUploadProgressContainer" style="margin:10px 0; display:none; padding:10px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span id="bulkUploadProgressText" style="font-size:12px; font-weight:700; color:#15803d;">Uploading Files...</span>
+          <span id="bulkUploadProgressPercent" style="font-size:12px; font-weight:700; color:#15803d;">0%</span>
+      </div>
+      <div style="height:6px; width:100%; background:#dcfce7; border-radius:3px; overflow:hidden;">
+          <div id="bulkUploadProgressBar" style="height:100%; width:0%; background:#22c55e; transition:width 0.3s ease;"></div>
+      </div>
+  </div>
+
   <div id="tableContainer" style="overflow:auto; max-height:65vh; border:1px solid #d0d7de; border-radius:8px; background:#fff;">
       <table id="sourcingTable">
           <thead>
@@ -6158,6 +6169,16 @@ if (bulkUploadBtn && bulkDirInput) {
         const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nUpload and match these to candidates?`);
         if (!confirmUpload) return;
 
+        const bulkUploadProgressContainer = document.getElementById('bulkUploadProgressContainer');
+        const bulkUploadProgressBar = document.getElementById('bulkUploadProgressBar');
+        const bulkUploadProgressPercent = document.getElementById('bulkUploadProgressPercent');
+        const bulkUploadProgressText = document.getElementById('bulkUploadProgressText');
+        
+        bulkUploadProgressContainer.style.display = 'block';
+        bulkUploadProgressBar.style.width = '0%';
+        bulkUploadProgressPercent.textContent = '0%';
+        bulkUploadProgressText.textContent = 'Starting upload...';
+
         setStatus(`Uploading ${validFiles.length} files...`, "info");
         bulkUploadBtn.disabled = true;
         
@@ -6177,6 +6198,10 @@ if (bulkUploadBtn && bulkDirInput) {
         if (uid) formData.append('userid', uid);
 
         try {
+            bulkUploadProgressBar.style.width = '20%';
+            bulkUploadProgressPercent.textContent = '20%';
+            bulkUploadProgressText.textContent = 'Uploading files...';
+            
             // Use the new bulk upload endpoint
             console.log(`[Bulk Upload] Sending to ${API_UPLOAD_MULTIPLE}`);
             const res = await fetch(API_UPLOAD_MULTIPLE, {
@@ -6186,6 +6211,10 @@ if (bulkUploadBtn && bulkDirInput) {
             });
             const data = await res.json();
             console.log('[Bulk Upload] Response:', data);
+
+            bulkUploadProgressBar.style.width = '60%';
+            bulkUploadProgressPercent.textContent = '60%';
+            bulkUploadProgressText.textContent = 'Processing files...';
 
             if (res.ok) {
                 setStatus(`Bulk Upload Complete: Matched ${data.uploaded_count} CVs. Verifying data...`, "info");
@@ -6201,9 +6230,20 @@ if (bulkUploadBtn && bulkDirInput) {
                 if (data.uploaded_profiles && Array.isArray(data.uploaded_profiles)) {
                     setStatus(`Verifying ${data.uploaded_profiles.length} profiles in database...`, "info");
                     
+                    bulkUploadProgressBar.style.width = '80%';
+                    bulkUploadProgressPercent.textContent = '80%';
+                    bulkUploadProgressText.textContent = 'Verifying data...';
+                    
                     // Poll to verify all fields are populated
                     await verifyBulkUploadedProfiles(data.uploaded_profiles);
                 }
+                
+                bulkUploadProgressBar.style.width = '100%';
+                bulkUploadProgressPercent.textContent = '100%';
+                bulkUploadProgressText.textContent = 'Upload complete!';
+                setTimeout(() => {
+                    bulkUploadProgressContainer.style.display = 'none';
+                }, 2000);
                 
                 alert(msg);
                 
@@ -6212,10 +6252,12 @@ if (bulkUploadBtn && bulkDirInput) {
                 renderTable();
                 
             } else {
+                bulkUploadProgressContainer.style.display = 'none';
                 setStatus(`Upload failed: ${data.error || 'Unknown error'}`, "error");
                 alert(`Error: ${data.error}`);
             }
         } catch (e) {
+            bulkUploadProgressContainer.style.display = 'none';
             setStatus(`Upload request failed: ${e.message}`, "error");
             console.error(e);
         } finally {
