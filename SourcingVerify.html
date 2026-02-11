@@ -170,17 +170,14 @@
           <span class="metric"><strong>Tokens Left:</strong> <span id="tokensLeft">5000</span></span>
       </div>
 
-      <!-- Bulk Assessment Controls -->
-      <button id="searchRunBulkBtn" onclick="runBulkAssessmentFromSearch()" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Run AI Assessment on selected items">Run Bulk Assessment</button>
-      <!-- Accept Selected and Rebate Selected buttons REMOVED per requirement -->
-
+      <!-- Refresh Button - Moved to former checkbox position -->
       <button id="reloadBtn" title="Reset assessment state and refetch data">Refresh</button>
-      <button id="deleteBtn" title="Delete selected rows">Delete Selected</button>
-      <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
-      <!-- New Sort Score Button -->
-      <button id="sortScoreBtn" title="Sort by Assessment Score (Highest First)">Sort Score</button>
-      <!-- AFFECTED: Updated Bulk Upload Button to trigger file input directly -->
+
+      <!-- Button Order: Bulk Upload -> Run Bulk Assessment -> Download Excel -->
       <button id="bulkUploadBtn" title="Bulk Upload CVs from Directory">Bulk Upload</button>
+      <button id="searchRunBulkBtn" onclick="runBulkAssessmentFromSearch()" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Run AI Assessment on selected items">Run Bulk Assessment</button>
+      <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
+      
       <!-- Hidden file input for directory upload -->
       <input type="file" id="bulkDirInput" webkitdirectory directory multiple style="display:none">
       <!-- Deep Research button: Moved to end position and styled to be invisible per requirement.
@@ -217,14 +214,15 @@
       <table id="sourcingTable">
           <thead>
               <tr>
-                  <th class="checkbox-cell"><input type="checkbox" id="selectAll" title="Select all rows"></th>
+                  <!-- Empty checkbox column retained for layout consistency (previously contained select all checkbox) -->
+                  <th class="checkbox-cell"></th>
                   <th style="width:60px;">Profile</th>
                   <th>Name</th>
                   <th>Company</th>
                   <th>Job Title</th>
                   <th style="width:8%;">Country</th>
                   <th style="width:8%;">Action</th>
-                  <th style="width:33.33%;">Matching Level</th>
+                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer; user-select:none;" title="Click to sort by Match Level" aria-sort="none" role="columnheader">Match Level <span aria-hidden="true"></span></th>
               </tr>
           </thead>
           <tbody id="tableBody">
@@ -246,7 +244,8 @@
 <div id="tab-details" class="tab-pane">
     <div style="margin-bottom: 20px; display: flex; gap: 12px; align-items: center;">
         <button onclick="switchTab('tab-search')" class="btn-secondary" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328;">&larr; Back to Search Results</button>
-        <button onclick="refreshCurrentProfile()" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Refresh current profile data">🔄 Refresh</button>
+        <button id="viewDetailsRefreshBtn" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Hover or click to refresh current profile data">🔄 Refresh</button>
+        <span id="refreshStatus" role="status" aria-live="polite" style="display:none; font-size:13px; color:#0369a1;"></span>
     </div>
     <div id="details-container">
         <div style="text-align:center; padding: 40px; color: var(--argent);">
@@ -2064,8 +2063,10 @@ const PROCESS_GEO_API = 'http://127.0.0.1:8091/process/geography';
 // No-op stubs for removed snipper functions (keeps existing code safe)
 const tableBody   = document.getElementById('tableBody');
 const statusEl    = document.getElementById('status');
-const deleteBtn   = document.getElementById('deleteBtn');
-const selectAllCb = document.getElementById('selectAll');
+// Delete button removed per requirements
+// const deleteBtn   = document.getElementById('deleteBtn');
+// Select All checkbox removed per requirements
+// const selectAllCb = document.getElementById('selectAll');
 const reloadBtn   = document.getElementById('reloadBtn');
 const marketBtn   = document.getElementById('marketAnalysisBtn');
 const bulkUploadBtn = document.getElementById('bulkUploadBtn');
@@ -2158,8 +2159,9 @@ function adjustCountersAfterDeletion(deletedCount) {
 }
 
 function showDeleteIfNeeded() {
-  const anyChecked = [...document.querySelectorAll('.row-select:checked')].length > 0;
-  deleteBtn.style.display = anyChecked ? 'inline-block' : 'none';
+  // Delete button functionality removed per requirements
+  // const anyChecked = [...document.querySelectorAll('.row-select:checked')].length > 0;
+  // deleteBtn.style.display = anyChecked ? 'inline-block' : 'none';
   
   // Also update bulk action buttons
   const acceptBtn = document.getElementById('searchAcceptSelectedBtn');
@@ -4110,8 +4112,9 @@ async function loadRows(page=1){
     renderPager();
   } finally {
     updateDisplayCounters();
-    deleteBtn.style.display='none';
-    selectAllCb.checked=false;
+    // Delete button removed per requirements
+    // deleteBtn.style.display='none';
+    // selectAllCb.checked=false;
   }
 }
 function renderTable(){
@@ -4653,7 +4656,14 @@ function renderTable(){
             alert('No LinkedIn URL available');
             return;
           }
-          window.open(url, '_blank', 'noopener');
+          
+          // Validate LinkedIn URL before rendering to avoid broken links
+          let validatedUrl = url;
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            validatedUrl = 'https://' + url;
+          }
+          
+          window.open(validatedUrl, '_blank', 'noopener');
         } catch (_) {}
       });
     } else {
@@ -5635,26 +5645,76 @@ function renderTable(){
 
 /* View Details Tab Enhancement Functions */
 let __currentProfileRow = null; // Track current profile being viewed
+let __refreshDebounceTimer = null; // Debounce timer for hover-triggered refresh
+let __isRefreshing = false; // Track if refresh is in progress
 
 function refreshCurrentProfile() {
     if (!__currentProfileRow) {
-        alert('No profile currently displayed.');
+        console.warn('No profile currently displayed.');
         return;
     }
     
     const anchor = __currentProfileRow.dataset.linkedinurl;
     if (!anchor) {
-        alert('Cannot refresh - no LinkedIn URL found.');
+        console.warn('Cannot refresh - no LinkedIn URL found.');
         return;
     }
     
-    // Show refresh status
+    // Prevent multiple simultaneous refreshes
+    if (__isRefreshing) {
+        console.log('Refresh already in progress...');
+        return;
+    }
+    
+    __isRefreshing = true;
+    
+    // Show refresh status with loading indicator using dedicated aria-live region
+    const refreshBtn = document.getElementById('viewDetailsRefreshBtn');
+    const refreshStatus = document.getElementById('refreshStatus');
+    
+    if (refreshBtn) {
+        refreshBtn.textContent = 'Refreshing...';
+        refreshBtn.style.pointerEvents = 'none';
+        refreshBtn.disabled = true;
+    }
+    
+    if (refreshStatus) {
+        refreshStatus.textContent = 'Refreshing profile...';
+        refreshStatus.style.display = 'inline';
+    }
+    
     if (typeof setStatus === 'function') setStatus('Refreshing profile...', 'info');
     
     // Re-render the namecard which will fetch latest data
     if (window.__sv_namecard && window.__sv_namecard.renderNameCardToTab) {
         window.__sv_namecard.renderNameCardToTab(__currentProfileRow);
         if (typeof setStatus === 'function') setStatus('Profile refreshed', 'success');
+        
+        // Reset button state after refresh completes
+        setTimeout(() => {
+            __isRefreshing = false;
+            if (refreshBtn) {
+                refreshBtn.textContent = '🔄 Refresh';
+                refreshBtn.style.pointerEvents = 'auto';
+                refreshBtn.disabled = false;
+            }
+            if (refreshStatus) {
+                refreshStatus.textContent = '';
+                refreshStatus.style.display = 'none';
+            }
+        }, 500);
+    } else {
+        // If namecard not available, reset immediately
+        __isRefreshing = false;
+        if (refreshBtn) {
+            refreshBtn.textContent = '🔄 Refresh';
+            refreshBtn.style.pointerEvents = 'auto';
+            refreshBtn.disabled = false;
+        }
+        if (refreshStatus) {
+            refreshStatus.textContent = '';
+            refreshStatus.style.display = 'none';
+        }
     }
 }
 
@@ -5670,11 +5730,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // New listener for Sort Score button
-    const sortBtn = document.getElementById('sortScoreBtn');
-    if(sortBtn) {
-        sortBtn.addEventListener('click', () => {
+    // Add Match Level header click listener for sorting with toggle states
+    const matchLevelHeader = document.getElementById('matchLevelHeader');
+    let __sortState = 'none'; // Track current sort state: 'none', 'descending', 'ascending'
+    
+    if (matchLevelHeader) {
+        matchLevelHeader.addEventListener('click', () => {
             if(!rowsData || rowsData.length === 0) return;
+            
+            // Cycle through sort states: none → descending → ascending → none
+            if (__sortState === 'none') {
+                __sortState = 'descending';
+            } else if (__sortState === 'descending') {
+                __sortState = 'ascending';
+            } else {
+                __sortState = 'none';
+                // Reload original order when returning to 'none'
+                loadRows(currentPage);
+                matchLevelHeader.setAttribute('aria-sort', 'none');
+                matchLevelHeader.querySelector('span').textContent = '';
+                setStatus('Sort order reset.', 'success');
+                return;
+            }
             
             // Sort rowsData based on cached score or experience text
             rowsData.sort((a, b) => {
@@ -5714,11 +5791,52 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     return score;
                 };
-                return getScore(b) - getScore(a); // Descending
+                
+                // Sort descending or ascending based on state
+                if (__sortState === 'descending') {
+                    return getScore(b) - getScore(a); // Descending (highest to lowest)
+                } else {
+                    return getScore(a) - getScore(b); // Ascending (lowest to highest)
+                }
             });
             
             renderTable();
-            setStatus('Table sorted by assessment score.', 'success');
+            
+            // Update aria-sort attribute and visual indicator
+            matchLevelHeader.setAttribute('aria-sort', __sortState);
+            const arrow = matchLevelHeader.querySelector('span');
+            if (__sortState === 'descending') {
+                arrow.textContent = '▼';
+                setStatus('Table sorted by Match Level (highest to lowest).', 'success');
+            } else {
+                arrow.textContent = '▲';
+                setStatus('Table sorted by Match Level (lowest to highest).', 'success');
+            }
+        });
+    }
+    
+    // Add hover-triggered refresh for View Details tab
+    const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
+    if (viewDetailsRefreshBtn) {
+        viewDetailsRefreshBtn.addEventListener('mouseenter', () => {
+            // Clear any existing timer
+            if (__refreshDebounceTimer) {
+                clearTimeout(__refreshDebounceTimer);
+            }
+            
+            // Set a debounce timer to prevent rapid triggers
+            __refreshDebounceTimer = setTimeout(() => {
+                refreshCurrentProfile();
+            }, 300); // 300ms debounce delay
+        });
+        
+        // Also support click for explicit refresh
+        viewDetailsRefreshBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (__refreshDebounceTimer) {
+                clearTimeout(__refreshDebounceTimer);
+            }
+            refreshCurrentProfile();
         });
     }
 });
@@ -5767,12 +5885,14 @@ async function deleteSelected() {
     document.getElementById('totalResults').textContent = baselineResults;
     document.getElementById('tokensLeft').textContent = baselineTokensLeft;
 
-    deleteBtn.style.display='none';
-    selectAllCb.checked=false;
+    // Delete button removed per requirements
+    // deleteBtn.style.display='none';
+    // selectAllCb.checked=false;
   } catch(e) {
     setStatus(e.message,'error');
   } finally {
-    deleteBtn.disabled=false;
+    // Delete button removed per requirements
+    // deleteBtn.disabled=false;
   }
 }
 
@@ -5809,13 +5929,15 @@ window.applyTokenDelta = async function(delta) {
     } catch(e) { console.error("Token update failed", e); }
 };
 
-selectAllCb.addEventListener('change', () => {
-  const checked = selectAllCb.checked;
-  document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
-  showDeleteIfNeeded();
-});
+// Select All checkbox functionality removed per requirements
+// selectAllCb.addEventListener('change', () => {
+//   const checked = selectAllCb.checked;
+//   document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
+//   showDeleteIfNeeded();
+// });
 reloadBtn.addEventListener('click', async () => { await loadRows(currentPage); refreshAccountTokens(); });
-deleteBtn.addEventListener('click', deleteSelected);
+// Delete button functionality removed per requirements
+// deleteBtn.addEventListener('click', deleteSelected);
 
 function collectDisplayedRows() {
   const out = [];
