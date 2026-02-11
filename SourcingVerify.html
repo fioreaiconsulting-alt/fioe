@@ -3041,15 +3041,6 @@ function buildRow(row) {
           setAssessmentActive(btn);
           
           persistDisabledDetailRow(tr.dataset.linkedinurl);
-          // try {
-          //   const rowCheckbox = tr.querySelector('.row-select');
-          //   if (rowCheckbox && !rowCheckbox.disabled) {
-          //     rowCheckbox.checked = false;
-          //     rowCheckbox.disabled = true;
-          //     rowCheckbox.title = 'Disabled after View action';
-          //     showDeleteIfNeeded();
-          //   }
-          // } catch(_){}
 
           const link = btn.dataset.profileUrl;
 
@@ -4047,8 +4038,6 @@ async function loadRows(page=1){
     renderPager();
   } finally {
     updateDisplayCounters();
-    // deleteBtn.style.display='none';
-    // selectAllCb.checked=false;
   }
 }
 function renderTable(){
@@ -5670,7 +5659,6 @@ function renderPager(){
   prevBtn.disabled = currentPage <= 1;
   nextBtn.disabled = currentPage >= tp;
   pagerEl.style.display = tp > 1 ? 'flex' : 'none';
-  // showDeleteIfNeeded();
 }
 
 async function deleteSelected() {
@@ -5680,7 +5668,6 @@ async function deleteSelected() {
   if (!selected.length) return;
   if (!confirm(`Delete ${selected.length} selected row(s)? This cannot be undone.`)) return;
   setStatus('Deleting…');
-  // deleteBtn.disabled = true;
 
   const baselineResults = document.getElementById('totalResults').textContent;
   const baselineTokensLeft = document.getElementById('tokensLeft').textContent;
@@ -5703,13 +5690,8 @@ async function deleteSelected() {
 
     document.getElementById('totalResults').textContent = baselineResults;
     document.getElementById('tokensLeft').textContent = baselineTokensLeft;
-
-    // deleteBtn.style.display='none';
-    // selectAllCb.checked=false;
   } catch(e) {
     setStatus(e.message,'error');
-  } finally {
-    // deleteBtn.disabled=false;
   }
 }
 
@@ -5746,13 +5728,7 @@ window.applyTokenDelta = async function(delta) {
     } catch(e) { console.error("Token update failed", e); }
 };
 
-// selectAllCb.addEventListener('change', () => {
-//   const checked = selectAllCb.checked;
-//   document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
-//   showDeleteIfNeeded();
-// });
 reloadBtn.addEventListener('click', async () => { await loadRows(currentPage); refreshAccountTokens(); });
-// deleteBtn.addEventListener('click', deleteSelected);
 
 function collectDisplayedRows() {
   const out = [];
