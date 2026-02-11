@@ -2376,6 +2376,22 @@ async function getProcessGeography(linkedinurl) {
   return out || null;
 }
 
+/* ========================================================================================
+   TENURE AND EXPERIENCE CALCULATION FUNCTIONS
+   
+   IMPORTANT: These client-side functions are FALLBACK ONLY and primarily for display purposes.
+   The SOURCE OF TRUTH for tenure and total experience calculations is the SERVER SIDE (webbridge.py).
+   
+   Server-side processing (_recalculate_tenure_and_experience in webbridge.py) enforces:
+   1. Internship roles are excluded from total_experience_years
+   2. Same company (regardless of job title) counts as ONE employer
+   3. Internship roles are excluded from employer count for tenure calculation
+   
+   These client-side functions mirror the server-side logic for consistency but should NOT
+   be used to override server-calculated values. Always prefer server-provided tenure and
+   total_experience_years when available.
+   ======================================================================================== */
+
 /* Helper to check if a job title indicates an internship role.
    Returns true if the job title contains "intern" or "internship". */
 function isInternshipRole(jobTitle) {
