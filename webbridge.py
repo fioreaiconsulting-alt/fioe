@@ -7013,6 +7013,7 @@ def process_bulk_assess():
                 target_skills = _fetch_jskillset(username_db) or []
             
             # NEW: For L2 assessment, generate vskillset if target_skills exist
+            vskillset_results = None  # Initialize to None for passing to profile_data
             if assessment_level == "L2" and target_skills and len(target_skills) > 0:
                 logger.info(f"[BULK_ASSESS] L2 mode - generating vskillset for {linkedinurl[:50]}")
                 try:
@@ -7041,7 +7042,8 @@ def process_bulk_assess():
                 "linkedinurl": linkedinurl,
                 "assessment_level": assessment_level,
                 "tenure": tenure,
-                "product": product
+                "product": product,
+                "vskillset_results": vskillset_results  # Pass vskillset_results for scoring
             }
 
             # run core assessment
