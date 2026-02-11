@@ -2376,6 +2376,22 @@ async function getProcessGeography(linkedinurl) {
   return out || null;
 }
 
+/* ========================================================================================
+   TENURE AND EXPERIENCE CALCULATION FUNCTIONS
+   
+   IMPORTANT: These client-side functions are FALLBACK ONLY and primarily for display purposes.
+   The SOURCE OF TRUTH for tenure and total experience calculations is the SERVER SIDE (webbridge.py).
+   
+   Server-side processing (_recalculate_tenure_and_experience in webbridge.py) enforces:
+   1. Internship roles are excluded from total_experience_years
+   2. Same company (regardless of job title) counts as ONE employer
+   3. Internship roles are excluded from employer count for tenure calculation
+   
+   These client-side functions mirror the server-side logic for consistency but should NOT
+   be used to override server-calculated values. Always prefer server-provided tenure and
+   total_experience_years when available.
+   ======================================================================================== */
+
 /* Helper to check if a job title indicates an internship role.
    Returns true if the job title contains "intern" or "internship". */
 function isInternshipRole(jobTitle) {
@@ -2399,8 +2415,9 @@ function normalizeCompanyName(name) {
 }
 
 /* Compute tenure from experience text or array.
-   Formula: total employment duration (excluding internships) / number of UNIQUE employers (excluding internships).
-   Expected format: "Job Title, Company, YYYY to YYYY" or "Job Title, Company, YYYY to present"
+   Formula: total employment duration (excluding internships and overlaps) / number of UNIQUE employers (excluding internships).
+   Expected format: "Job Title, Company, YYYY to YYYY" or "Job Title, Company, Month YYYY to Month YYYY" or variants with "present"
+   Handles overlapping periods at the same company by merging them.
    Returns average tenure (years) rounded to one decimal, or null if not computable. */
 function computeTenureFromExperienceText(text) {
   try {
@@ -2417,7 +2434,7 @@ function computeTenureFromExperienceText(text) {
     }
     
     const nowYear = new Date().getFullYear();
-    const employerDurations = new Map(); // Map<normalizedCompanyName, totalYears>
+    const employerPeriods = new Map(); // Map<normalizedCompanyName, Array<[start, end]>>
     
     for (const line of lines) {
       // Expected format: "Job Title, Company, YYYY to YYYY|present"
@@ -2439,34 +2456,55 @@ function computeTenureFromExperienceText(text) {
         continue;
       }
       
-      const m = durationStr.match(/(\b\d{4})\s*(?:to|[-–—])\s*(present|\b\d{4}\b)/i);
+      // Improved regex to handle month names: "Aug 2020 to present", "2020 to 2021", "Jan 2019 to Dec 2020"
+      const m = durationStr.match(/(?:\w+\s+)?(\d{4})\s*(?:to|[-–—])\s*(?:\w+\s+)?(present|\d{4})/i);
       
       if (m && company) {
         const start = parseInt(m[1], 10);
         let endRaw = m[2].toLowerCase();
         let end = (endRaw === 'present') ? nowYear : parseInt(endRaw, 10);
         if (!isNaN(start) && !isNaN(end) && end >= start) {
-          const duration = end - start;
           // Normalize company name to group similar names
           const normalizedCompany = normalizeCompanyName(company);
           if (normalizedCompany) {
-            // Accumulate duration for this employer
-            employerDurations.set(normalizedCompany, (employerDurations.get(normalizedCompany) || 0) + duration);
+            // Track periods for this employer
+            if (!employerPeriods.has(normalizedCompany)) {
+              employerPeriods.set(normalizedCompany, []);
+            }
+            employerPeriods.get(normalizedCompany).push([start, end]);
           }
         }
       }
     }
     
-    if (employerDurations.size === 0) {
+    if (employerPeriods.size === 0) {
       return null;
     }
     
-    // Calculate total duration and count unique employers
+    // Merge overlapping periods for each employer and calculate total duration
     let totalDuration = 0;
-    for (const duration of employerDurations.values()) {
-      totalDuration += duration;
+    for (const [company, periods] of employerPeriods.entries()) {
+      // Sort periods by start year
+      periods.sort((a, b) => a[0] - b[0]);
+      
+      // Merge overlapping or adjacent periods
+      const merged = [];
+      for (const [start, end] of periods) {
+        if (merged.length > 0 && start <= merged[merged.length - 1][1]) {
+          // Overlapping or adjacent - extend the last period
+          merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], end);
+        } else {
+          // Non-overlapping - add new period
+          merged.push([start, end]);
+        }
+      }
+      
+      // Calculate total duration for this employer after merging
+      const companyDuration = merged.reduce((sum, [start, end]) => sum + (end - start), 0);
+      totalDuration += companyDuration;
     }
-    const uniqueEmployers = employerDurations.size;
+    
+    const uniqueEmployers = employerPeriods.size;
     
     // Tenure = total duration / unique employers
     const tenure = totalDuration / uniqueEmployers;

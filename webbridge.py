@@ -4,6 +4,7 @@ import threading
 import time
 import uuid
 from csv import DictWriter
+from datetime import datetime
 import re
 import json
 import requests
@@ -5619,6 +5620,151 @@ def _normalize_seniority_to_8_levels(seniority_text: str, total_experience_years
     # Default to empty if cannot determine
     return ""
 
+def _is_internship_role(job_title):
+    """
+    Check if a job title indicates an internship role.
+    Returns True if the title contains 'intern' or 'internship' (case-insensitive).
+    """
+    if not job_title:
+        return False
+    return bool(re.search(r'\bintern\b|\binternship\b', job_title, re.IGNORECASE))
+
+def _normalize_company_name(company_name):
+    """
+    Normalize company name for duplicate detection.
+    Removes common suffixes and converts to lowercase for consistent matching.
+    
+    Note: Currently handles common US/UK company suffixes. International suffixes
+    (GmbH, S.A., AG, etc.) are not normalized but can be added if needed.
+    
+    Returns normalized company name or None if input is empty.
+    """
+    if not company_name:
+        return None
+    
+    # Convert to lowercase and remove common company suffixes
+    normalized = company_name.lower().strip()
+    normalized = re.sub(r'\s+(inc\.?|llc\.?|ltd\.?|corp\.?|corporation|company|co\.?|limited|group|plc)$', '', normalized, flags=re.IGNORECASE)
+    normalized = normalized.strip()
+    
+    return normalized if normalized else None
+
+def _recalculate_tenure_and_experience(experience_list):
+    """
+    Recalculate total_experience_years and tenure from experience list.
+    
+    This function enforces business rules:
+    1. Internship roles are excluded from total_experience_years calculation
+    2. Same company (regardless of job title) counts as ONE employer for tenure
+    3. Internship roles are excluded from employer count for tenure
+    4. Overlapping periods at the same company are merged (e.g., two roles at same company with same dates)
+    
+    Args:
+        experience_list: List of experience strings in format "Job Title, Company, StartYear to EndYear|present"
+                        or "Job Title, Company, Month YYYY to Month YYYY|present"
+    
+    Returns:
+        dict: {
+            "total_experience_years": float,  # Total years excluding internships and overlaps
+            "tenure": float,  # Average tenure per unique employer (excluding internships)
+            "employer_count": int,  # Number of unique employers (excluding internships)
+            "total_roles": int  # Total number of roles (including internships)
+        }
+    """
+    if not experience_list or not isinstance(experience_list, list):
+        return {
+            "total_experience_years": 0.0,
+            "tenure": 0.0,
+            "employer_count": 0,
+            "total_roles": 0
+        }
+    
+    current_year = datetime.now().year  # Note: Uses year only, timezone not critical for year calculation
+    # Track periods per employer: company -> list of (start_year, end_year) tuples
+    employer_periods = {}
+    total_roles = len(experience_list)
+    
+    for entry in experience_list:
+        if not entry or not isinstance(entry, str):
+            continue
+        
+        # Expected format: "Job Title, Company, StartYear to EndYear|present"
+        # or "Job Title, Company, Month YYYY to Month YYYY|present"
+        parts = [p.strip() for p in entry.split(',')]
+        
+        if len(parts) < 3:
+            # Cannot reliably parse, skip this entry
+            continue
+        
+        job_title = parts[0]
+        company = parts[1]
+        duration_str = parts[2]
+        
+        # Check if this is an internship role
+        is_intern = _is_internship_role(job_title)
+        
+        # Parse duration: Improved regex to handle month names
+        # Matches: "Aug 2020 to present", "2020 to 2021", "Jan 2019 to Dec 2020", etc.
+        duration_match = re.search(r'(?:\w+\s+)?(\d{4})\s*(?:to|[-–—])\s*(?:\w+\s+)?(present|\d{4})', duration_str, re.IGNORECASE)
+        
+        if not duration_match:
+            continue
+        
+        start_year = int(duration_match.group(1))
+        end_part = duration_match.group(2).lower()
+        
+        if end_part == 'present':
+            end_year = current_year
+        else:
+            end_year = int(end_part)
+        
+        # Calculate duration in years
+        # Note: This calculates full years only (2020 to 2021 = 1 year)
+        # Partial years are not accounted for due to limited date precision in CV format
+        if end_year >= start_year and not is_intern:
+            # Track periods per employer to handle overlaps
+            normalized_company = _normalize_company_name(company)
+            if normalized_company:
+                if normalized_company not in employer_periods:
+                    employer_periods[normalized_company] = []
+                employer_periods[normalized_company].append((start_year, end_year))
+    
+    # Merge overlapping/duplicate periods for each employer
+    total_experience = 0.0
+    for company, periods in employer_periods.items():
+        # Sort periods by start year
+        periods.sort()
+        
+        # Merge overlapping or adjacent periods
+        merged = []
+        for start, end in periods:
+            if merged and start <= merged[-1][1]:
+                # Overlapping or adjacent - extend the last period
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                # Non-overlapping - add new period
+                merged.append((start, end))
+        
+        # Calculate total duration for this employer after merging overlaps
+        company_duration = sum(end - start for start, end in merged)
+        total_experience += company_duration
+    
+    # Calculate tenure
+    employer_count = len(employer_periods)
+    
+    if employer_count > 0:
+        tenure = total_experience / employer_count
+        tenure = round(tenure, 1)
+    else:
+        tenure = 0.0
+    
+    return {
+        "total_experience_years": round(total_experience, 1),
+        "tenure": tenure,
+        "employer_count": employer_count,
+        "total_roles": total_roles
+    }
+
 def _analyze_cv_bytes_sync(pdf_bytes):
     """
     Synchronous helper to parse PDF bytes via Gemini.
@@ -5702,10 +5848,10 @@ def _analyze_cv_bytes_sync(pdf_bytes):
             "}\n"
             "Rules:\n"
             "1. Skillset: Extract ONLY skills explicitly mentioned in the CV. Max 15 items. Do not infer or add skills.\n"
-            "2. Total Experience: Calculate sum of all employment durations in years. Return a number rounded to 1 decimal place.\n"
+            "2. Total Experience: Calculate sum of all employment durations in years, EXCLUDING internships and intern positions. Only count full-time, part-time, and regular employment. Return a number rounded to 1 decimal place.\n"
             "3. Tenure: Calculate average tenure using the total_experience_years you calculated in step 2. IMPORTANT: Treat repeated employment at the same company as ONE employer. DO NOT count internships or intern positions in the employer count. Formula: total_experience_years / number of UNIQUE employers (excluding internships). Return a number rounded to 1 decimal place.\n"
             "   Example 1: If someone worked at 'Google' from 2015-2017 (2 years) and again from 2019-2021 (2 years), total_experience_years=4, unique employers=1 (Google), so tenure=4/1=4.0 years.\n"
-            "   Example 2: If someone had 'Software Engineer at Google' for 3 years, 'Data Scientist at Amazon' for 2 years, and 'Intern at Microsoft' for 1 year, total_experience_years=6, unique employers=2 (Google and Amazon; Microsoft intern excluded), so tenure=6/2=3.0 years.\n"
+            "   Example 2: If someone had 'Software Engineer at Google' for 3 years, 'Data Scientist at Amazon' for 2 years, and 'Intern at Microsoft' for 1 year, total_experience_years=5 (intern excluded), unique employers=2 (Google and Amazon; Microsoft intern excluded), so tenure=5/2=2.5 years.\n"
             "4. Experience: STRICTLY parse employment history in format 'Job Title, Company, StartYear to EndYear'. If current job, use 'present' instead of EndYear. MANDATORY: Include EVERY SINGLE employment entry from the CV - do not omit any job.\n"
             "5. Education: Format each entry as 'University Name, Degree Type, Discipline'. MANDATORY: Include ALL educational qualifications - degrees, certifications, diplomas. Do not omit any.\n"
             "6. Products: Identify the LATEST company in the employment history. Then, identify its full range of products or services.\n"
@@ -5737,6 +5883,26 @@ def _analyze_cv_bytes_sync(pdf_bytes):
              if obj.get('seniority'):
                  normalized_seniority = _normalize_seniority_to_8_levels(obj['seniority'], obj.get('total_experience_years'))
                  obj['seniority'] = _strip_level_suffix(normalized_seniority)
+             
+             # Post-process: Recalculate tenure and total_experience_years from experience list
+             # This ensures consistent application of business rules regardless of Gemini's interpretation
+             experience_list = obj.get('experience', [])
+             if experience_list and isinstance(experience_list, list):
+                 # Store original Gemini values before recalculation
+                 gemini_total_exp = obj.get('total_experience_years', 0)
+                 gemini_tenure = obj.get('tenure', 0)
+                 
+                 recalc = _recalculate_tenure_and_experience(experience_list)
+                 
+                 # Update the values with recalculated ones
+                 obj['total_experience_years'] = recalc['total_experience_years']
+                 obj['tenure'] = recalc['tenure']
+                 
+                 # Log if there's a significant difference from Gemini's calculation
+                 if abs(recalc['total_experience_years'] - float(gemini_total_exp or 0)) > 0.5:
+                     logger.info(f"[CV Sync] Recalculated total_experience_years: {recalc['total_experience_years']} (Gemini: {gemini_total_exp})")
+                 if abs(recalc['tenure'] - float(gemini_tenure or 0)) > 0.5:
+                     logger.info(f"[CV Sync] Recalculated tenure: {recalc['tenure']} (Gemini: {gemini_tenure}, employers: {recalc['employer_count']})")
 
         return obj
     except Exception as e:
