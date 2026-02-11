@@ -170,17 +170,16 @@
           <span class="metric"><strong>Tokens Left:</strong> <span id="tokensLeft">5000</span></span>
       </div>
 
-      <!-- Bulk Assessment Controls -->
-      <button id="searchRunBulkBtn" onclick="runBulkAssessmentFromSearch()" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Run AI Assessment on selected items">Run Bulk Assessment</button>
       <!-- Accept Selected and Rebate Selected buttons REMOVED per requirement -->
 
+      <!-- Relocated Refresh button to appear after Profile column -->
       <button id="reloadBtn" title="Reset assessment state and refetch data">Refresh</button>
-      <button id="deleteBtn" title="Delete selected rows">Delete Selected</button>
-      <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
-      <!-- New Sort Score Button -->
-      <button id="sortScoreBtn" title="Sort by Assessment Score (Highest First)">Sort Score</button>
       <!-- AFFECTED: Updated Bulk Upload Button to trigger file input directly -->
       <button id="bulkUploadBtn" title="Bulk Upload CVs from Directory">Bulk Upload</button>
+      <!-- Run Bulk Assessment button positioned after Bulk Upload -->
+      <button id="searchRunBulkBtn" onclick="runBulkAssessmentFromSearch()" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white;" title="Run AI Assessment on selected items">Run Bulk Assessment</button>
+      <!-- Download Excel button positioned after Run Bulk Assessment -->
+      <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
       <!-- Hidden file input for directory upload -->
       <input type="file" id="bulkDirInput" webkitdirectory directory multiple style="display:none">
       <!-- Deep Research button: Moved to end position and styled to be invisible per requirement.
@@ -217,18 +216,17 @@
       <table id="sourcingTable">
           <thead>
               <tr>
-                  <th class="checkbox-cell"><input type="checkbox" id="selectAll" title="Select all rows"></th>
                   <th style="width:60px;">Profile</th>
                   <th>Name</th>
                   <th>Company</th>
                   <th>Job Title</th>
                   <th style="width:8%;">Country</th>
                   <th style="width:8%;">Action</th>
-                  <th style="width:33.33%;">Matching Level</th>
+                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer;" title="Click to sort by score (highest first)">Matching Level</th>
               </tr>
           </thead>
           <tbody id="tableBody">
-              <tr><td colspan="8" style="text-align:center; padding:30px;" id="loadingRow">
+              <tr><td colspan="7" style="text-align:center; padding:30px;" id="loadingRow">
                   <span class="spinner"></span> Loading…
               </td></tr>
           </tbody>
@@ -2719,68 +2717,7 @@ function buildRow(row) {
   tr.classList.add('fade-in');
   tr.dataset.linkedinurl = row.linkedinurl;
 
-  const checkboxCell = document.createElement('td');
-  checkboxCell.className = 'checkbox-cell';
-  checkboxCell.style.textAlign = 'center';
-  checkboxCell.style.width = '45px';
-  
-  // Determine if profile has been assessed
-  let hasAssessment = false;
-  let cached = null;
-  try {
-      if (window.__sv_namecard) {
-          cached = window.__sv_namecard.getCardCache(row.linkedinurl);
-      }
-  } catch(e) {}
-  
-  if (row.experience && (row.experience.includes('Assessment') || row.experience.match(/\d+%/))) {
-      hasAssessment = true;
-  }
-  if (cached && cached.assessmentHTML) {
-      hasAssessment = true;
-  }
-  
-  if (!hasAssessment) {
-      // BEFORE ASSESSMENT: Show checkbox for selection
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'row-select';
-      if(isRowDetailDisabled(row.linkedinurl) || isRowDetailCompleted(row.linkedinurl)){
-        cb.disabled = true;
-        cb.title = isRowDetailCompleted(row.linkedinurl) ? 'Completed (View)' : 'Disabled after View action';
-      }
-      cb.addEventListener('change', showDeleteIfNeeded);
-      checkboxCell.appendChild(cb);
-  } else {
-      // AFTER ASSESSMENT: Show tick or cross icon based on score
-      const cachedScore = (cached && typeof cached.totalScore === 'number') ? cached.totalScore : null;
-      const scoreThreshold = 50;
-      
-      if (cachedScore !== null && cachedScore >= scoreThreshold) {
-          // ✓ PASS - Green tick icon
-          const tickIcon = document.createElement('button');
-          tickIcon.innerHTML = '✓';
-          tickIcon.className = 'score-icon';
-          tickIcon.style.cssText = 'width:25px; height:25px; border:2px solid #10b981; background:#d1fae5; color:#047857; border-radius:6px; cursor:pointer; font-size:16px; font-weight:bold; display:flex; align-items:center; justify-content:center; transition:all 0.2s;';
-          tickIcon.title = `Accept (Score: ${cachedScore.toFixed(1)}% ≥ 50%)`;
-          tickIcon.onclick = () => finalizeIndividualAssessment(row.linkedinurl, 'accept');
-          tickIcon.onmouseover = function() { this.style.transform = 'scale(1.15)'; this.style.boxShadow = '0 4px 8px rgba(16,185,129,0.3)'; };
-          tickIcon.onmouseout = function() { this.style.transform = 'scale(1)'; this.style.boxShadow = 'none'; };
-          checkboxCell.appendChild(tickIcon);
-      } else if (cachedScore !== null && cachedScore < scoreThreshold) {
-          // ✗ FAIL - Red cross icon
-          const crossIcon = document.createElement('button');
-          crossIcon.innerHTML = '✗';
-          crossIcon.className = 'score-icon';
-          crossIcon.style.cssText = 'width:25px; height:25px; border:2px solid #ef4444; background:#fee2e2; color:#dc2626; border-radius:6px; cursor:pointer; font-size:16px; font-weight:bold; display:flex; align-items:center; justify-content:center; transition:all 0.2s;';
-          crossIcon.title = `Rebate (Score: ${cachedScore.toFixed(1)}% < 50%)`;
-          crossIcon.onclick = () => finalizeIndividualAssessment(row.linkedinurl, 'rebate');
-          crossIcon.onmouseover = function() { this.style.transform = 'scale(1.15)'; this.style.boxShadow = '0 4px 8px rgba(239,68,68,0.3)'; };
-          crossIcon.onmouseout = function() { this.style.transform = 'scale(1)'; this.style.boxShadow = 'none'; };
-          checkboxCell.appendChild(crossIcon);
-      }
-  }
-  tr.appendChild(checkboxCell);
+  // Checkbox cell removed
 
   // Profile Picture Cell
   const picCell = document.createElement('td');
@@ -3104,15 +3041,15 @@ function buildRow(row) {
           setAssessmentActive(btn);
           
           persistDisabledDetailRow(tr.dataset.linkedinurl);
-          try {
-            const rowCheckbox = tr.querySelector('.row-select');
-            if (rowCheckbox && !rowCheckbox.disabled) {
-              rowCheckbox.checked = false;
-              rowCheckbox.disabled = true;
-              rowCheckbox.title = 'Disabled after View action';
-              showDeleteIfNeeded();
-            }
-          } catch(_){}
+          // try {
+          //   const rowCheckbox = tr.querySelector('.row-select');
+          //   if (rowCheckbox && !rowCheckbox.disabled) {
+          //     rowCheckbox.checked = false;
+          //     rowCheckbox.disabled = true;
+          //     rowCheckbox.title = 'Disabled after View action';
+          //     showDeleteIfNeeded();
+          //   }
+          // } catch(_){}
 
           const link = btn.dataset.profileUrl;
 
@@ -4110,8 +4047,8 @@ async function loadRows(page=1){
     renderPager();
   } finally {
     updateDisplayCounters();
-    deleteBtn.style.display='none';
-    selectAllCb.checked=false;
+    // deleteBtn.style.display='none';
+    // selectAllCb.checked=false;
   }
 }
 function renderTable(){
@@ -5670,10 +5607,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // New listener for Sort Score button
-    const sortBtn = document.getElementById('sortScoreBtn');
-    if(sortBtn) {
-        sortBtn.addEventListener('click', () => {
+    // Sort functionality moved to Match Level header
+    const matchLevelHeader = document.getElementById('matchLevelHeader');
+    if(matchLevelHeader) {
+        matchLevelHeader.addEventListener('click', () => {
             if(!rowsData || rowsData.length === 0) return;
             
             // Sort rowsData based on cached score or experience text
@@ -5733,7 +5670,7 @@ function renderPager(){
   prevBtn.disabled = currentPage <= 1;
   nextBtn.disabled = currentPage >= tp;
   pagerEl.style.display = tp > 1 ? 'flex' : 'none';
-  showDeleteIfNeeded();
+  // showDeleteIfNeeded();
 }
 
 async function deleteSelected() {
@@ -5743,7 +5680,7 @@ async function deleteSelected() {
   if (!selected.length) return;
   if (!confirm(`Delete ${selected.length} selected row(s)? This cannot be undone.`)) return;
   setStatus('Deleting…');
-  deleteBtn.disabled = true;
+  // deleteBtn.disabled = true;
 
   const baselineResults = document.getElementById('totalResults').textContent;
   const baselineTokensLeft = document.getElementById('tokensLeft').textContent;
@@ -5767,12 +5704,12 @@ async function deleteSelected() {
     document.getElementById('totalResults').textContent = baselineResults;
     document.getElementById('tokensLeft').textContent = baselineTokensLeft;
 
-    deleteBtn.style.display='none';
-    selectAllCb.checked=false;
+    // deleteBtn.style.display='none';
+    // selectAllCb.checked=false;
   } catch(e) {
     setStatus(e.message,'error');
   } finally {
-    deleteBtn.disabled=false;
+    // deleteBtn.disabled=false;
   }
 }
 
@@ -5809,13 +5746,13 @@ window.applyTokenDelta = async function(delta) {
     } catch(e) { console.error("Token update failed", e); }
 };
 
-selectAllCb.addEventListener('change', () => {
-  const checked = selectAllCb.checked;
-  document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
-  showDeleteIfNeeded();
-});
+// selectAllCb.addEventListener('change', () => {
+//   const checked = selectAllCb.checked;
+//   document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
+//   showDeleteIfNeeded();
+// });
 reloadBtn.addEventListener('click', async () => { await loadRows(currentPage); refreshAccountTokens(); });
-deleteBtn.addEventListener('click', deleteSelected);
+// deleteBtn.addEventListener('click', deleteSelected);
 
 function collectDisplayedRows() {
   const out = [];
