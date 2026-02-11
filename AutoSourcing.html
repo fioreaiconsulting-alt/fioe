@@ -784,13 +784,15 @@ function toggleSmartSearch() {
       content.classList.add('open');
       arrow.textContent = '▲';
       header.setAttribute('aria-expanded', 'true');
+      // Show advanced section when Smart Search Builder is expanded
+      updateSourcingSection();
     });
     
     panel.addEventListener('mouseleave', function() {
       content.classList.remove('open');
       arrow.textContent = '▼';
       header.setAttribute('aria-expanded', 'false');
-      // Check if sourcing section should be hidden when collapsed
+      // Check if sourcing section and advanced section should be hidden when collapsed
       updateSourcingSection();
     });
     
@@ -799,6 +801,8 @@ function toggleSmartSearch() {
       content.classList.add('open');
       arrow.textContent = '▲';
       header.setAttribute('aria-expanded', 'true');
+      // Show advanced section when Smart Search Builder is expanded
+      updateSourcingSection();
     });
     
     header.addEventListener('blur', function() {
@@ -808,7 +812,7 @@ function toggleSmartSearch() {
           content.classList.remove('open');
           arrow.textContent = '▼';
           header.setAttribute('aria-expanded', 'false');
-          // Check if sourcing section should be hidden when collapsed
+          // Check if sourcing section and advanced section should be hidden when collapsed
           updateSourcingSection();
         }
       }, 150);
@@ -1655,9 +1659,26 @@ function updateSourcingSection() {
   const isAnyToggleActive = (toggleJdToCandidates && toggleJdToCandidates.checked) || 
                             (toggleAiAssistedSearch && toggleAiAssistedSearch.checked);
   
+  // Check if Smart Search Builder is expanded
+  const smartSearchContent = document.getElementById('smartSearchContent');
+  const isSmartSearchExpanded = smartSearchContent && smartSearchContent.classList.contains('open');
+  
   // Show sourcing only if basic conditions are met AND at least one toggle is active
   const showSourcing = ((hasJobTitle && hasLocation) || jdUploaded) && isAnyToggleActive;
   const dynamicCompanyPreview = document.getElementById('dynamicCompanyPreview');
+  const advancedSection = document.getElementById('advancedSection');
+  
+  // Hide advanced section when Smart Search Builder is collapsed
+  if (advancedSection) {
+    if (!isSmartSearchExpanded) {
+      advancedSection.style.display = 'none';
+    } else {
+      // Only show advanced section if Smart Search Builder is expanded
+      // The hideAdvancedChk checkbox controls visibility within the section
+      advancedSection.style.display = '';
+    }
+  }
+  
   if (dynamicCompanyPreview) {
     if (showSourcing) {
       dynamicCompanyPreview.classList.remove('hidden');
@@ -1713,6 +1734,12 @@ function updateSourcingSection() {
     // Always hide sourcing section on page load/refresh
     if (dynamicCompanyPreview) {
       dynamicCompanyPreview.classList.add('hidden');
+    }
+    
+    // Hide advanced section by default (will be shown when Smart Search Builder is expanded)
+    const advancedSection = document.getElementById('advancedSection');
+    if (advancedSection) {
+      advancedSection.style.display = 'none';
     }
     
     // Set full frame on initial load since AI-Assisted Search starts off

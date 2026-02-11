@@ -2195,13 +2195,25 @@ async function getProcessGeography(linkedinurl) {
       // We should apply reference logic AFTER fetching the basic data to augment it.
   }
 
-  const tryFetch = async (val) => {
+  const tryFetch = async (val, retryCount = 0) => {
     if (!val) return null;
     const url = PROCESS_GEO_API + '?linkedin=' + encodeURIComponent(val);
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 1000;
+    
     try {
       const res = await fetch(url, { credentials: 'omit', cache: 'no-store' });
       if (!res.ok) {
+        // For 404/400 errors, don't retry - data doesn't exist
         if (res.status === 404 || res.status === 400) return null;
+        
+        // For server errors (5xx) or transient errors, retry
+        if (res.status >= 500 && retryCount < MAX_RETRIES) {
+          console.warn(`[View Details] Server error ${res.status}, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+          return tryFetch(val, retryCount + 1);
+        }
+        
         return null;
       }
       const data = await res.json().catch(()=>null);
@@ -2292,7 +2304,13 @@ async function getProcessGeography(linkedinurl) {
       
       return { geographic: geographic || '', country: country || '', seniority, job_family: jobFamily, sector, skillset, product, cv, exp, education, experience, tenure, vskillset };
     } catch (e) {
-      console.warn('PROCESS_GEO_API fetch error:', e);
+      console.error('[View Details] PROCESS_GEO_API fetch error:', e);
+      // Retry for network errors
+      if ((e.name === 'TypeError' || e.message.includes('network')) && retryCount < MAX_RETRIES) {
+        console.warn(`[View Details] Network error, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+        return tryFetch(val, retryCount + 1);
+      }
       return null;
     }
   };
@@ -5178,10 +5196,40 @@ function renderTable(){
 
           } catch(_){}
         } else {
+          // No data returned from database - show empty state message
           sectorEl.textContent = rowCountry || sector || '—';
+          
+          // Display user-friendly message in the details container
+          const errorNotice = document.createElement('div');
+          errorNotice.style.cssText = 'background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin: 16px 0; color: #92400e; font-size: 14px;';
+          errorNotice.innerHTML = '<strong>⚠️ No additional data available</strong><br/>The profile data could not be retrieved from the database. This may be due to:<br/>• The profile has not been fully processed yet<br/>• Network connectivity issues<br/>Please try refreshing the profile using the 🔄 Refresh button above.';
+          
+          // Insert notice after the profile picture container
+          const firstContainer = content.querySelector('div[style*="text-align: center"]');
+          if (firstContainer && firstContainer.nextSibling) {
+            firstContainer.parentNode.insertBefore(errorNotice, firstContainer.nextSibling);
+          } else {
+            content.insertBefore(errorNotice, content.firstChild);
+          }
         }
       } catch (e) {
-        console.warn('Failed to populate process geography for namecard', e);
+        console.error('[View Details] Failed to populate process geography for namecard:', e);
+        
+        // Display user-friendly error message
+        const errorNotice = document.createElement('div');
+        errorNotice.style.cssText = 'background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin: 16px 0; color: #991b1b; font-size: 14px;';
+        errorNotice.innerHTML = '<strong>❌ Unable to load details</strong><br/>An error occurred while retrieving profile data from the database.<br/>Please try again later or contact support if the problem persists.';
+        
+        // Insert notice after the profile picture container
+        const firstContainer = content.querySelector('div[style*="text-align: center"]');
+        if (firstContainer && firstContainer.nextSibling) {
+          firstContainer.parentNode.insertBefore(errorNotice, firstContainer.nextSibling);
+        } else {
+          content.insertBefore(errorNotice, content.firstChild);
+        }
+        
+        // Keep fallback values displayed
+        sectorEl.textContent = rowCountry || sector || '—';
       }
     })();
     
