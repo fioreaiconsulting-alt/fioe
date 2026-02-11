@@ -6480,6 +6480,12 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         job_title = obj.get("job_title", "")
         country = obj.get("country", "")
         
+        # Log product extraction for debugging
+        if product_list and len(product_list) > 0:
+            logger.info(f"[CV BG] Extracted {len(product_list)} products for {linkedinurl[:50]}: {product_list[:3]}")
+        else:
+            logger.warning(f"[CV BG] No products extracted for {linkedinurl[:50]} (company: {company})")
+        
         # Create skillset string without length limits (DB columns now TEXT type)
         skillset_raw = ",".join([str(s).strip() for s in skillset if str(s).strip()])
         skillset_str = skillset_raw
@@ -7005,8 +7011,12 @@ def process_bulk_assess():
                     try:
                         # Product could be JSON array or comma-separated string
                         product = json.loads(product_str) if product_str.startswith('[') else [s.strip() for s in product_str.split(',') if s.strip()]
+                        if product:
+                            logger.info(f"[BULK_ASSESS] Loaded {len(product)} products from DB for {linkedinurl[:50]}")
                     except:
                         product = [s.strip() for s in product_str.split(',') if s.strip()]
+                else:
+                    logger.info(f"[BULK_ASSESS] No product data in DB for {linkedinurl[:50]}")
             
             # Check if CV is uploaded - if not, skip assessment
             if not cv_data:
