@@ -1,0 +1,2658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AutoSourcing</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.ico">
+
+<!-- Theme Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&family=Orbitron:wght@400;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Shared Styles -->
+<link rel="stylesheet" href="sourcing_verify.css">
+
+<!-- Auth gate -->
+<script>
+(function(){
+  try{
+    var uname = sessionStorage.getItem('username') || localStorage.getItem('username');
+    if (!uname) {
+      var m = document.cookie && document.cookie.match(/(?:^|;\s*)username=([^;]+)/);
+      uname = m && m[1];
+      if (uname) { try { uname = decodeURIComponent(uname); } catch(_) {} }
+    }
+    if (uname && String(uname).trim()) {
+      window.__ACTIVE_USERNAME = String(uname).trim();
+    }
+    if (!uname || !String(uname).trim()) {
+      var next = encodeURIComponent(location.pathname + location.search + location.hash);
+      location.replace('/login.html?next=' + next);
+      return;
+    }
+
+    (function resolveUseridForSession(activeUsername){
+      try {
+        var existingUid = sessionStorage.getItem('userid') || localStorage.getItem('userid');
+        if (!existingUid) {
+            fetch('/user/resolve?username=' + encodeURIComponent(activeUsername), { method: 'GET', credentials: 'same-origin' })
+            .then(function(r){ return r.ok ? r.json() : null; })
+            .then(function(data){
+              var uid = data && (data.userid || data.userId || data.id);
+              if (uid && String(uid).trim()) {
+                uid = String(uid).trim();
+                try {
+                  sessionStorage.setItem('userid', uid);
+                  localStorage.setItem('userid', uid);
+                  document.cookie = 'userid=' + encodeURIComponent(uid) + '; path=/; max-age=2592000';
+                } catch(_){}
+                window.__ACTIVE_USERID = uid;
+              }
+            })
+            .catch(function(){ /* silent */ });
+        } else {
+          window.__ACTIVE_USERID = String(existingUid).trim();
+        }
+      } catch (_) {}
+    })(window.__ACTIVE_USERNAME);
+  } catch (e) {
+    try { location.replace('/login.html'); } catch(_) {}
+  }
+})();
+</script>
+
+<style>
+/* Layout Logic for Full-Screen App Feel */
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent body scroll; scroll internal containers instead */
+  background: var(--bg);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* Header: Fixed height, does not scroll */
+#sessionBanner {
+  flex: 0 0 auto;
+  margin: 24px 24px 16px 24px !important; /* Margins inside body flex */
+  border: 1px solid var(--neutral-border) !important;
+  box-shadow: var(--shadow) !important;
+  /* Constraint width */
+  width: calc(100% - 48px);
+  max-width: 1380px; 
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-sizing: border-box;
+  z-index: 10;
+}
+
+/* Main Panel: Flex item that grows and scrolls internally */
+.panel {
+  flex: 1 1 auto; /* Grow to fill space */
+  display: flex;
+  flex-direction: column;
+  width: calc(100% - 48px);
+  max-width: 1380px; 
+  margin: 0 auto 24px auto; /* Bottom margin for spacing */
+  padding: 24px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+  border: 1px solid var(--border);
+  box-sizing: border-box;
+  overflow-y: auto; /* Scroll ONLY inside this panel */
+  min-height: 0; /* Important for Firefox flex scrolling */
+}
+
+/* Scrollbar styling for the panel */
+.panel::-webkit-scrollbar { width: 8px; }
+.panel::-webkit-scrollbar-track { background: transparent; }
+.panel::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.1); border-radius: 4px; }
+.panel::-webkit-scrollbar-thumb:hover { background-color: rgba(0,0,0,0.2); }
+
+/* Grid Layout for Main Form */
+.main-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 35%) 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.main-grid.full-frame {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 900px) {
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+  /* On mobile, body might need scroll if panel is bad */
+  html, body { overflow: auto; height: auto; }
+  .panel { overflow: visible; height: auto; flex: none; }
+}
+
+/* Input Fields styling updates to match sourcing_verify.css theme */
+input[type=text], input[type=number], select, textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  box-sizing: border-box;
+  font-family: var(--theme-font);
+  transition: border-color .16s, box-shadow .16s;
+}
+
+input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
+}
+
+label {
+  display: block;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: .45px;
+  text-transform: uppercase;
+  margin: 0 0 6px 0;
+  color: var(--text-soft);
+}
+
+/* Utility classes adaptation */
+.flex-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hidden { display: none !important; }
+.helper { font-size: 12px; color: var(--text-soft); margin-top: 4px; }
+.error { color: var(--danger); margin-top: 8px; font-weight: 700; font-size: 13px; }
+
+/* Buttons specific to Sourcing */
+.primary {
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: #fff;
+  border: none;
+  padding: 12px 24px;
+  font-size: 15px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: .3px;
+  box-shadow: 0 8px 20px -8px rgba(7,54,121,.18);
+  font-family: var(--theme-font);
+  transition: transform .12s, box-shadow .12s;
+}
+.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px -8px rgba(76,130,184,.18);
+}
+.primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.mini-btn, .small-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 700;
+  font-family: var(--theme-font);
+  transition: all 0.15s;
+}
+.mini-btn:hover, .small-btn:hover {
+  background: #f6fbff;
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
+/* Chip Styles */
+.agg-box {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  color: var(--text);
+  padding: 4px 10px;
+  margin: 2px 4px 2px 0;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.tag-chip button {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-weight: 800;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: none;
+}
+.tag-chip button:hover { color: var(--danger); transform: none; box-shadow: none; }
+
+/* Dynamic Company Preview Area */
+#dynamicCompanyPreview {
+  background: var(--panel-alt);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--card-elev);
+}
+#dynamicCompanyHeader {
+  color: var(--accent);
+  font-size: 16px;
+  font-family: "Orbitron", sans-serif;
+  letter-spacing: 0.5px;
+}
+
+/* Suggestions & Advanced Section */
+.suggestions-wrapper {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-top: 20px;
+}
+.suggestions-wrapper h3 {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-top: 0;
+}
+
+/* Scrollbars */
+.suggestions-grid { max-height: 300px; overflow-y: auto; }
+.suggestions-grid-mini { max-height: 150px; overflow-y: auto; }
+
+/* iOS-style Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+  cursor: pointer;
+}
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #d1d5db;
+  border-radius: 24px;
+  transition: 0.3s;
+}
+.toggle-slider:before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.3s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-switch input:checked + .toggle-slider {
+  background-color: #10b981 !important;
+}
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(26px);
+}
+.toggle-switch .toggle-slider:hover {
+  opacity: 0.9;
+}
+
+/* Smart Search Builder Configuration Panel */
+.smart-search-panel {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.smart-search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.smart-search-header:hover {
+  background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%);
+}
+.smart-search-header span:first-child {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+.smart-search-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+.smart-search-content.open {
+  max-height: 500px;
+}
+.smart-search-toggles {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.toggle-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.toggle-item label {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* Clickable toggle bars */
+.toggle-bar {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  justify-content: center;
+}
+.toggle-bar:hover {
+  background: var(--accent-bg, #f0f9ff);
+  border-color: var(--accent);
+}
+.toggle-bar.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.toggle-bar.active span {
+  color: white;
+  font-weight: 700;
+}
+.toggle-bar span {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Highlight Button Special */
+.highlight-btn {
+  background: linear-gradient(180deg, #8b5cf6, #7c3aed);
+  box-shadow: 0 8px 18px rgba(139,92,246,0.15);
+  border: none;
+}
+.highlight-btn:hover {
+  background: linear-gradient(180deg, #9f7aea, #8b5cf6);
+  box-shadow: 0 12px 24px rgba(139,92,246,0.2);
+}
+
+/* Compact Hide Advanced Fields bar */
+#hideAdvancedToggle {
+  padding: 3px 5px;
+  font-size: 10px;
+}
+#hideAdvancedToggle span {
+  font-size: 10px;
+}
+
+/* Code blocks */
+pre {
+  background: #0f1724;
+  color: #e2e8f0;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-family: monospace;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid #1e293b;
+}
+
+/* Estimate Row */
+#estimateRow {
+  background: var(--metric-bg);
+  border: 1px solid var(--metric-border);
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  margin-top: 16px;
+}
+
+</style>
+</head>
+<body>
+  <!-- Header -->
+  <div id="sessionBanner" class="panel-header" style="background:#ffffff; padding: 12px 24px;">
+    <div id="bannerLeft" style="display:flex; align-items:center; gap:16px;">
+      <div id="avatarPill" class="table-avatar" style="width:48px; height:48px; font-size:18px; border-radius:12px; background:var(--accent); color:#fff; border:none; box-shadow:0 4px 10px rgba(7,54,121,0.2);"></div>
+      <div style="display:flex; flex-direction:column;">
+        <div id="welcomeText" style="font-weight:700; font-size:16px; color:var(--text); font-family:var(--theme-font);">Welcome</div>
+        <div id="welcomeHandle" style="font-size:13px; color:var(--text-soft);"></div>
+      </div>
+    </div>
+    <button id="logoutBtn" type="button" class="mini-btn" style="border-color:var(--border);">Logout</button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header" style="margin-bottom: 24px; padding-bottom: 0; border-bottom: none;">
+      <h1>AutoSourcing</h1>
+    </div>
+
+    <!-- Smart Search Builder Configuration Panel -->
+    <div class="smart-search-panel" id="smartSearchPanel">
+      <div class="smart-search-header" role="button" aria-expanded="false" aria-label="Smart Search Builder - Hover to expand or collapse" tabindex="0">
+        <span>Smart Search Builder</span>
+        <span id="smartSearchArrow" aria-hidden="true">▼</span>
+      </div>
+      <div class="smart-search-content" id="smartSearchContent">
+        <div class="smart-search-toggles">
+          <!-- JD to Candidates Toggle -->
+          <div class="toggle-item toggle-bar" id="toggleBarJdToCandidates" role="button" tabindex="0" aria-pressed="false">
+            <input type="checkbox" id="toggleJdToCandidates" style="display:none;">
+            <span>JD to Candidates</span>
+          </div>
+          <!-- AI-Assisted Search Toggle -->
+          <div class="toggle-item toggle-bar" id="toggleBarAiAssistedSearch" role="button" tabindex="0" aria-pressed="false">
+            <input type="checkbox" id="toggleAiAssistedSearch" style="display:none;">
+            <span>AI-Assisted Search</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Grid Layout -->
+    <div class="main-grid">
+      
+      <!-- Left Column: Inputs -->
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        
+
+
+        <!-- Job Title -->
+        <div data-field-section="aiAssistedSearch" data-ai-field="jobTitle">
+          <label for="jobTitleInput">Job Title</label>
+          <div class="flex-row">
+            <input id="jobTitleInput" type="text" placeholder="e.g. Clinical Research Associate">
+            <button type="button" class="mini-btn" id="addJobTitleBtn">Add</button>
+          </div>
+
+          <div id="jobTitleAggregator" class="agg-box hidden" aria-live="polite">
+            <div id="jobTitleChips" style="display:flex; flex-wrap:wrap;"></div>
+            <div class="compiled-line" style="margin-top:6px; font-size:11px; color:var(--text-soft);"><small>Job Title Group:</small> <code id="compiledJobTitleExpr" style="background:#f1f5f9; padding:2px 4px; border-radius:4px;"></code></div>
+          </div>
+
+          <div id="jobTitleSuggestionBox" class="suggestions-mini hidden" aria-live="polite" style="margin-top:8px; border:1px solid var(--border); padding:8px; border-radius:var(--radius-sm);">
+            <div class="suggestions-mini-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px; font-weight:700; color:var(--text-soft);">
+              <span>Job Title Suggestions</span>
+              <button type="button" id="jobTitleRefreshBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;">Refresh</button>
+            </div>
+            <div id="jobTitleSuggestionsGrid" class="suggestions-grid-mini" role="list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          </div>
+        </div>
+
+        <!-- Company Name -->
+        <div data-field-section="aiAssistedSearch" data-ai-field="companyName">
+          <label for="companyInput">Company Name</label>
+          <div class="flex-row">
+            <input id="companyInput" type="text" placeholder="e.g. Keywords Studios">
+            <button type="button" class="mini-btn" id="addCompanyBtn">Add</button>
+          </div>
+          <div id="companyAggregator" class="agg-box hidden" aria-live="polite">
+            <div id="companyChips" style="display:flex; flex-wrap:wrap;"></div>
+            <div class="compiled-line" style="margin-top:6px; font-size:11px; color:var(--text-soft);"><small>Company Group:</small> <code id="compiledCompanyExpr" style="background:#f1f5f9; padding:2px 4px; border-radius:4px;"></code></div>
+          </div>
+          
+          <div id="companySuggestionBox" class="suggestions-mini hidden" aria-live="polite" style="margin-top:8px; border:1px solid var(--border); padding:8px; border-radius:var(--radius-sm);">
+            <div class="suggestions-mini-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px; font-weight:700; color:var(--text-soft);">
+              <span>Company Suggestions</span>
+              <button type="button" id="companyRefreshBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;">Refresh</button>
+            </div>
+            <div id="companySuggestionsGrid" class="suggestions-grid-mini" role="list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          </div>
+        </div>
+
+        <!-- Spotlight Adjacent Skills -->
+        <div id="highlightTalentWrapper" class="hidden" data-field-section="aiAssistedSearch">
+          <button class="primary highlight-btn" id="highlightTalentBtn" aria-describedby="highlightHelper" style="width:100%;" title="Suggest roles and companies for your transferable skills.">Spotlight Adjacent Skills</button>
+          <div class="helper" id="highlightHelper" style="text-align:center;">Based on uploaded JD skills</div>
+        </div>
+
+        <!-- Location -->
+        <div data-field-section="aiAssistedSearch" data-ai-field="locationSector">
+          <label for="country">Location</label>
+          <input id="country" type="text" placeholder="e.g. Singapore">
+          <div class="helper">Maps to LinkedIn country domain.</div>
+          
+          <div style="margin-top:8px;">
+            <button type="button" id="activateTranslationBtn" class="small-btn">Activate Translation</button>
+            <div class="helper" id="translationNotice" style="display:none; color:var(--success-600);"></div>
+            <div class="helper" id="translationError" style="display:none; color:var(--danger);"></div>
+          </div>
+          <div style="margin-top:6px;">
+            <span id="activeTranslationTag" class="tag-chip hidden" style="background:var(--accent); color:#fff; border:none;">
+              <span id="activeTranslationLabel"></span>
+              <button type="button" id="deactivateTranslationBtn" style="color:#fff; margin-left:6px;">×</button>
+            </span>
+          </div>
+        </div>
+
+        <!-- Sector -->
+        <div data-field-section="aiAssistedSearch" data-ai-field="sector">
+          <label for="sectorSelect">Sector</label>
+          <select id="sectorSelect">
+            <option value="">Select a sector...</option>
+          </select>
+          <div id="sectorOtherWrapper" class="hidden" style="margin-top:8px;">
+            <input id="sectorOther" type="text" placeholder="Other (enter manually)">
+          </div>
+          <div id="sectorChipsWrap" class="agg-box hidden">
+            <div id="sectorChips" style="display:flex; flex-wrap:wrap;"></div>
+          </div>
+        </div>
+
+        <!-- Language -->
+        <div data-field-section="aiAssistedSearch" data-ai-field="preferredLanguage">
+          <label for="languageInput">Preferred Language</label>
+          <div class="flex-row">
+            <input id="languageInput" type="text" placeholder="e.g. Korean, Japanese">
+            <button type="button" class="mini-btn" id="addLanguageBtn">Add</button>
+          </div>
+          <div id="languageAggregator" class="agg-box hidden" aria-live="polite">
+            <div id="languageChips" style="display:flex; flex-wrap:wrap;"></div>
+            <div class="compiled-line" style="margin-top:6px; font-size:11px; color:var(--text-soft);"><small>Language Block:</small> <code id="compiledLanguageExpr" style="background:#f1f5f9; padding:2px 4px; border-radius:4px;"></code></div>
+          </div>
+        </div>
+
+        <!-- Seniority -->
+        <div data-field-section="aiAssistedSearch" data-ai-field="seniority">
+          <label for="senioritySelect">Seniority</label>
+          <select id="senioritySelect">
+            <option value="">(None)</option>
+            <option value="Associate">Associate</option>
+            <option value="Manager">Manager</option>
+            <option value="Director">Director</option>
+          </select>
+        </div>
+
+        <!-- Removed the skillAggregator here (moved to right column) -->
+
+      </div>
+      <!-- End Left Column -->
+
+      <!-- Right Column: Preview & Controls -->
+      <div style="display: flex; flex-direction: column; gap: 20px;">
+        
+        <div id="jobDescriptionColumnHolder">
+          <!-- Upload JD Section (Relocated) -->
+          <div data-field-section="jdToCandidates" style="margin-bottom:20px;">
+            <div id="jdDropZone" style="border:2px dashed var(--border); border-radius:var(--radius); padding:32px; text-align:center; background:var(--panel); cursor:pointer; transition:all 0.2s ease;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px; color:var(--accent); opacity:0.7;">
+                <path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+              </svg>
+              <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;">Drag & Drop your JD here</div>
+              <div style="font-size:12px; color:var(--text-soft); margin-bottom:12px;">or</div>
+              <input type="file" id="jdFileInput" accept=".pdf,.doc,.docx,.txt" style="display:none;">
+              <button type="button" id="browseJdBtn" class="mini-btn" style="padding:8px 20px; font-size:13px;">Browse Files</button>
+              <div id="jdFileName" style="font-size:12px; color:var(--text); margin-top:12px; font-weight:500;"></div>
+              <span id="jdUploadSpinner" class="spinner hidden" style="width:16px; height:16px; border-width:2px; margin-top:12px;"></span>
+            </div>
+          </div>
+
+          <div id="jdAnalysisBox" class="agg-box hidden" aria-live="polite" style="margin-top:12px;">
+            <strong>Job Description analysis</strong>
+            <div id="jdSummary" style="margin-top:8px;color:#083658;"></div>
+            <div id="jdTags" style="margin-top:8px;font-size:13px;color:#374151;"></div>
+            <!-- Skills explicitly not shown here per requirement -->
+          </div>
+
+          <!-- Skills - Inline input next to label -->
+          <div id="skillAggregator" class="agg-box hidden" aria-live="polite" aria-atomic="true" style="margin-top:12px;">
+            <div class="flex-row" style="align-items:center; margin-bottom:8px;">
+              <label for="skillInput" style="margin:0; padding:0; min-width:45px;">Skills</label>
+              <input id="skillInput" type="text" placeholder="e.g. Python, Java, SQL" style="flex:1;">
+              <button type="button" class="mini-btn" id="addSkillBtn">Add</button>
+            </div>
+            <div id="skillChips" style="display:flex; flex-wrap:wrap; margin-top:4px;"></div>
+          </div>
+        </div>
+
+        <div id="dynamicCompanyPreview" class="hidden" aria-live="polite">
+          <strong id="dynamicCompanyHeader"></strong>
+          <div class="section-divider" style="height:1px; background:var(--border); margin:12px 0;"></div>
+          
+          <!-- Hide Advanced Toggle - Now small button at top -->
+          <input id="hideAdvancedChk" type="checkbox" checked style="display:none;">
+          <div style="margin-bottom:16px;">
+            <button class="primary" id="hideAdvancedToggle" style="padding:8px 16px; font-size:13px;" aria-pressed="true">
+              <span>Hide advanced fields</span>
+            </button>
+          </div>
+
+          <div style="margin-top:16px;">
+            <div id="dynamicCompanyList" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          </div>
+          
+          <div id="sectorCompanyDisplay" class="agg-box hidden" aria-live="polite" style="margin-top:12px; background:var(--panel);">
+            <div class="subhead" style="font-size:11px; font-weight:700; color:var(--text-soft); margin-bottom:6px; text-transform:uppercase;">Sector-based Selections</div>
+            <div id="sectorCompanyList" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          </div>
+
+          <!-- Sourcing button - Now full width at bottom -->
+          <div id="previewControls" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:16px;">
+            <button class="primary" id="generateBtn" data-state="idle" style="padding:14px 40px; font-size:16px; width:100%;">Sourcing</button>
+          </div>
+        </div>
+
+        <div id="advancedSection">
+          
+          <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
+            <button type="button" class="mini-btn" id="copyFullQueryBtn" style="position:absolute; top:8px; right:8px;">Copy</button>
+            <strong style="font-size:13px; color:var(--text);">Compiled Boolean Query</strong>
+            <pre id="fullCompiledExpr" style="margin-top:8px;"></pre>
+            <div id="copyNotice" class="helper" style="display:none; color:var(--success-600);">Copied!</div>
+          </div>
+
+          <div id="aiSuggestionsContainer" class="suggestions-wrapper" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3>Suggestions</h3>
+              <button type="button" class="mini-btn highlight-btn" id="refreshSuggestionsBtn" style="color:#fff;">Refresh</button>
+            </div>
+            
+            <div id="sectorSuggestLoading" class="helper hidden">
+              <span class="spinner" style="width:12px; height:12px; vertical-align:middle;"></span> <span>Fetching sector-based suggestions…</span>
+            </div>
+            <div id="suggestionsLoading" class="helper hidden">
+              <span class="spinner" style="width:12px; height:12px; vertical-align:middle;"></span> <span>Generating alternatives…</span>
+            </div>
+            <div id="suggestionsError" class="error hidden" aria-live="polite"></div>
+            <div id="suggestionsGrid" class="suggestions-grid" aria-live="polite" style="display:flex; flex-direction:column; gap:16px;"></div>
+            <div id="suggestionsEmpty" class="helper hidden">No suggestions yet. Add inputs.</div>
+          </div>
+
+          <div id="estimateRow">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <span class="helper"><strong>Estimated results (pre-search):</strong></span>
+              <strong id="estimateValue" style="font-size:14px; color:var(--accent);">Add Job Title and Location</strong>
+              <span id="estimateSpinner" class="spinner hidden" style="width:14px; height:14px;"></span>
+              
+              <div style="flex-grow:1;"></div>
+              
+              <span class="helper" style="border-left:1px solid var(--metric-border); padding-left:12px;"><strong>Target Limit:</strong></span>
+              <input type="number" id="userTargetInput" min="10" max="200" step="10" value="50" style="width:70px; padding:6px;">
+            </div>
+            <div id="estimateNote" class="helper" style="margin-top:4px;">Updates as you add Company, Sector, Language, etc.</div>
+            <span id="channelEstimateValue" class="hidden"></span>
+          </div>
+
+          <div id="queriesSection" class="queries" style="margin-top:20px;"></div>
+
+          <div id="jobSection" class="agg-box hidden" style="margin-top:20px; border-color:var(--accent-border); background:var(--chip-bg);">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <strong style="font-size:13px; text-transform:uppercase; color:var(--text);">Job Status</strong> 
+              <span id="jobIdTag" class="ds-badge">Pending</span>
+            </div>
+            <div id="jobMessage" class="helper" style="margin-top:8px;">Pending...</div>
+            <div id="jobProgress" class="helper" style="margin-top:6px; font-weight:700; color:var(--accent);"></div>
+            <div id="jobCounts" class="helper" style="margin-top:6px;"></div>
+            <div id="jobUrls" class="helper hidden" style="margin-top:8px; max-height:100px; overflow-y:auto; background:#fff; padding:8px; border:1px solid var(--border);"></div>
+            <div id="downloadArea" class="helper" style="margin-top:12px; font-weight:700;"></div>
+          </div>
+
+        </div>
+        <!-- End Advanced Section -->
+
+      </div>
+      <!-- End Right Column -->
+    
+    </div>
+    <!-- End Main Grid -->
+  </div>
+
+<script>
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+function val(id){ const e=document.getElementById(id); return e?e.value.trim():""; }
+function normalizeSpaces(s){ return (s||"").replace(/\s+/g,' ').trim(); }
+function debounce(fn, delay=450){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),delay); }; }
+function escapeQuotes(s){ return (s||"").replace(/"/g,'\\"'); }
+function canonicalKey(s){ return (s||"").toLowerCase(); }
+function titleCase(s){ return (s||"").toLowerCase().replace(/(?:^|[\s\/'-])([a-z\u00C0-\u024F])/g,(m,c)=>m.replace(c,c.toUpperCase())); }
+function dedupe(arr){ const out=[]; const seen=new Set(); arr.forEach(x=>{ const k=canonicalKey(x); if(!seen.has(k)){ seen.add(k); out.push(x);} }); return out; }
+function escapeHtml(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function toggleSmartSearch() {
+  const content = document.getElementById('smartSearchContent');
+  const arrow = document.getElementById('smartSearchArrow');
+  const header = document.querySelector('.smart-search-header');
+  const isOpen = content.classList.contains('open');
+  
+  content.classList.toggle('open');
+  arrow.textContent = content.classList.contains('open') ? '▲' : '▼';
+  
+  // Update aria-expanded for accessibility
+  if (header) {
+    header.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
+  }
+}
+
+// Setup hover and keyboard behavior for Smart Search Builder
+(function setupSmartSearchHover() {
+  const panel = document.getElementById('smartSearchPanel');
+  const content = document.getElementById('smartSearchContent');
+  const arrow = document.getElementById('smartSearchArrow');
+  const header = document.querySelector('.smart-search-header');
+  
+  if (panel && content && arrow && header) {
+    // Hover behavior for mouse users
+    panel.addEventListener('mouseenter', function() {
+      content.classList.add('open');
+      arrow.textContent = '▲';
+      header.setAttribute('aria-expanded', 'true');
+    });
+    
+    panel.addEventListener('mouseleave', function() {
+      content.classList.remove('open');
+      arrow.textContent = '▼';
+      header.setAttribute('aria-expanded', 'false');
+      // Check if sourcing section should be hidden when collapsed
+      updateSourcingSection();
+    });
+    
+    // Focus behavior for keyboard users (equivalent to hover)
+    header.addEventListener('focus', function() {
+      content.classList.add('open');
+      arrow.textContent = '▲';
+      header.setAttribute('aria-expanded', 'true');
+    });
+    
+    header.addEventListener('blur', function() {
+      // Delay to allow clicking on items inside the panel
+      setTimeout(function() {
+        if (!panel.contains(document.activeElement)) {
+          content.classList.remove('open');
+          arrow.textContent = '▼';
+          header.setAttribute('aria-expanded', 'false');
+          // Check if sourcing section should be hidden when collapsed
+          updateSourcingSection();
+        }
+      }, 150);
+    });
+  }
+})();
+
+function persistRoleTag(tag) {
+  try {
+    const v = (tag || '').toString().trim();
+    sessionStorage.setItem('role_tag', v);
+    localStorage.setItem('role_tag', v);
+    document.cookie = 'role_tag=' + encodeURIComponent(v) + '; path=/; max-age=' + (30*24*60*60);
+  } catch (e) {}
+}
+
+async function updateRoleTagOnServer(tag) {
+  try {
+    const username = window.__ACTIVE_USERNAME;
+    if (!username) return;
+    const cleaned = (tag||'').toString().trim();
+    const attempts = [
+      { method: 'POST', url: '/user/update_role_tag', body: { username: username, role_tag: cleaned, ts: Date.now() } },
+      { method: 'GET', url: '/user/update_role_tag?username=' + encodeURIComponent(username) + '&role_tag=' + encodeURIComponent(cleaned) },
+      { method: 'GET', url: '/user/resolve?username=' + encodeURIComponent(username) + '&role_tag=' + encodeURIComponent(cleaned) }
+    ];
+    for (const a of attempts) {
+      try {
+        let res;
+        if (a.method === 'POST') {
+          res = await fetch(a.url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(a.body)
+          });
+        } else {
+          res = await fetch(a.url, { method: 'GET', credentials: 'same-origin' });
+        }
+        if (res && res.ok) return;
+        if (res && (res.status === 405 || res.status === 404)) { continue; }
+      } catch(e){ continue; }
+    }
+  } catch (e) {}
+}
+
+function buildRoleTagFromJobTitles() {
+  if (typeof jobTitles !== 'undefined' && Array.isArray(jobTitles) && jobTitles.length > 0) {
+    return jobTitles.map(function(t){ return (t || '').trim(); }).filter(Boolean).join(', ');
+  }
+  return '';
+}
+
+const jobTitles=[]; const jobTitleIndex=new Set();
+const companies=[]; const companyIndex=new Set();
+const languages=[]; const languageIndex=new Set();
+let autoSuggestedCompanies=[];
+const suppressedAutoSuggestedCompanies=new Set();
+const userSkills = []; const userSkillIndex = new Set();
+const estimateValueEl = document.getElementById('estimateValue');
+const estimateSpinnerEl = document.getElementById('estimateSpinner');
+let SEARCH_RULES_CACHE = null;
+const LOCAL_RULE_DEFAULTS = { base:{default:50,withJobAndLocation:60}, weights:{company:8,sector:6,language:5,currentRole:4,channel:3,platform:2}, per_additional:{company:2,sector:2,language:1,channel:1,platform:1}, bounds:{min:10,max:100} };
+
+let jdSuggestionsLocked = false;    // when true, suggestion lists are frozen
+let jdJobSnapshot = [];             // frozen job suggestion list
+let jdCompanySnapshot = [];         // frozen company suggestion list
+
+function captureSuggestionSnapshot(){
+  try{
+    const jobSet = new Set();
+    const companySet = new Set();
+    if(lastGeneralSuggestions && lastGeneralSuggestions.job && Array.isArray(lastGeneralSuggestions.job.related)){
+      lastGeneralSuggestions.job.related.forEach(s => { const n = normalizeSpaces(s); if(n) jobSet.add(n); });
+    }
+    if(lastGeneralSuggestions && lastGeneralSuggestions.company && Array.isArray(lastGeneralSuggestions.company.related)){
+      lastGeneralSuggestions.company.related.forEach(s => { const n = normalizeSpaces(s); if(n) companySet.add(n); });
+    }
+    sectorJobRelated.forEach(s => { const n=normalizeSpaces(s); if(n) jobSet.add(n); });
+    sectorCompanyRelated.forEach(s => { const n=normalizeSpaces(s); if(n) companySet.add(n); });
+    jdJobSnapshot = Array.from(jobSet);
+    jdCompanySnapshot = Array.from(companySet);
+  }catch(e){ jdJobSnapshot = []; jdCompanySnapshot = []; }
+}
+
+async function loadSearchRulesIfNeeded(){
+  if (SEARCH_RULES_CACHE !== null) return SEARCH_RULES_CACHE;
+  try {
+    const res = await fetch('search_target_rules.json',{cache:'no-store'});
+    SEARCH_RULES_CACHE = res.ok ? await res.json() : LOCAL_RULE_DEFAULTS;
+  } catch { SEARCH_RULES_CACHE = LOCAL_RULE_DEFAULTS; }
+  return SEARCH_RULES_CACHE;
+}
+function localComputeEstimate(ctx, rules){
+  const r=rules||LOCAL_RULE_DEFAULTS;
+  if(!(ctx.jobTitles?.length) || !ctx.country) return null;
+  let target = parseInt((r.base?.withJobAndLocation ?? r.base?.default ?? 50),10);
+  const uniqCompanies=new Set();
+  (ctx.companyNames||[]).forEach(c=>c&&uniqCompanies.add(c.toLowerCase()));
+  (ctx.autoSuggestedCompanyNames||[]).forEach(c=>c&&uniqCompanies.add(c.toLowerCase()));
+  const companyCount=uniqCompanies.size;
+  const sectorCount=new Set((ctx.selectedSectors||[]).map(s=>s.toLowerCase()).filter(Boolean)).size;
+  const languageCount=new Set((ctx.languages||[]).map(l=>l.toLowerCase()).filter(Boolean)).size;
+  if(companyCount>0){ target -= (r.weights.company||0); if(companyCount>1) target -= (r.per_additional.company||0)*(companyCount-1); }
+  if(sectorCount>0){ target -= (r.weights.sector||0); if(sectorCount>1) target -= (r.per_additional.sector||0)*(sectorCount-1); }
+  if(languageCount>0){ target -= (r.weights.language||0); if(languageCount>1) target -= (r.per_additional.language||0)*(languageCount-1); }
+  if(ctx.currentRole) target -= (r.weights.currentRole||0);
+  const minV=r.bounds.min??10, maxV=r.bounds.max??100;
+  if(target<minV) target=minV; if(target>maxV) target=maxV;
+  return target;
+}
+async function previewEstimateFromServer(ctx){
+  try{
+    const res=await fetch('/preview_target',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ctx)});
+    if(res.ok){ const d=await res.json(); if(typeof d.target==='number') return d.target; }
+  }catch{}
+  return null;
+}
+const debouncedEstimate=debounce(updateEstimate,300);
+function scheduleEstimateUpdate(){ debouncedEstimate(); }
+function buildChannelXrayQueries() { return []; }
+
+async function updateEstimate(){
+  const channelCount = 0;
+  const platformCount = 0;
+  const currentRole = false; 
+  const ctx={
+    jobTitles:jobTitles.slice(),
+    country:val('country'),
+    companyNames:companies.slice(),
+    autoSuggestedCompanyNames:autoSuggestedCompanies.slice(),
+    selectedSectors:selectedSectors.slice(),
+    languages:languages.slice(),
+    currentRole:currentRole,
+    seniority: val('senioritySelect'),
+    channelGaming: false, channelMedia: false, channelTechnology: false, xrayPlatformQueries: [], channelCount, platformCount
+  };
+  estimateSpinnerEl.classList.remove('hidden');
+  let target=await previewEstimateFromServer(ctx);
+  if(target==null){ const rules=await loadSearchRulesIfNeeded(); target=localComputeEstimate(ctx,rules); }
+  estimateValueEl.textContent = target==null ? 'Add Job Title and Location' : `≈ ${target}`;
+  estimateSpinnerEl.classList.add('hidden');
+}
+
+let lastDynamicPreviewCompanies = [];
+const jobTitleInput=document.getElementById('jobTitleInput');
+const senioritySelect=document.getElementById('senioritySelect');
+
+document.getElementById('addJobTitleBtn').addEventListener('click', addJobTitle);
+jobTitleInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); addJobTitle(); } });
+senioritySelect.addEventListener('change', ()=>{ updateFullCompiledQuery(); scheduleEstimateUpdate(); });
+
+function addJobTitle(){
+  const raw=normalizeSpaces(val('jobTitleInput')); if(!raw) return;
+  const k=canonicalKey(raw); if(jobTitleIndex.has(k)){ jobTitleInput.value=''; return; }
+  jobTitles.push(raw); jobTitleIndex.add(k); jobTitleInput.value='';
+  renderJobTitleChips(); updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate();
+  try { 
+    const rt = buildRoleTagFromJobTitles();
+    persistRoleTag(rt);
+    updateRoleTagOnServer(rt);
+  } catch(e) {}
+  // Update sourcing section visibility
+  updateSourcingSection();
+}
+function removeJobTitle(i){
+  const v=jobTitles.splice(i,1)[0];
+  if(v){ jobTitleIndex.delete(canonicalKey(v)); renderJobTitleChips(); updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate(); }
+  try { 
+    const rt = buildRoleTagFromJobTitles();
+    persistRoleTag(rt);
+    updateRoleTagOnServer(rt);
+  } catch(e) {}
+  // Update sourcing section visibility
+  updateSourcingSection();
+}
+function renderJobTitleChips(){
+  const wrap=document.getElementById('jobTitleAggregator'); const box=document.getElementById('jobTitleChips');
+  box.innerHTML=''; if(jobTitles.length===0){ wrap.classList.add('hidden'); document.getElementById('compiledJobTitleExpr').textContent=''; return; }
+  wrap.classList.remove('hidden');
+  jobTitles.forEach((t,i)=>{ 
+    const d=document.createElement('div'); d.className='tag-chip';
+    d.innerHTML=`<span>${t}</span><button type="button" aria-label="Remove ${t}">&times;</button>`;
+    d.querySelector('button').addEventListener('click', ()=>removeJobTitle(i));
+    box.appendChild(d);
+  });
+  document.getElementById('compiledJobTitleExpr').textContent=buildJobTitleExpression();
+}
+function buildJobTitleExpressionAugmented(){
+  if(!jobTitles.length) return '';
+  if(jobTitles.length===1) return `"${escapeQuotes(jobTitles[0])}"`;
+  return '('+jobTitles.map(t=>`"${escapeQuotes(t)}"`).join(' OR ')+')';
+}
+function buildJobTitleExpression(){
+  if(!jobTitles.length) return '';
+  if(jobTitles.length===1) return `"${escapeQuotes(jobTitles[0])}"`;
+  return '('+jobTitles.map(t=>`"${escapeQuotes(t)}"`).join(' OR ')+')';
+}
+
+const languageInput=document.getElementById('languageInput');
+document.getElementById('addLanguageBtn').addEventListener('click', ()=>addLanguage(languageInput.value));
+languageInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); addLanguage(languageInput.value); } });
+
+function addLanguage(raw){
+  const text=(raw||'').trim(); if(!text) return;
+  const parts=text.split(/[,]+/).map(x=>titleCase(normalizeSpaces(x))).filter(Boolean);
+  for(const p of parts){ const k=canonicalKey(p); if(!languageIndex.has(k)){ languageIndex.add(k); languages.push(p); } }
+  languageInput.value=''; renderLanguageChips(); updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate();
+}
+function removeLanguage(i){
+  const v=languages.splice(i,1)[0];
+  if(v){ languageIndex.delete(canonicalKey(v)); renderLanguageChips(); updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate(); }
+}
+function renderLanguageChips(){
+  const wrap=document.getElementById('languageAggregator'); const box=document.getElementById('languageChips');
+  box.innerHTML=''; if(!languages.length){ wrap.classList.add('hidden'); document.getElementById('compiledLanguageExpr').textContent=''; return; }
+  wrap.classList.remove('hidden');
+  languages.forEach((l,i)=>{ 
+    const d=document.createElement('div'); d.className='tag-chip';
+    d.innerHTML=`<span>${l}</span><button type="button" aria-label="Remove ${l}">&times;</button>`;
+    d.querySelector('button').addEventListener('click', ()=>removeLanguage(i));
+    box.appendChild(d);
+  });
+  document.getElementById('compiledLanguageExpr').textContent=buildLanguageXrayBlock();
+}
+function generateLanguageVariants(lang){ return [`${lang}`,`Native ${lang}`,`${lang} Language`,`Speaks ${lang}`,`${lang} Speaker`,`${lang} Proficiency`,`Bilingual ${lang}-English`,`${lang} as a first language`,`${lang} mother tongue`]; }
+function buildLanguageXrayBlock(){
+  if(!languages.length) return '';
+  const groups=languages.map(l=>`(${generateLanguageVariants(l).map(v=>`"${escapeQuotes(v)}"`).join(' OR ')})`);
+  return `( ${groups.join(' OR ')} )`;
+}
+
+const companyInput=document.getElementById('companyInput');
+document.getElementById('addCompanyBtn').addEventListener('click', addCompany);
+companyInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); addCompany(); } });
+
+function addCompany(){
+  const raw=normalizeSpaces(val('companyInput')); if(!raw) return;
+  const k=canonicalKey(raw); if(companyIndex.has(k)){ companyInput.value=''; return; }
+  companies.push(raw); companyIndex.add(k); companyInput.value='';
+  renderCompanyChips(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate(); updateDynamicCompanyPreview();
+}
+function removeCompany(i){
+  const v=companies.splice(i,1)[0];
+  if(v){ companyIndex.delete(canonicalKey(v)); renderCompanyChips(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate(); updateDynamicCompanyPreview(); }
+}
+function renderCompanyChips(){
+  const wrap=document.getElementById('companyAggregator'); const box=document.getElementById('companyChips');
+  box.innerHTML=''; if(companies.length===0){ wrap.classList.add('hidden'); document.getElementById('compiledCompanyExpr').textContent=''; return; }
+  wrap.classList.remove('hidden');
+  companies.forEach((c,i)=>{
+    const d=document.createElement('div'); d.className='tag-chip';
+    d.innerHTML=`<span>${c}</span><button type="button" aria-label="Remove ${c}">&times;</button>`;
+    d.querySelector('button').addEventListener('click', ()=>removeCompany(i));
+    box.appendChild(d);
+  });
+  document.getElementById('compiledCompanyExpr').textContent=buildCompanyExpression();
+}
+function buildCompanyExpression(){
+  if(!companies.length) return '';
+  if(companies.length===1) return `"${escapeQuotes(companies[0])}"`;
+  return '('+companies.map(c=>`"${escapeQuotes(c)}"`).join(' OR ')+')';
+}
+function buildEffectiveCompanyExpression(){
+  let combined;
+  if(selectedSectors.length > 0){
+    combined = dedupe([
+      ...companies,
+      ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
+    ]);
+  } else {
+    combined = dedupe([...companies, ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))]);
+  }
+  if(!combined.length) return '';
+  if(combined.length===1) return `"${escapeQuotes(combined[0])}"`;
+  return '('+combined.map(c=>`"${escapeQuotes(c)}"`).join(' OR ')+')';
+}
+
+// Note: includeRelatedCompaniesChk checkbox has been removed per requirements
+// Setting includeRelated to always be false
+const includeRelatedCompaniesChk = null; // Removed element
+(function augmentIncludeRelatedCompanies(){
+  // This function is disabled since the "Include relevant companies" checkbox was removed
+  // The functionality is preserved but the checkbox control is gone
+})();
+
+let sectorsData=[]; const sectorSelect=document.getElementById('sectorSelect');
+const sectorOtherWrapper=document.getElementById('sectorOtherWrapper');
+const sectorOtherInput=document.getElementById('sectorOther');
+const sectorChipsWrap=document.getElementById('sectorChipsWrap');
+const sectorChips=document.getElementById('sectorChips');
+const selectedSectors=[];
+let sectorCompanyDisplay=document.getElementById('sectorCompanyDisplay');
+const sectorCompanyList=document.getElementById('sectorCompanyList');
+
+fetch('sectors.json').then(r=>r.json()).then(j=>{ sectorsData=j||[]; populateSectorSelect(); }).catch(()=>{});
+function sectorPathLabel(parts){ return parts.filter(Boolean).join(' > '); }
+function populateSectorSelect(){
+  sectorSelect.innerHTML='<option value="">Select a sector...</option>';
+  const labels=[];
+  (sectorsData||[]).forEach(s=>{
+    const sect=s.sector;
+    if(Array.isArray(s.subsectors)&&s.subsectors.length){
+      s.subsectors.forEach(ss=>{
+        const sub=ss.name;
+        if(Array.isArray(ss.industries)&&ss.industries.length){
+          ss.industries.forEach(ind=>labels.push(sectorPathLabel([sect,sub,ind])));
+        } else labels.push(sectorPathLabel([sect,sub]));
+      });
+    }
+    if(Array.isArray(s.domains)&&s.domains.length){ s.domains.forEach(d=>labels.push(sectorPathLabel([sect,d]))); }
+    if((!s.subsectors||!s.subsectors.length)&&(!s.domains||!s.domains.length)){ labels.push(sectorPathLabel([sect])); }
+  });
+  const seen=new Set();
+  labels.sort().forEach(l=>{ const k=l.toLowerCase(); if(seen.has(k)) return; seen.add(k); const o=document.createElement('option'); o.value=l; o.textContent=l; sectorSelect.appendChild(o); });
+  const other=document.createElement('option'); other.value="__OTHER__"; other.textContent="Other (enter manually)"; sectorSelect.appendChild(other);
+}
+
+function renderSectorChips(){
+  sectorChips.innerHTML=''; if(!selectedSectors.length){ sectorChipsWrap.classList.add('hidden'); hide(sectorCompanyDisplay); updateDynamicCompanyPreview(true); updateDynamicCompanyHeader(); return; }
+  sectorChipsWrap.classList.remove('hidden');
+  selectedSectors.forEach((label,idx)=>{
+    const chip=document.createElement('div'); chip.className='tag-chip';
+    chip.innerHTML=`<span>${label}</span><button type="button" aria-label="Remove sector">&times;</button>`;
+    chip.querySelector('button').addEventListener('click',()=>{
+      selectedSectors.splice(idx,1); renderSectorChips(); scheduleSectorSuggestionsUpdate(); scheduleSuggestionsUpdate(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); updateDynamicCompanyPreview(); updateDynamicCompanyHeader();
+    });
+    sectorChips.appendChild(chip);
+  });
+  renderEffectiveCompaniesDisplay();
+  updateDynamicCompanyHeader();
+}
+sectorSelect.addEventListener('change',()=>{
+  if(sectorSelect.value==="__OTHER__"){ show(sectorOtherWrapper); } else hide(sectorOtherWrapper);
+  if(sectorSelect.value && sectorSelect.value!=="__OTHER__" && !selectedSectors.includes(sectorSelect.value)){
+    selectedSectors.push(sectorSelect.value); renderSectorChips(); scheduleSectorSuggestionsUpdate(); scheduleSuggestionsUpdate(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); updateDynamicCompanyPreview();
+  }
+});
+sectorOtherInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addManualSector(); }});
+function addManualSector(){
+  const v=normalizeSpaces(sectorOtherInput.value); if(!v) return;
+  if(!selectedSectors.includes(v)){ selectedSectors.push(v); renderSectorChips(); scheduleSectorSuggestionsUpdate(); scheduleSuggestionsUpdate(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); updateDynamicCompanyPreview(); }
+  sectorOtherInput.value='';
+}
+
+function renderEffectiveCompaniesDisplay(){
+  if(!selectedSectors.length){ hide(sectorCompanyDisplay); sectorCompanyList.innerHTML=''; updateDynamicCompanyPreview(); return; }
+  const effective=dedupe([...companies,...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))]);
+  if(!effective.length){ hide(sectorCompanyDisplay); sectorCompanyList.innerHTML=''; updateDynamicCompanyPreview(); return; }
+  show(sectorCompanyDisplay); sectorCompanyList.innerHTML='';
+  const dynamicSet = new Set((lastDynamicPreviewCompanies || []).map(x => x.toLowerCase()));
+  effective.forEach(name=>{
+    if(dynamicSet.has(name.toLowerCase())) return;
+    const isUser=companyIndex.has(name.toLowerCase());
+    const div=document.createElement('div'); div.className='tag-chip';
+    div.innerHTML=`<span>${name}</span><button type="button" aria-label="Remove ${name}">×</button>`;
+    div.querySelector('button').addEventListener('click',()=>{
+      if(isUser){
+        const idx=companies.findIndex(c=>c.toLowerCase()===name.toLowerCase());
+        if(idx>-1) removeCompany(idx);
+      } else {
+        suppressedAutoSuggestedCompanies.add(name.toLowerCase());
+        updateFullCompiledQuery(); renderEffectiveCompaniesDisplay();
+      }
+    });
+    sectorCompanyList.appendChild(div);
+  });
+  updateDynamicCompanyPreview();
+}
+
+function collectCompanyDropdownOptions(){
+  const sectorCompanies=[...sectorCompanyRelated];
+  const suggestionCompanies=[...(lastGeneralSuggestions?.company?.related||[])];
+  const userCompanies=[...companies];
+  const autoSuggested=[...autoSuggestedCompanies];
+  const merged=dedupe([...sectorCompanies, ...suggestionCompanies, ...userCompanies, ...autoSuggested])
+    .filter(x=>x && !suppressedAutoSuggestedCompanies.has(x.toLowerCase()));
+  return merged.slice(0,200);
+}
+
+/* ---------- AFFECTED SECTION: normalized sector suggestions & preview logic ---------- */
+
+/*
+  Fixes:
+   - Normalize sectorJobRelated and sectorCompanyRelated from server (trim/normalize).
+   - When sectors are selected, only include companies that match the sector (avoid merging all autoSuggestedCompanies).
+   - Use case-insensitive comparisons when matching companies to sector lists.
+   - Ensure JD-snapshot lock (jdSuggestionsLocked) still allows sector-derived items to appear: merge sector results into snapshot view.
+*/
+
+let sectorJobRelated=new Set(); let sectorCompanyRelated=new Set();
+
+/* Debounced fetch already declared earlier; below we update how results are stored */
+async function fetchSectorSuggestions(){
+  const activeStr=getActiveSectorString();
+  const sectors= selectedSectors.length ? selectedSectors.slice() : (activeStr ? [activeStr] : []);
+  const userJobTitle=normalizeSpaces(val('jobTitleInput')) || (jobTitles[0]||'');
+  const userCompany=normalizeSpaces(val('companyInput')) || (companies[0]||'');
+  if(!sectors.length && !userJobTitle && !userCompany && !languages.length){
+    sectorJobRelated=new Set(); sectorCompanyRelated=new Set();
+    if(lastGeneralSuggestions) renderSuggestionsAggregated(lastGeneralSuggestions);
+    updateDynamicCompanyPreview(); return;
+  }
+  show(sectorSuggestLoading);
+  try{
+    const res=await fetch('/sector_suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ selectedSectors:sectors, userJobTitle, userCompany, languages })});
+    if(!res.ok){ return; }
+    const data=await res.json();
+
+    // Normalize incoming lists to avoid casing/whitespace mismatches later
+    const rawJobArr = Array.isArray(data?.job?.related) ? data.job.related : [];
+    const rawCompArr = Array.isArray(data?.company?.related) ? data.company.related : [];
+
+    // Normalize but preserve display text by storing normalized keys (for matching) and display strings elsewhere where needed.
+    const normalizedJobs = rawJobArr.map(s => normalizeSpaces(s)).filter(Boolean);
+    const normalizedComps = rawCompArr.map(s => normalizeSpaces(s)).filter(Boolean);
+
+    sectorJobRelated = new Set(normalizedJobs);
+    sectorCompanyRelated = new Set(normalizedComps);
+
+    // Re-render aggregated suggestions (ensure they incorporate sector-derived items)
+    if(lastGeneralSuggestions) renderSuggestionsAggregated(lastGeneralSuggestions);
+    else renderSuggestionsAggregated({ job:{related:[]}, company:{related:[]} });
+  }catch(e){ }
+  finally{ hide(sectorSuggestLoading); }
+}
+
+function updateDynamicCompanyPreview(clear=false){
+  const previewWrap=document.getElementById('dynamicCompanyPreview');
+  const listEl=document.getElementById('dynamicCompanyList');
+  const sectorEl=document.getElementById('sectorCompanyDisplay');
+  if(clear){
+    if(previewWrap) hide(previewWrap);
+    if(listEl) listEl.innerHTML='';
+    lastDynamicPreviewCompanies = [];
+    return;
+  }
+
+  let opts = [];
+  if (selectedSectors.length > 0) {
+    // Start from strict sector-derived companies
+    const sectorArr = Array.from(sectorCompanyRelated || []).map(s => s.toString());
+    // autoRelated: only autoSuggested entries that match sectorCompanyRelated (case-insensitive)
+    const autoRelated = (autoSuggestedCompanies || []).filter(c => {
+      const cKey = canonicalKey(normalizeSpaces(c));
+      for (const s of sectorCompanyRelated) {
+        if (canonicalKey(s) === cKey) return true;
+      }
+      return false;
+    });
+
+    // IMPORTANT: Do NOT unconditionally include all autoSuggestedCompanies when a sector is selected.
+    // Only combine sectorArr + autoRelated (which are sector-matched).
+    const candidates = dedupe([...sectorArr, ...autoRelated]);
+
+    // Exclude companies the user explicitly added (we show separate user chips elsewhere)
+    opts = candidates.filter(c => c && !companyIndex.has(canonicalKey(c)));
+  } else {
+    opts = collectCompanyDropdownOptions();
+  }
+
+  if(listEl){
+    listEl.innerHTML=opts.map(o=>`<div class="tag-chip"><span>${escapeHtml(o)}</span></div>`).join('');
+  }
+  lastDynamicPreviewCompanies = opts.map(x => x.toString());
+
+  const hasDropdown=opts.length>0;
+  const sectorVisible=sectorEl && !sectorEl.classList.contains('hidden');
+  if(previewWrap){
+    if(hasDropdown || sectorVisible){ show(previewWrap); } else { hide(previewWrap); }
+  }
+}
+
+/* ---------- END AFFECTED SECTION ---------- */
+
+function toggleAdvancedVisibility(hide){
+  const advanced = document.getElementById('advancedSection');
+  if(!advanced) return;
+  if(hide) { advanced.style.display = 'none'; } else { advanced.style.display = ''; }
+}
+
+function persistHideAdvancedPreference(val){
+  try { localStorage.setItem('hide_advanced', val ? '1' : '0'); } catch(e){}}
+function getHideAdvancedPreference(){
+  try { return localStorage.getItem('hide_advanced') === '1'; } catch(e){ return false; }
+}
+
+async function createStructuredExcelWithDropdown(csvName){
+  try{
+    const resp=await fetch('/download/'+encodeURIComponent(csvName));
+    if(!resp.ok) return;
+    const text=await resp.text();
+    const lines=text.split(/\r?\n/);
+    if(lines.length<2) return;
+    const rows=lines.filter(l=>l.trim()).map(l=>l.split(','));
+    const header=rows[0];
+    const idxCompany=header.indexOf('Company');
+    if(idxCompany===-1) return;
+    const idxName=header.indexOf('Name');
+    const idxJob=header.indexOf('JobTitle');
+    const idxCountry=header.indexOf('Country');
+    const idxLinkedIn=header.indexOf('LinkedInURL');
+    const companyOptions=collectCompanyDropdownOptions();
+    if(!companyOptions.length) return;
+
+    const escXml = s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const listSheetRows = companyOptions.map(opt=>`<Row><Cell><Data ss:Type="String">${escXml(opt)}</Data></Cell></Row>`).join('');
+    const dataRows = rows.slice(1).map(r=>{
+      function cell(val){ return `<Cell><Data ss:Type="String">${escXml(val||'')}</Data></Cell>`; }
+      return `<Row>${cell(r[idxName]||'')}${cell(r[idxCompany]||'')}${cell(r[idxJob]||'')}${cell(r[idxCountry]||'')}${cell(r[idxLinkedIn]||'')}</Row>`;
+    }).join('');
+
+    const validationFormula = `=Companies!$A$1:$A$${companyOptions.length}`;
+    const xml =
+`<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Worksheet ss:Name="Results">
+  <Table ss:ExpandedColumnCount="5" ss:DefaultColumnWidth="120">
+   <Row ss:AutoFitHeight="1">
+    <Cell><Data ss:Type="String">Name</Data></Cell>
+    <Cell><Data ss:Type="String">Company</Data></Cell>
+    <Cell><Data ss:Type="String">JobTitle</Data></Cell>
+    <Cell><Data ss:Type="String">Country</Data></Cell>
+    <Cell><Data ss:Type="String">LinkedInURL</Data></Cell>
+   </Row>
+   ${dataRows}
+  </Table>
+  <DataValidations>
+    <DataValidation xmlns="urn:schemas-microsoft-com:office:excel" Type="List" AllowBlank="1" ShowInputMessage="1" ShowErrorMessage="1" ErrorStyle="Stop"
+      IMEMode="" Operator="Between" sqref="R2C2:R${rows.length}C2">
+      <Formula1>${validationFormula}</Formula1>
+    </DataValidation>
+  </DataValidations>
+ </Worksheet>
+ <Worksheet ss:Name="Companies">
+  <Table ss:ExpandedColumnCount="1" ss:DefaultColumnWidth="160">
+   <Row ss:AutoFitHeight="1"><Cell><Data ss:Type="String">Companies</Data></Cell></Row>
+   ${listSheetRows}
+  </Table>
+ </Worksheet>
+</Workbook>`;
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=csvName.replace(/_results\.csv$/,'_with_dropdown.xls');
+    a.textContent='Download Excel (Company Dropdown)';
+    a.style.marginLeft='6px';
+    const dl=document.getElementById('downloadArea');
+    dl.appendChild(document.createTextNode(' · '));
+    dl.appendChild(a);
+  }catch(e){ console.warn('Dropdown Excel generation failed',e); }
+}
+
+let countryCodeMap={};
+fetch('countrycode.json').then(r=>r.json()).then(j=>countryCodeMap=j).catch(()=>{});
+function lookupCountryCode(c){
+  if(!c) return null;
+  const n=c.trim().toLowerCase();
+  if(n.length===2) return n;
+  for(const [code,name] of Object.entries(countryCodeMap)){
+    if(code.toLowerCase()===n) return code.toLowerCase();
+    if((name||'').toString().trim().toLowerCase()===n) return code.toLowerCase();
+  }
+  const direct=countryCodeMap[n];
+  if(typeof direct==='string' && direct.length===2) return direct.toLowerCase();
+  return null;
+}
+
+let translationActive=false, translationLang=null, translationLangName=null;
+const activeTag=document.getElementById('activeTranslationTag');
+const activeLabel=document.getElementById('activeTranslationLabel');
+const translationNotice=document.getElementById('translationNotice');
+const translationError=document.getElementById('translationError');
+
+const LANG_NAME={ en:"English", fr:"French", de:"German", es:"Spanish", it:"Italian", pt:"Portuguese", ja:"Japanese", zh:"Chinese", nl:"Dutch", pl:"Polish", cs:"Czech", ru:"Russian", ko:"Korean", vi:"Vietnamese", th:"Thai", sv:"Swedish", no:"Norwegian", da:"Danish", fi:"Finnish", tr:"Turkey" };
+const COUNTRY_LANG_MAP={ "singapore":"en","france":"fr","canada":"fr","germany":"de","austria":"de","switzerland":"de","spain":"es","mexico":"es","argentina":"es","chile":"es","colombia":"es","italy":"it","brazil":"pt","portugal":"pt","japan":"ja","china":"zh","taiwan":"zh","hong kong":"zh","india":"en","united states":"en","united kingdom":"en","uk":"en","england":"en","ireland":"en","belgium":"fr","netherlands":"nl","poland":"pl","czech republic":"cs","czechia":"cs","russia":"ru","korea":"ko","south korea":"ko","vietnam":"vi","thailand":"th","sweden":"sv","norway":"no","denmark":"da","finland":"fi","turkey":"tr" };
+function detectTargetLang(country){ return COUNTRY_LANG_MAP[(country||'').toLowerCase()]||null; }
+function setTranslationMode(active,langCode=null){
+  translationActive=!!active; translationLang=active ? langCode : null;
+  translationLangName=active&&langCode?(LANG_NAME[langCode]||langCode.toUpperCase()):null;
+  updateTranslationUI(); updateTranslateButtonsState();
+}
+function updateTranslationUI(){
+  translationError.style.display='none';
+  if(translationActive && translationLang){
+    activeLabel.textContent=`Translation: ${translationLangName} (${translationLang})`;
+    activeTag.classList.remove('hidden'); translationNotice.style.display='block';
+    translationNotice.textContent=`Translate buttons target ${translationLangName}.`;
+  } else {
+    activeTag.classList.add('hidden'); translationNotice.style.display='none';
+  }
+}
+document.getElementById('activateTranslationBtn').addEventListener('click',()=>{
+  const c=val('country'); translationError.style.display='none'; translationNotice.style.display='none';
+  if(!c){ translationError.textContent='Enter a Location before activating translation.'; translationError.style.display='block'; return; }
+  const lang=detectTargetLang(c);
+  if(!lang){ translationError.textContent='Cannot determine translation language from Location.'; translationError.style.display='block'; setTranslationMode(false); return; }
+  setTranslationMode(true,lang);
+});
+document.getElementById('deactivateTranslationBtn').addEventListener('click',()=>setTranslationMode(false));
+document.getElementById('country').addEventListener('input',()=>{
+  if(translationActive){
+    const lang=detectTargetLang(val('country'));
+    if(!lang || lang!==translationLang) setTranslationMode(false);
+  }
+  updateSectorEnabledState();
+  updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleEstimateUpdate();
+});
+
+const suggestionsContainer=document.getElementById('aiSuggestionsContainer');
+const suggestionsGrid=document.getElementById('suggestionsGrid');
+const suggestionsLoading=document.getElementById('suggestionsLoading');
+const suggestionsEmpty=document.getElementById('suggestionsEmpty');
+const suggestionsError=document.getElementById('suggestionsError');
+
+async function refreshSuggestionsAll(){
+  try {
+    lastSuggestionHash = '';
+    if (suggestionsLoading) show(suggestionsLoading);
+    await Promise.allSettled([ fetchSectorSuggestions(), fetchSuggestions(true) ]);
+  } finally {
+    if (suggestionsLoading) hide(suggestionsLoading);
+  }
+}
+const globalRefreshBtn = document.getElementById('refreshSuggestionsBtn');
+if (globalRefreshBtn) globalRefreshBtn.addEventListener('click', ()=>{ refreshSuggestionsAll(); });
+
+let lastSuggestionHash=''; let lastGeneralSuggestions=null;
+
+function hashSuggestionPayload(){ return JSON.stringify({ jobs:[...jobTitles].sort(), companies:[...companies].sort(), languages:[...languages].sort(), sectors:[...selectedSectors].sort(), currentRole:false, country:(val('country')||'').toLowerCase() }); }
+function scheduleSuggestionsUpdate(){ debouncedFetchSuggestions(); }
+const debouncedFetchSuggestions=debounce(fetchSuggestions,500);
+
+async function fetchSuggestions(force=false){
+  if (suggestionsContainer) suggestionsContainer.style.display='none';
+  const country=val('country');
+  if(!jobTitles.length && !companies.length && !selectedSectors.length && !languages.length && !country){
+    if(suggestionsGrid) suggestionsGrid.innerHTML=''; if(suggestionsError) suggestionsError.classList.add('hidden'); if(suggestionsEmpty) suggestionsEmpty.classList.remove('hidden'); updateDynamicCompanyPreview(true); return;
+  }
+  const h=hashSuggestionPayload();
+  if(!force && h===lastSuggestionHash && lastGeneralSuggestions){ renderSuggestionsAggregated(lastGeneralSuggestions); return; }
+  lastSuggestionHash=h;
+  if(suggestionsLoading) suggestionsLoading.classList.remove('hidden'); suggestionsEmpty.classList.add('hidden'); if(suggestionsError) suggestionsError.classList.add('hidden');
+  try{
+    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country })});
+    if(!res.ok) throw new Error(await res.text());
+    const data=await res.json(); lastGeneralSuggestions=data; renderSuggestionsAggregated(data);
+  }catch(e){ if(suggestionsError){ suggestionsError.textContent='Suggestion error: '+e.message; suggestionsError.classList.remove('hidden'); } }
+  finally{ if(suggestionsLoading) suggestionsLoading.classList.add('hidden'); }
+}
+
+/*
+  Modified renderSuggestionsAggregated to respect JD-upload freezing:
+  - If jdSuggestionsLocked is true, the suggestion lists (jobs/companies) are taken from the captured snapshot (jdJobSnapshot/jdCompanySnapshot)
+  - This prevents suggestions from expanding when the user adds more fields after a JD upload.
+  - autoSuggestedCompanies is populated always so left suggestions appear on the right.
+  - IMPORTANT: even when snapshots are used, include sector-derived related items so sector selections still surface.
+*/
+function renderSuggestionsAggregated(data){
+  let jobList = [];
+  let companyList = [];
+
+  if (jdSuggestionsLocked) {
+    jobList = Array.isArray(jdJobSnapshot) ? jdJobSnapshot.slice() : [];
+    companyList = Array.isArray(jdCompanySnapshot) ? jdCompanySnapshot.slice() : [];
+
+    // Merge sector-derived suggestions into snapshot view so sector selections still show results
+    try {
+      if (sectorJobRelated && sectorJobRelated.size) {
+        const mergedJobs = dedupe([...jobList, ...Array.from(sectorJobRelated).map(s => normalizeSpaces(s))]);
+        jobList = mergedJobs;
+      }
+      if (sectorCompanyRelated && sectorCompanyRelated.size) {
+        const mergedComps = dedupe([...companyList, ...Array.from(sectorCompanyRelated).map(s => normalizeSpaces(s))]);
+        companyList = mergedComps;
+      }
+    } catch (eMerge) {
+      // If merge fails, proceed with snapshot-only lists
+      console.warn('Failed merging sector suggestions into JD snapshot view', eMerge);
+    }
+  } else {
+    const jobSet=new Set(), companySet=new Set();
+    (data.job?.related||[]).forEach(s=>{ const n=normalizeSpaces(s); if(n) jobSet.add(n); });
+    (data.company?.related||[]).forEach(s=>{ const n=normalizeSpaces(s); if(n) companySet.add(n); });
+    sectorJobRelated.forEach(s=>{ const n=normalizeSpaces(s); if(n) jobSet.add(n); });
+    sectorCompanyRelated.forEach(s=>{ const n=normalizeSpaces(s); if(n) companySet.add(n); });
+
+    jobList = Array.from(jobSet);
+    companyList = Array.from(companySet);
+  }
+
+  // ALWAYS populate autoSuggestedCompanies from the companyList so left suggestions appear on the right
+  autoSuggestedCompanies = dedupe([...companyList]).filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()));
+
+  try {
+    const jobBox = document.getElementById('jobTitleSuggestionBox');
+    const jobGrid = document.getElementById('jobTitleSuggestionsGrid');
+    if (jobGrid) {
+      jobGrid.innerHTML = '';
+      Array.from(jobList).forEach(text => jobGrid.appendChild(makeChip(text,'job',false)));
+      if (jobList.length>0) show(jobBox); else hide(jobBox);
+    }
+  } catch(e){}
+
+  try {
+    const companyBox = document.getElementById('companySuggestionBox');
+    const companyGrid = document.getElementById('companySuggestionsGrid');
+    if (companyGrid) {
+      companyGrid.innerHTML = '';
+      Array.from(companyList).forEach(text => companyGrid.appendChild(makeChip(text,'company',false)));
+      if (companyList.length>0) show(companyBox); else hide(companyBox);
+    }
+  } catch(e){}
+
+  if(suggestionsGrid) suggestionsGrid.innerHTML='';
+  if(jobList.length > 0 && suggestionsGrid) suggestionsGrid.appendChild(buildSuggestionGroup('Job Title Suggestions',[...jobList],'job'));
+  if(companyList.length > 0 && suggestionsGrid) suggestionsGrid.appendChild(buildSuggestionGroup('Company Suggestions',[...companyList],'company'));
+  if(!jobList.length && !companyList.length) if(suggestionsEmpty) suggestionsEmpty.classList.remove('hidden'); else if(suggestionsEmpty) suggestionsEmpty.classList.add('hidden');
+  updateFullCompiledQuery(); updateTranslateButtonsState(); scheduleEstimateUpdate(); renderEffectiveCompaniesDisplay();
+  updateDynamicCompanyPreview();
+}
+
+function buildSuggestionGroup(title,list,type){
+  const group=document.createElement('div'); group.style.border='1px solid var(--border)'; group.style.borderRadius='8px'; group.style.padding='10px';
+  const h=document.createElement('div'); h.style.fontSize='12px'; h.style.fontWeight='700'; h.style.marginBottom='8px'; h.textContent=title; group.appendChild(h);
+  const box=document.createElement('div'); box.style.display='flex'; box.style.flexWrap='wrap'; box.style.gap='8px';
+  list.forEach(text=>box.appendChild(makeChip(text,type,false)));
+  group.appendChild(box); return group;
+}
+function makeChip(text,type,isExisting){
+  const chip=document.createElement('div'); chip.className='tag-chip';
+  chip.innerHTML=`<span class="suggest-text" data-original="${text}" data-translated="0">${text}</span>`;
+  const trans=document.createElement('button'); trans.className='translate-btn'; trans.type='button'; trans.textContent='文'; trans.style.marginLeft='6px';
+  const add=document.createElement('button'); add.type='button'; add.textContent=isExisting?'✓':'+'; add.disabled=!!isExisting; add.style.marginLeft='4px';
+  
+  function updateAddState(){
+    const span=chip.querySelector('.suggest-text'); const v=span.textContent; const key=canonicalKey(v);
+    const set= type==='job'?jobTitleIndex:companyIndex;
+    if(set.has(key)){ add.textContent='✓'; add.disabled=true; } else { add.textContent='+'; add.disabled=false; }
+  }
+  add.addEventListener('click',()=>{
+    const v=chip.querySelector('.suggest-text').textContent;
+    if(type==='job'){ if(!jobTitleIndex.has(canonicalKey(v))){ jobTitles.push(v); jobTitleIndex.add(canonicalKey(v)); renderJobTitleChips(); } }
+    else { if(!companyIndex.has(canonicalKey(v))){ companies.push(v); companyIndex.add(canonicalKey(v)); renderCompanyChips(); } }
+    updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleSectorSuggestionsUpdate(); scheduleEstimateUpdate(); updateAddState(); renderEffectiveCompaniesDisplay(); updateDynamicCompanyPreview();
+  });
+  trans.addEventListener('click',async ()=>{ 
+    if(!translationActive||!translationLang){ trans.title='Activate Translation first.'; return; }
+    if(trans.classList.contains('loading')) return; trans.classList.add('loading');
+    const span=chip.querySelector('.suggest-text'); const original=span.getAttribute('data-original');
+    try{
+      const translated= type==='job'?await translateJobTitle(original,translationLang):await translateCompany(original,translationLang);
+      if(translated && translated.value && translated.value.toLowerCase()!==original.toLowerCase()){ span.textContent=translated.value; span.dataset.translated="1"; }
+      updateAddState(); updateDynamicCompanyPreview();
+    }catch(e){ console.warn('Translation error',e); } finally { trans.classList.remove('loading'); }
+  });
+  chip.appendChild(trans); chip.appendChild(add); updateAddState(); return chip;
+}
+function updateTranslateButtonsState(){
+  document.querySelectorAll('.translate-btn').forEach(btn=>{
+    if(translationActive && translationLang){ btn.disabled=false; btn.title=`Target: ${translationLangName}`; }
+    else { btn.disabled=false; btn.title='Activate Translation (Location) to enable translation.'; }
+  });
+}
+
+const sectorSuggestLoading=document.getElementById('sectorSuggestLoading');
+const debouncedFetchSectorSuggestions=debounce(fetchSectorSuggestions,500);
+function scheduleSectorSuggestionsUpdate(){ debouncedFetchSectorSuggestions(); }
+function getActiveSectorString(){
+  if(selectedSectors.length>0) return selectedSectors[selectedSectors.length-1];
+  if(sectorSelect.value && sectorSelect.value!=="__OTHER__") return sectorSelect.value;
+  const manual=normalizeSpaces(sectorOtherInput.value); return manual||'';
+}
+
+function buildSeniorityExclusion(){
+  const v=val('senioritySelect'); if(v==="Associate") return "-Manager"; if(v==="Manager") return "-Director"; return "";
+}
+function buildFullBooleanQuery(){
+  const lang=buildLanguageXrayBlock();
+  const jAug=buildJobTitleExpressionAugmented();
+  const cur='';
+  const companyEffBlock=buildEffectiveCompanyExpression();
+  const cc=lookupCountryCode(val('country'));
+  const site= cc?`site:${cc}.linkedin.com/in`:`site:linkedin.com/in`;
+  const seniorityExcl=buildSeniorityExclusion();
+  const blocks=[]; if(lang) blocks.push(lang); if(jAug) blocks.push(jAug); if(cur) blocks.push(cur); if(companyEffBlock) blocks.push(companyEffBlock);
+  let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl;
+  return q;
+}
+function updateFullCompiledQuery(){
+  const full=buildFullBooleanQuery();
+  const wrap=document.getElementById('fullQueryWrapper'); const pre=document.getElementById('fullCompiledExpr');
+  if(full){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
+  const copyNoticeEl=document.getElementById('copyNotice'); if(copyNoticeEl) copyNoticeEl.style.display='none';
+}
+document.getElementById('copyFullQueryBtn').addEventListener('click',()=>{
+  const q=buildFullBooleanQuery(); if(!q) return;
+  navigator.clipboard.writeText(q).then(()=>{ const n=document.getElementById('copyNotice'); if(n) { n.style.display='block'; setTimeout(()=>n.style.display='none',1400); } });
+});
+
+(function initPreviewControls(){
+  try{
+    const genBtn = document.getElementById('generateBtn');
+    const hideChk = document.getElementById('hideAdvancedChk');
+    const advPref = getHideAdvancedPreference();
+    if(hideChk){
+      hideChk.checked = advPref;
+      hideChk.addEventListener('change', function(){
+        const hide = !!this.checked;
+        persistHideAdvancedPreference(hide);
+        toggleAdvancedVisibility(hide);
+      });
+    }
+    toggleAdvancedVisibility(advPref);
+    if(genBtn){ genBtn.addEventListener('click', primaryButtonHandler); }
+  }catch(e){ }
+})();
+
+// Global state for JD upload tracking
+let jdUploaded = false;
+
+// Global function to update Sourcing section visibility
+// Depends on: jobTitles (defined at line 817), jdUploaded (defined below)
+function updateSourcingSection() {
+  // Show sourcing section if:
+  // 1. User has both Job Title and Location, OR
+  // 2. JD has been uploaded
+  // 3. AND at least one of the Smart Search toggles is enabled (JD to candidates OR AI-Assisted Search)
+  
+  // Check if jobTitles array has entries (global array defined at line 817)
+  const hasJobTitle = jobTitles && jobTitles.length > 0;
+  // Check if location field has value
+  const countryEl = document.getElementById('country');
+  const hasLocation = countryEl && countryEl.value.trim().length > 0;
+  
+  // Check Smart Search Builder toggles
+  const toggleJdToCandidates = document.getElementById('toggleJdToCandidates');
+  const toggleAiAssistedSearch = document.getElementById('toggleAiAssistedSearch');
+  const isAnyToggleActive = (toggleJdToCandidates && toggleJdToCandidates.checked) || 
+                            (toggleAiAssistedSearch && toggleAiAssistedSearch.checked);
+  
+  // Show sourcing only if basic conditions are met AND at least one toggle is active
+  const showSourcing = ((hasJobTitle && hasLocation) || jdUploaded) && isAnyToggleActive;
+  const dynamicCompanyPreview = document.getElementById('dynamicCompanyPreview');
+  if (dynamicCompanyPreview) {
+    if (showSourcing) {
+      dynamicCompanyPreview.classList.remove('hidden');
+      // Save state to localStorage
+      try { 
+        localStorage.setItem('sourcing_section_visible', '1'); 
+      } catch(e){
+        console.warn('Failed to save sourcing section visibility to localStorage:', e);
+      }
+    } else {
+      dynamicCompanyPreview.classList.add('hidden');
+      // Save state to localStorage
+      try { 
+        localStorage.setItem('sourcing_section_visible', '0'); 
+      } catch(e){
+        console.warn('Failed to save sourcing section visibility to localStorage:', e);
+      }
+    }
+  }
+}
+
+(function initSmartSearchToggles(){
+  try{
+    // Get the two main toggle elements
+    const toggleJdToCandidates = document.getElementById('toggleJdToCandidates');
+    const toggleAiAssistedSearch = document.getElementById('toggleAiAssistedSearch');
+    const skillAggregator = document.getElementById('skillAggregator');
+    const hideAdvancedToggle = document.getElementById('hideAdvancedToggle');
+    const dynamicCompanyPreview = document.getElementById('dynamicCompanyPreview');
+
+    // Helper function to update Skills and Hide Advance visibility
+    // Skills and Hide Advanced are now always visible per user request
+    // Note: hideAdvancedToggle now lives inside dynamicCompanyPreview and is controlled by that container
+    function updateConditionalSections() {
+      if (skillAggregator) {
+        skillAggregator.style.display = '';
+      }
+      // hideAdvancedToggle is now inside dynamicCompanyPreview, so it doesn't need separate control here
+    }
+
+    // Initially hide all sections since toggles start as OFF
+    document.querySelectorAll('[data-field-section="jdToCandidates"]').forEach(section => {
+      section.style.display = 'none';
+    });
+    document.querySelectorAll('[data-field-section="aiAssistedSearch"]').forEach(section => {
+      section.style.display = 'none';
+    });
+    
+    // Show Skills by default (user requested these features remain visible)
+    // Note: hideAdvancedToggle now lives inside dynamicCompanyPreview and is controlled by that container
+    if (skillAggregator) skillAggregator.style.display = '';
+    
+    // Always hide sourcing section on page load/refresh
+    if (dynamicCompanyPreview) {
+      dynamicCompanyPreview.classList.add('hidden');
+    }
+    
+    // Set full frame on initial load since AI-Assisted Search starts off
+    const mainGrid = document.querySelector('.main-grid');
+    if (mainGrid && !toggleAiAssistedSearch.checked) {
+      mainGrid.classList.add('full-frame');
+    }
+
+    // Toggle bar click handlers
+    const toggleBarJdToCandidates = document.getElementById('toggleBarJdToCandidates');
+    const toggleBarAiAssistedSearch = document.getElementById('toggleBarAiAssistedSearch');
+    
+    function toggleJdToCandidatesHandler() {
+      toggleJdToCandidates.checked = !toggleJdToCandidates.checked;
+      toggleBarJdToCandidates.classList.toggle('active', toggleJdToCandidates.checked);
+      toggleBarJdToCandidates.setAttribute('aria-pressed', toggleJdToCandidates.checked);
+      toggleJdToCandidates.dispatchEvent(new Event('change'));
+    }
+    
+    function toggleAiAssistedSearchHandler() {
+      toggleAiAssistedSearch.checked = !toggleAiAssistedSearch.checked;
+      toggleBarAiAssistedSearch.classList.toggle('active', toggleAiAssistedSearch.checked);
+      toggleBarAiAssistedSearch.setAttribute('aria-pressed', toggleAiAssistedSearch.checked);
+      toggleAiAssistedSearch.dispatchEvent(new Event('change'));
+    }
+    
+    if (toggleBarJdToCandidates) {
+      toggleBarJdToCandidates.addEventListener('click', toggleJdToCandidatesHandler);
+      toggleBarJdToCandidates.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleJdToCandidatesHandler();
+        }
+      });
+    }
+    
+    if (toggleBarAiAssistedSearch) {
+      toggleBarAiAssistedSearch.addEventListener('click', toggleAiAssistedSearchHandler);
+      toggleBarAiAssistedSearch.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleAiAssistedSearchHandler();
+        }
+      });
+    }
+
+    // Toggle button click handler for Hide Advanced
+    const hideAdvancedBtn = document.getElementById('hideAdvancedToggle');
+    const hideAdvancedChk = document.getElementById('hideAdvancedChk');
+    
+    function updateHideAdvancedButton() {
+      if (hideAdvancedBtn && hideAdvancedChk) {
+        const span = hideAdvancedBtn.querySelector('span');
+        if (span) {
+          span.textContent = hideAdvancedChk.checked ? 'Show advanced fields' : 'Hide advanced fields';
+        }
+        hideAdvancedBtn.setAttribute('aria-pressed', hideAdvancedChk.checked ? 'true' : 'false');
+      }
+    }
+    
+    function toggleHideAdvancedHandler() {
+      if (hideAdvancedChk) {
+        hideAdvancedChk.checked = !hideAdvancedChk.checked;
+        updateHideAdvancedButton();
+        hideAdvancedChk.dispatchEvent(new Event('change'));
+      }
+    }
+    
+    if (hideAdvancedBtn && hideAdvancedChk) {
+      hideAdvancedBtn.addEventListener('click', toggleHideAdvancedHandler);
+      // Set initial button state
+      updateHideAdvancedButton();
+    }
+
+    // Toggle for JD to Candidates section
+    if (toggleJdToCandidates) {
+      toggleJdToCandidates.addEventListener('change', function() {
+        const sections = document.querySelectorAll('[data-field-section="jdToCandidates"]');
+        sections.forEach(section => {
+          section.style.display = this.checked ? '' : 'none';
+        });
+        updateSourcingSection();
+      });
+    }
+
+    // Toggle for AI-Assisted Search section
+    if (toggleAiAssistedSearch) {
+      toggleAiAssistedSearch.addEventListener('change', function() {
+        const sections = document.querySelectorAll('[data-field-section="aiAssistedSearch"]');
+        sections.forEach(section => {
+          section.style.display = this.checked ? '' : 'none';
+        });
+        
+        // Update full frame behavior
+        const mainGrid = document.querySelector('.main-grid');
+        if (mainGrid) {
+          if (!this.checked) {
+            mainGrid.classList.add('full-frame');
+          } else {
+            mainGrid.classList.remove('full-frame');
+          }
+        }
+        
+        // Spotlight Adjacent Skills should only show when AI-Assisted Search is active
+        // The visibility is controlled by data-field-section="aiAssistedSearch"
+        // Force hide when AI-Assisted Search is turned off
+        const highlightWrapper = document.getElementById('highlightTalentWrapper');
+        if (highlightWrapper && !this.checked) {
+          highlightWrapper.classList.add('hidden');
+        }
+        
+        updateSourcingSection();
+      });
+    }
+
+    // Monitor JD upload
+    const jdFileInput = document.getElementById('jdFileInput');
+    if (jdFileInput) {
+      jdFileInput.addEventListener('change', function() {
+        if (this.files && this.files.length > 0) {
+          jdUploaded = true;
+          updateConditionalSections();
+          updateSourcingSection();
+        }
+      });
+    }
+
+    // Monitor Location changes
+    const countryInput = document.getElementById('country');
+    if (countryInput) {
+      countryInput.addEventListener('input', function() {
+        updateSourcingSection();
+      });
+      countryInput.addEventListener('change', function() {
+        updateSourcingSection();
+      });
+    }
+
+    // Initial update
+    updateSourcingSection();
+    updateConditionalSections();
+  }catch(e){ console.warn('Smart search toggle init failed', e); }
+})();
+
+const jobTitleRefreshBtn = document.getElementById('jobTitleRefreshBtn');
+if (jobTitleRefreshBtn) jobTitleRefreshBtn.addEventListener('click', ()=>{ refreshSuggestionsAll(); });
+const companyRefreshBtn = document.getElementById('companyRefreshBtn');
+if (companyRefreshBtn) companyRefreshBtn.addEventListener('click', ()=>{ refreshSuggestionsAll(); });
+
+function encodeForGoogle(q){ return encodeURIComponent(q).replace(/%20/g,'+'); }
+
+function buildQueries(country){
+  const langBlock=buildLanguageXrayBlock();
+  const jobBlock=buildJobTitleExpressionAugmented();
+  const currentRoleBlock= '';
+  const companyEffBlock=buildEffectiveCompanyExpression();
+  const seniorityExcl=buildSeniorityExclusion();
+  const cc=lookupCountryCode(val('country'));
+  const site= cc?`site:${cc}.linkedin.com/in`:`site:linkedin.com/in`;
+  const baseBlocks=[]; if(langBlock) baseBlocks.push(langBlock); if(jobBlock) baseBlocks.push(jobBlock); if(currentRoleBlock) baseBlocks.push(currentRoleBlock);
+  const withCompaniesBlocks= companyEffBlock?[...baseBlocks,companyEffBlock]:[...baseBlocks];
+  function joinBlocks(blocks){
+    let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl; return q;
+  }
+  const primaryQuery=joinBlocks(withCompaniesBlocks);
+  const fallbackQuery=joinBlocks(baseBlocks);
+  const xray=buildChannelXrayQueries();
+  const primary=[{label:'LinkedIn', query:primaryQuery}, ...xray];
+
+  let fallback=[];
+  const userHasCompanies = companies.length > 0;
+  // Note: includeRelated checkbox removed per requirements. When users have companies,
+  // we only use the primary query with those companies. No fallback query is needed
+  // because we're not offering the option to include "relevant companies" - we only
+  // search for the companies explicitly specified by the user.
+  if (!userHasCompanies) {
+    // When no companies specified, provide fallback query without company filter
+    fallback = [{label:'LinkedIn(no-company)', query:fallbackQuery}];
+  }
+
+  return { primary, fallback };
+}
+function renderQueries(qs){
+  const container=document.getElementById('queriesSection');
+  container.innerHTML='<h2>Generated Queries</h2>';
+  qs.forEach(q=>{
+    const a=document.createElement('a');
+    a.href='https://www.google.com/search?q='+encodeForGoogle(q.query);
+    a.target='_blank'; a.rel='noopener noreferrer';
+    a.textContent=q.label+' → '+q.query; a.style.display='block'; a.style.margin='6px 0';
+    container.appendChild(a);
+  });
+}
+
+async function translateJobTitle(text,target){
+  if(!text||!target) return null;
+  const resp=await fetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: text,target_lang:target,source_lang:'en'})});
+  if(!resp.ok) throw new Error('Translate HTTP '+resp.status);
+  const data = await resp.json();
+  return { value: data.translated, status: data.status, engine: data.engine };
+}
+async function translateCompany(text,target){
+  if(!text||!target) return null;
+  const resp=await fetch('/translate_company',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,target_lang:target,source_lang:'en'})});
+  if(!resp.ok) throw new Error('Company Translate HTTP '+resp.status);
+  const data = await resp.json();
+  return { value: data.translated, status: data.status, engine: data.engine };
+}
+
+updateSectorEnabledState();
+
+function updateDynamicCompanyHeader(){
+  try {
+    const headerEl = document.getElementById('dynamicCompanyHeader');
+    if(!headerEl) return;
+    
+    // Get input values
+    const seniority = val('senioritySelect');
+    const jobTitle = jobTitles.length > 0 ? jobTitles.join(', ') : '';
+    const sector = selectedSectors.length > 0 ? selectedSectors.join(', ') : '';
+    const location = val('country');
+    
+    // Only display if at least one input is provided
+    if (!seniority && !jobTitle && !sector && !location) {
+      headerEl.textContent = '';
+      return;
+    }
+    
+    // Build the dynamic message: "We'll search for [Seniority]-level [Job Title] roles within the [Sector] located in [Location]."
+    let message = "We'll search for ";
+    const parts = [];
+    
+    if (seniority) {
+      // Add '-level' suffix only if not already present
+      const seniorityText = seniority.toLowerCase().includes('level') ? seniority : seniority + '-level';
+      parts.push(seniorityText);
+    }
+    
+    if (jobTitle) {
+      parts.push(jobTitle);
+    }
+    
+    if (parts.length > 0) {
+      message += parts.join(' ') + ' roles';
+    } else {
+      message += 'roles';
+    }
+    
+    if (sector) {
+      message += ' within the ' + sector;
+    }
+    
+    if (location) {
+      message += ' located in ' + location;
+    }
+    
+    message += '.';
+    
+    headerEl.textContent = message;
+  } catch(e){ }
+}
+function ensureHeaderContainerVisible(){
+  try {
+    const wrap=document.getElementById('dynamicCompanyPreview');
+    if(wrap) show(wrap);
+  } catch(e){}
+}
+function primaryButtonHandler(e){
+  try {
+    const btn = e && e.currentTarget ? e.currentTarget : document.getElementById('generateBtn');
+    const state = (btn && btn.dataset && btn.dataset.state) ? btn.dataset.state : 'idle';
+    if(state === 'idle'){
+      try { generateAndStart(); } catch(err){ if(btn){ btn.dataset.state='idle'; btn.textContent='Sourcing'; btn.disabled=false; removeSearchingSpinner(btn); } }
+    } else if(state === 'ready'){
+      try {
+        const rt = buildRoleTagFromJobTitles();
+        persistRoleTag(rt);
+        updateRoleTagOnServer(rt).catch(()=>{});
+      } catch(e){ }
+      try { window.location='http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html'; } catch(e){ }
+    }
+  } catch(e){ }
+}
+function injectSpinnerStylesOnce(){
+  if(document.getElementById('btnSpinnerStyles')) return;
+  const st=document.createElement('style');
+  st.id='btnSpinnerStyles';
+  st.textContent='.btn-loading{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;} .btn-spinner{width:20px;height:20px;border:3px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:btnSpin .8s linear infinite;}@keyframes btnSpin{to{transform:rotate(360deg)}} .btn-label{display:inline-block;}';
+  document.head.appendChild(st);
+}
+function applySearchingSpinner(btn){
+  if(!btn) return;
+  injectSpinnerStylesOnce();
+  if(!btn.dataset.originalLabel) btn.dataset.originalLabel=btn.textContent;
+  btn.classList.add('btn-loading');
+  btn.innerHTML='<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">Searching…</span>';
+}
+function removeSearchingSpinner(btn){
+  if(!btn) return;
+  if(btn.dataset.originalLabel){
+    btn.textContent=btn.dataset.originalLabel;
+  }
+  btn.classList.remove('btn-loading');
+}
+async function enhanceWelcomeWithFullName(){
+  try{
+    const username = window.__ACTIVE_USERNAME;
+    if(!username) return;
+    const res = await fetch('/user/resolve?username='+encodeURIComponent(username),{credentials:'same-origin'});
+    if(!res.ok) return;
+    const data = await res.json().catch(()=>null);
+    if(!data) return;
+    const full = (data.full_name || data.fullname || data.name || data.display_name || '').toString().trim();
+    if(full){
+      window.__ACTIVE_FULLNAME = full;
+      const welcomeEl = document.getElementById('welcomeText');
+      if(welcomeEl){
+        welcomeEl.textContent='Welcome, ' + full + '.';
+      }
+      const avatarEl = document.getElementById('avatarPill');
+      if(avatarEl && full){
+        const initials = full.split(/\s+/).slice(0,2).map(p=>p[0]).join('').toUpperCase().slice(0,2);
+        avatarEl.textContent = initials || avatarEl.textContent;
+      }
+    }
+  }catch(e){ }
+}
+async function generateAndStart(){
+  const btn=document.getElementById('generateBtn');
+  if(!jobTitles.length && !languages.length && !companies.length && !autoSuggestedCompanies.length){
+    console.warn('Add at least one: Job Title / Language / Company');
+    return;
+  }
+  
+  const autoExpand = true;
+  const searchResultsOnly = false;
+  
+  const activeUserid=window.__ACTIVE_USERID||sessionStorage.getItem('userid')||localStorage.getItem('userid')||(function(){const m=document.cookie.match(/(?:^|;\s*)userid=([^;]+)/);return m&&m[1];})();
+  const activeUsername=window.__ACTIVE_USERNAME||sessionStorage.getItem('username')||localStorage.getItem('username')||(function(){const m=document.cookie.match(/(?:^|;\s*)username=([^;]+)/);return m&&(function(x){try{return decodeURIComponent(x);}catch(_){return x;}})(m[1]);})();
+  if(!activeUserid){
+    setTimeout(()=>location.replace('/login.html?next='+encodeURIComponent(location.pathname)),800);
+    return;
+  }
+  const qBundle=buildQueries(val('country'));
+  renderQueries([...qBundle.primary,...qBundle.fallback]);
+  if(btn){ btn.dataset.state='searching'; btn.disabled=true; applySearchingSpinner(btn); btn.classList.remove('ready-download'); }
+  
+  const currentRole = false;
+  const userTargetInput = document.getElementById('userTargetInput');
+  const userTarget = userTargetInput ? parseInt(userTargetInput.value, 10) : null;
+
+  const payload={
+    userid:String(activeUserid).trim(),
+    username:activeUsername?String(activeUsername).trim():undefined,
+    jobTitle:buildJobTitleExpression(),
+    jobTitles:jobTitles.slice(),
+    companyExpression:buildEffectiveCompanyExpression(),
+    companyNames:companies.slice(),
+    autoSuggestedCompanyNames:autoSuggestedCompanies.slice(),
+    languages:languages.slice(),
+    languageQuery:buildLanguageXrayBlock(),
+    currentRole:currentRole,
+    queries:qBundle.primary.map(q=>q.query),
+    fallbackQueries:qBundle.fallback.map(q=>q.query),
+    country:val('country'),
+    autoExpand: autoExpand,
+    manualUrls: [],
+    searchResultsOnly: searchResultsOnly,
+    selectedSectors:selectedSectors.slice(),
+    channelGaming:false, channelMedia:false, channelTechnology:false, xrayPlatformQueries:[],
+    userTarget: userTarget
+  };
+  try{
+    const res=await fetch('/start_job',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!res.ok) throw new Error('HTTP '+res.status+' '+(await res.text()));
+    const data=await res.json();
+    if(!data.job_id) throw new Error('No job_id in response');
+    show(document.getElementById('jobSection'));
+    const tag=document.getElementById('jobIdTag'); if(tag) tag.textContent=data.job_id;
+    pollJob(data.job_id);
+  }catch(e){
+    console.warn('Failed to start job',e);
+    if(btn){ btn.dataset.state='idle'; btn.disabled=false; removeSearchingSpinner(btn); btn.textContent='Sourcing'; }
+  }
+}
+async function pollJob(jobId){
+  const msg=document.getElementById('jobMessage');
+  const prog=document.getElementById('jobProgress');
+  const urlBox=document.getElementById('jobUrls');
+  const counts=document.getElementById('jobCounts');
+  const dl=document.getElementById('downloadArea');
+  const btn=document.getElementById('generateBtn');
+  let interval=1500;
+  function extractFinalRowCount(html){ if(!html) return null; const m=/Wrote\s+(\d+)\s+rows/i.exec(html); return m?parseInt(m[1],10):null; }
+  function renderCounts(data){
+    const urlsCount=Array.isArray(data.urls)?data.urls.length:0;
+    const target=(data.meta&&typeof data.meta.dynamic_target==='number')?data.meta.dynamic_target:null;
+    const parts=[]; if(target) parts.push(`Target results: ${target}`); parts.push(`URLs collected: ${urlsCount}`);
+    if(data.done){ const finalRows=extractFinalRowCount(data.status_html||''); parts.push(`Final rows: ${finalRows!=null?finalRows:'?'}`); }
+    if(counts) counts.textContent=parts.join(' · ');
+  }
+  async function step(){
+    try{
+      const r=await fetch('/job_status/'+encodeURIComponent(jobId));
+      if(r.status===404){
+        if(msg) msg.innerHTML='Status 404 (job not found yet). Retrying…';
+        interval=Math.min(5000,interval+500);
+        return setTimeout(step,interval);
+      }
+      if(!r.ok){
+        if(msg) msg.textContent='Error fetching status: HTTP '+r.status;
+        interval=Math.min(6000,interval+800);
+        return setTimeout(step,interval);
+      }
+      const data=await r.json();
+      interval=1500;
+      if(msg) msg.innerHTML=data.status_html||'';
+      renderCounts(data);
+      if(data.urls&&data.urls.length){
+        if(urlBox){ urlBox.innerHTML=data.urls.map(u=>`<div>${u}</div>`).join(''); show(urlBox); }
+      }
+      if(data.progress){
+        if(prog) prog.textContent=`Progress: ${data.progress.processed}/${data.progress.total} tasks`;
+      } else if(prog) prog.textContent='';
+      if(data.done){
+        if(btn){
+          btn.disabled=false;
+          btn.classList.add('ready-download');
+          btn.dataset.state='ready';
+          removeSearchingSpinner(btn);
+          btn.textContent='Ready for Download';
+        }
+        if(data.output_csv){
+          let html=`<a href="/download/${encodeURIComponent(data.output_csv)}">Download Aggregated CSV</a>`;
+          if(data.output_xlsx) html+=` · <a class="alt" href="/download/${encodeURIComponent(data.output_xlsx)}">Download XLSX</a>`;
+          if(dl) dl.innerHTML=html;
+          createStructuredExcelWithDropdown(data.output_csv);
+        } else if(dl){
+          dl.innerHTML='<em>No CSV generated.</em>';
+        }
+        return;
+      }
+      setTimeout(step,interval);
+    }catch(e){
+      if(msg) msg.textContent='Polling error: '+e.message;
+      interval=Math.min(6500,interval+700);
+      setTimeout(step,interval);
+    }
+  }
+  step();
+}
+(function setupDynamicHeaderHooks(){
+  try{ ensureHeaderContainerVisible(); updateDynamicCompanyHeader(); enhanceWelcomeWithFullName(); }catch(e){}
+  if(typeof updateDynamicSectorPlaceholders==='function'){
+    const orig=updateDynamicSectorPlaceholders;
+    updateDynamicSectorPlaceholders=function(){
+      try{orig();}catch(e){}
+      try{updateDynamicCompanyHeader();}catch(e){}
+    };
+  }
+  if(includeRelatedCompaniesChk){
+    includeRelatedCompaniesChk.addEventListener('change',()=>{ try{updateDynamicCompanyHeader();}catch(e){} });
+  }
+  jobTitleInput.addEventListener('input', ()=>{ updateDynamicCompanyHeader(); });
+  document.getElementById('country').addEventListener('input', ()=>{ updateDynamicCompanyHeader(); });
+})();
+
+function updateSectorEnabledState(){
+  try{
+    const enabled=!!val('country');
+    if(typeof sectorSelect!=='undefined'&&sectorSelect) sectorSelect.disabled=!enabled;
+    if(typeof sectorOtherInput!=='undefined'&&sectorOtherInput) sectorOtherInput.disabled=!enabled;
+  }catch(e){}
+}
+
+/* Upload JD UI Logic */
+(function setupJdUploadUI(){
+  const dropZone = document.getElementById('jdDropZone');
+  const fileInput = document.getElementById('jdFileInput');
+  const browseBtn = document.getElementById('browseJdBtn');
+  const nameSpan = document.getElementById('jdFileName');
+  const spinner = document.getElementById('jdUploadSpinner');
+  const highlightWrapper = document.getElementById('highlightTalentWrapper');
+  const highlightBtn = document.getElementById('highlightTalentBtn');
+
+  // Drag and drop functionality
+  if (dropZone) {
+    dropZone.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.style.borderColor = 'var(--accent)';
+      this.style.backgroundColor = 'var(--accent-bg, #f0f9ff)';
+    });
+
+    dropZone.addEventListener('dragleave', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.style.borderColor = 'var(--border)';
+      this.style.backgroundColor = 'var(--panel)';
+    });
+
+    dropZone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.style.borderColor = 'var(--border)';
+      this.style.backgroundColor = 'var(--panel)';
+      
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        nameSpan.textContent = file.name;
+        uploadJdFile(file);
+      }
+    });
+
+    dropZone.addEventListener('click', function(e) {
+      // Only trigger file input if not clicking the browse button
+      if (e.target !== browseBtn && !browseBtn.contains(e.target)) {
+        fileInput.click();
+      }
+    });
+    
+    // Add keyboard support for drag zone
+    dropZone.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+    
+    // Make dropZone keyboard accessible
+    dropZone.setAttribute('tabindex', '0');
+    dropZone.setAttribute('role', 'button');
+    dropZone.setAttribute('aria-label', 'Upload job description file');
+  }
+
+  if(browseBtn && fileInput){
+    browseBtn.addEventListener('click', function(e){
+      e.stopPropagation();
+      fileInput.click();
+    });
+  }
+
+  if(fileInput){
+    fileInput.addEventListener('change', function(){
+      if(fileInput.files && fileInput.files.length > 0){
+        const file = fileInput.files[0];
+        nameSpan.textContent = file.name;
+        uploadJdFile(file);
+      } else {
+        nameSpan.textContent = '';
+      }
+    });
+  }
+
+  async function uploadJdFile(file){
+    if(!file) return;
+    if(spinner) spinner.classList.remove('hidden');
+    if(browseBtn) browseBtn.disabled = true;
+    
+    const username = window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || '';
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('username', username);
+
+    try {
+      const res = await fetch('/user/upload_jd', { method: 'POST', body: formData });
+      if(res.ok){
+        // Hide the drag-and-drop JD feature after successful upload
+        if(dropZone) {
+          dropZone.style.display = 'none';
+        }
+        
+        // Only show Spotlight Adjacent Skills when AI-Assisted Search is active
+        const toggleAiAssistedSearch = document.getElementById('toggleAiAssistedSearch');
+        if(highlightWrapper && toggleAiAssistedSearch && toggleAiAssistedSearch.checked) {
+          highlightWrapper.classList.remove('hidden');
+        }
+        if(highlightBtn) highlightBtn.disabled = false;
+        
+        // Removed early freeze. We will capture a snapshot AFTER analysis and after fetching fresh suggestions,
+        // so the snapshot contains the updated suggestions derived from the uploaded JD.
+        // (previous code captured snapshot here and set jdSuggestionsLocked = true too early)
+
+        const chatFormData = new FormData();
+        chatFormData.append('file', file);
+
+        // Send JD to chat upload endpoint (server stores JD and returns status)
+        try {
+          const chatResp = await fetch('/chat/upload_jd', {
+            method: 'POST',
+            body: chatFormData,
+            credentials: 'same-origin'
+          });
+
+          let chatData = null;
+          try { chatData = chatResp.ok ? await chatResp.json() : null; } catch(_) { chatData = null; }
+
+          // Now call the analyzer endpoint (webbridge will host /gemini/analyze_jd)
+          const analyzePayload = { username: username };
+          const analyzeResp = await fetch('/gemini/analyze_jd', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(analyzePayload)
+          });
+          let analyzeData = null;
+          if (analyzeResp.ok) {
+            analyzeData = await analyzeResp.json().catch(() => null);
+          }
+
+          // Render the analysis to the JD Analysis box
+          if (analyzeData) {
+            const box = document.getElementById('jdAnalysisBox');
+            const summaryEl = document.getElementById('jdSummary');
+            const tagsEl = document.getElementById('jdTags');
+
+            if (summaryEl) summaryEl.innerHTML = analyzeData.summary || (analyzeData.observation || '');
+            let tagHtml = '';
+            if (analyzeData.job_title) tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
+            if (analyzeData.seniority) tagHtml += `<div><strong>Seniority:</strong> ${escapeHtml(analyzeData.seniority)}</div>`;
+            if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
+            if (analyzeData.country) tagHtml += `<div><strong>Country:</strong> ${escapeHtml(analyzeData.country)}</div>`;
+            if (tagsEl) tagsEl.innerHTML = tagHtml;
+
+            // DO NOT DISPLAY skillset in JD analysis — persist internally (filter visualization skills)
+            const vizKeywords = ['presentation','presentations','presentation skills','powerpoint','ppt','excel','data visualization','visualization','slide','slides','chart','charts'];
+            function isVisualizationSkill(s){
+              if(!s) return false;
+              const k = canonicalKey(s);
+              return vizKeywords.some(v => k.indexOf(v) !== -1);
+            }
+
+            if (Array.isArray(analyzeData.skills) && analyzeData.skills.length) {
+              userSkills.length = 0;
+              userSkillIndex.clear();
+              analyzeData.skills.forEach(function(sk){
+                const t = normalizeSpaces(sk);
+                if (!t) return;
+                if (isVisualizationSkill(t)) return; // skip visualization skills
+                const k = canonicalKey(t);
+                if (!userSkillIndex.has(k)) {
+                  userSkills.push(t);
+                  userSkillIndex.add(k);
+                }
+              });
+              if (typeof renderUserSkillChips === 'function') renderUserSkillChips();
+              syncUserSkillsToServer();
+            }
+
+            // Show analysis box and persist visible
+            if (box) box.classList.remove('hidden');
+
+            // AUTOMATIC ACCEPT: populate job title, sectors, country, and update UI
+            try {
+              if(analyzeData.job_title && !jobTitleIndex.has(canonicalKey(analyzeData.job_title))){
+                jobTitles.push(analyzeData.job_title);
+                jobTitleIndex.add(canonicalKey(analyzeData.job_title));
+                renderJobTitleChips();
+                updateFullCompiledQuery();
+              }
+              if(analyzeData.sectors && analyzeData.sectors.length){
+                analyzeData.sectors.forEach(function(s){
+                  if(!selectedSectors.includes(s)){ selectedSectors.push(s); }
+                });
+                renderSectorChips();
+              }
+              if(analyzeData.country && !val('country')){ document.getElementById('country').value = analyzeData.country; updateSectorEnabledState(); updateFullCompiledQuery(); scheduleEstimateUpdate(); }
+
+              // NEW: Auto-select seniority dropdown based on analyzeData.seniority (map to dropdown options)
+              try {
+                if (analyzeData.seniority) {
+                  const rawSen = (analyzeData.seniority || '').toString().trim();
+                  if (rawSen) {
+                    const sel = document.getElementById('senioritySelect');
+                    if (sel) {
+                      const s = rawSen.toLowerCase();
+                      // Mapping logic: conservative mapping consistent with server heuristics
+                      let mapped = '';
+                      if (/\b(director|vice president|vice-president|vp|principal|head of|head |chief |cxo|executive director|group director|principal|staff|expert)\b/i.test(s)) {
+                        mapped = 'Director';
+                      } else if (/\b(manager|mgr|team lead|lead|supervisor|senior|sr\.?|team-lead|teamlead)\b/i.test(s)) {
+                        // map 'senior' to Manager (server uses similar conservative mapping)
+                        mapped = 'Manager';
+                      } else if (/\b(associate|junior|intern|entry-level|trainee|graduate)\b/i.test(s)) {
+                        mapped = 'Associate';
+                      } else {
+                        // handle common single-word responses like "Senior", "Mid-Senior"
+                        if (s.indexOf('senior') !== -1 || s.indexOf('mid-senior') !== -1 || s.indexOf('mid senior') !== -1) {
+                          mapped = 'Manager';
+                        } else if (s.indexOf('director') !== -1) {
+                          mapped = 'Director';
+                        } else if (s.indexOf('associate') !== -1 || s.indexOf('jr') !== -1) {
+                          mapped = 'Associate';
+                        }
+                      }
+                      if (mapped) {
+                        sel.value = mapped;
+                        try { sel.dispatchEvent(new Event('change')); } catch(_) {}
+                      }
+                    }
+                  }
+                }
+              } catch(eMap) {
+                console.warn('Seniority mapping failed', eMap);
+              }
+
+              updateFullCompiledQuery();
+              scheduleSuggestionsUpdate();
+              scheduleSectorSuggestionsUpdate();
+              scheduleEstimateUpdate();
+              renderEffectiveCompaniesDisplay();
+              updateDynamicCompanyPreview();
+
+              // IMPORTANT: After applying analysis results to the UI, force a fresh suggestions fetch
+              // so suggestions reflect the newly-applied job titles/sectors/country. Then capture a snapshot
+              // and only lock suggestions if the snapshot contains items.
+              try {
+                await fetchSuggestions(true);
+                captureSuggestionSnapshot();
+                if ((jdJobSnapshot && jdJobSnapshot.length) || (jdCompanySnapshot && jdCompanySnapshot.length)) {
+                  jdSuggestionsLocked = true;
+                } else {
+                  jdSuggestionsLocked = false;
+                }
+              } catch (snapErr) {
+                // If anything goes wrong, don't lock; allow dynamic suggestions.
+                jdSuggestionsLocked = false;
+                console.warn('Suggestion snapshot/lock after JD analysis failed', snapErr);
+              }
+
+            } catch (applyErr) {
+              console.warn('Auto-apply JD analysis failed', applyErr);
+            }
+          } else {
+            nameSpan.textContent = 'Analysis not available';
+          }
+        } catch (err) {
+          nameSpan.textContent = 'Analysis error';
+        }
+
+        try {
+          const uname = username || window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
+          if (uname) {
+            fetch('/user/fetch_skills?username=' + encodeURIComponent(uname), { credentials: 'same-origin' })
+              .then(function(r){ return r && r.ok ? r.json() : null; })
+              .then(function(data){
+                if (!data || !Array.isArray(data.skills) || data.skills.length === 0) return;
+                try {
+                  userSkills.length = 0;
+                  userSkillIndex.clear();
+                } catch(_) {}
+                data.skills.forEach(function(s){
+                  const t = normalizeSpaces(s);
+                  if (!t) return;
+                  const k = canonicalKey(t);
+                  if (!userSkillIndex.has(k)) {
+                    const isViz = ['presentation','presentations','presentation skills','powerpoint','ppt','excel','data visualization','visualization','slide','slides','chart','charts']
+                      .some(v => k.indexOf(v) !== -1);
+                    if (isViz) return;
+                    userSkills.push(t);
+                    userSkillIndex.add(k);
+                  }
+                });
+                if (typeof renderUserSkillChips === 'function') {
+                  renderUserSkillChips();
+                }
+              })
+              .catch(function(){ });
+          }
+        } catch(e) { }
+
+      } else {
+        nameSpan.textContent = 'Upload failed';
+      }
+    } catch(e) {
+      nameSpan.textContent = 'Error';
+    } finally {
+      if(spinner) spinner.classList.add('hidden');
+      if(browseBtn) browseBtn.disabled = false;
+    }
+  }
+
+  if(highlightBtn){
+    highlightBtn.addEventListener('click', function(){
+      fetch('/highlight_talent_pools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'highlight_talent_pools',
+          session_id: 'default',
+          username: window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || ''
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if(data.error){
+          if (data.code === 'no_skills') {
+             alert('No skillset found. Please upload a JD first.');
+          } else {
+             alert('Error: ' + data.error);
+          }
+          return;
+        }
+        
+        if(data.job && data.company){
+             const jobs = (data.job && data.job.related) ? data.job.related : [];
+             const comps = (data.company && data.company.related) ? data.company.related : [];
+             renderExternalSuggestions(jobs, comps);
+        } else if (data.response) {
+             alert(data.response);
+        }
+      })
+      .catch(e => console.error(e));
+    });
+  }
+})();
+
+function renderExternalSuggestions(jobs, comps){
+  const jobBox = document.getElementById('jobTitleSuggestionBox');
+  const jobGrid = document.getElementById('jobTitleSuggestionsGrid');
+  const compBox = document.getElementById('companySuggestionBox');
+  const compGrid = document.getElementById('companySuggestionsGrid');
+  
+  if(jobGrid){
+    jobGrid.innerHTML = '';
+    jobs.forEach(t => jobGrid.appendChild(makeChip(t, 'job', false)));
+    if(jobs.length > 0) show(jobBox);
+  }
+  
+  if(compGrid){
+    compGrid.innerHTML = '';
+    comps.forEach(c => compGrid.appendChild(makeChip(c, 'company', false)));
+    if(comps.length > 0) show(compBox);
+  }
+  
+  const mainGrid = document.getElementById('suggestionsGrid');
+  const mainContainer = document.getElementById('aiSuggestionsContainer');
+  if(mainGrid && mainContainer){
+    mainGrid.innerHTML = '';
+    if(jobs.length) mainGrid.appendChild(buildSuggestionGroup('Talent Pool: Jobs', jobs, 'job'));
+    if(comps.length) mainGrid.appendChild(buildSuggestionGroup('Talent Pool: Companies', comps, 'company'));
+    show(mainContainer);
+  }
+}
+
+(function setupSkillsUI(){
+  const skillInput = document.getElementById('skillInput');
+  const addBtn = document.getElementById('addSkillBtn');
+  const chipsBox = document.getElementById('skillChips');
+  const aggBox = document.getElementById('skillAggregator');
+
+  if(skillInput && addBtn){
+    addBtn.addEventListener('click', () => addUserSkill(skillInput.value));
+    skillInput.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); addUserSkill(skillInput.value); } });
+  }
+
+  window.addUserSkill = function(raw){
+    const text = normalizeSpaces(raw); if(!text) return;
+    const k = canonicalKey(text);
+    if(userSkillIndex.has(k)) { if(skillInput) skillInput.value=''; return; }
+    
+    userSkills.push(text);
+    userSkillIndex.add(k);
+    if(skillInput) skillInput.value='';
+    
+    renderUserSkillChips();
+    syncUserSkillsToServer();
+  };
+
+  window.removeUserSkill = function(i){
+    const v = userSkills.splice(i, 1)[0];
+    if(v){
+      userSkillIndex.delete(canonicalKey(v));
+      renderUserSkillChips();
+      syncUserSkillsToServer();
+    }
+  };
+
+  window.renderUserSkillChips = function(){
+    if(!chipsBox || !aggBox) return;
+    chipsBox.innerHTML = '';
+    if(userSkills.length === 0){
+      aggBox.classList.add('hidden');
+      return;
+    }
+    aggBox.classList.remove('hidden');
+    userSkills.forEach((s, i) => {
+      const d = document.createElement('div');
+      d.className = 'tag-chip';
+      d.innerHTML = `<span>${s}</span><button type="button" aria-label="Remove ${s}">&times;</button>`;
+      d.querySelector('button').addEventListener('click', () => removeUserSkill(i));
+      chipsBox.appendChild(d);
+    });
+  };
+
+  window.syncUserSkillsToServer = function(){
+    const username = window.__ACTIVE_USERNAME || sessionStorage.getItem('username');
+    if(!username) return;
+    
+    fetch('/user/update_skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, skills: userSkills })
+    }).catch(e => console.warn('Sync skills failed', e));
+  };
+})();
+
+(function initBanner(){
+  try{
+    var uname = window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username');
+    if (!uname) {
+      var m = document.cookie && document.cookie.match(/(?:^|;\s*)username=([^;]+)/);
+      uname = m && m[1];
+      if (uname) { try { uname = decodeURIComponent(uname); } catch(_) {} }
+    }
+    uname = (uname || '').trim();
+    var displayName = uname ? uname.replace(/[_\-.]+/g,' ').replace(/\s+/g,' ').trim().replace(/(?:^| )([a-z])/gi,(m,c)=>c.toUpperCase()) : 'User';
+    var initials = (displayName.split(/\s+/)[0]||'U').slice(0,2).toUpperCase();
+    var avatarEl = document.getElementById('avatarPill');
+    if (avatarEl) avatarEl.textContent = initials;
+    var welcomeEl = document.getElementById('welcomeText');
+    if (welcomeEl) welcomeEl.textContent = 'Welcome, ' + displayName;
+    var handleEl = document.getElementById('welcomeHandle');
+    if (handleEl) handleEl.textContent = uname ? '@' + uname : '';
+    var logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', function(){
+        try {
+          sessionStorage.removeItem('username'); localStorage.removeItem('username');
+          sessionStorage.removeItem('userid'); localStorage.removeItem('userid');
+          document.cookie = 'username=; Max-Age=0; path=/';
+          document.cookie = 'userid=; Max-Age=0; path=/';
+        } catch(_) {}
+        location.replace('/login.html');
+      });
+    }
+  } catch(_){}
+})();
+</script>
+</body>
+</html>
