@@ -4654,7 +4654,14 @@ function renderTable(){
             alert('No LinkedIn URL available');
             return;
           }
-          window.open(url, '_blank', 'noopener');
+          
+          // Validate LinkedIn URL before rendering to avoid broken links
+          let validatedUrl = url;
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            validatedUrl = 'https://' + url;
+          }
+          
+          window.open(validatedUrl, '_blank', 'noopener');
         } catch (_) {}
       });
     } else {
