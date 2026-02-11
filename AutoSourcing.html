@@ -2322,7 +2322,20 @@ function updateSectorEnabledState(){
           
           if (box) {
             box.classList.remove('hidden');
-            if (summaryEl) summaryEl.innerHTML = '<div style="display:flex; align-items:center; gap:8px;" role="status" aria-live="polite"><span class="spinner" style="width:16px; height:16px;"></span><span>Analyzing Job Description...</span></div>';
+            if (summaryEl) {
+              // Clear existing content and create loading elements programmatically
+              summaryEl.innerHTML = '';
+              const loadingDiv = document.createElement('div');
+              loadingDiv.style.cssText = 'display:flex; align-items:center; gap:8px;';
+              const spinner = document.createElement('span');
+              spinner.className = 'spinner';
+              spinner.style.cssText = 'width:16px; height:16px;';
+              const loadingText = document.createElement('span');
+              loadingText.textContent = 'Analyzing Job Description...';
+              loadingDiv.appendChild(spinner);
+              loadingDiv.appendChild(loadingText);
+              summaryEl.appendChild(loadingDiv);
+            }
             if (tagsEl) tagsEl.innerHTML = '';
           }
           

@@ -214,6 +214,7 @@
       <table id="sourcingTable">
           <thead>
               <tr>
+                  <!-- Empty checkbox column retained for layout consistency (previously contained select all checkbox) -->
                   <th class="checkbox-cell"></th>
                   <th style="width:60px;">Profile</th>
                   <th>Name</th>
@@ -221,7 +222,7 @@
                   <th>Job Title</th>
                   <th style="width:8%;">Country</th>
                   <th style="width:8%;">Action</th>
-                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer; user-select:none;" title="Click to sort by Match Level (Highest to Lowest)" aria-sort="none" role="columnheader">Match Level <span aria-hidden="true">▼</span></th>
+                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer; user-select:none;" title="Click to sort by Match Level" aria-sort="none" role="columnheader">Match Level <span aria-hidden="true"></span></th>
               </tr>
           </thead>
           <tbody id="tableBody">
@@ -243,7 +244,8 @@
 <div id="tab-details" class="tab-pane">
     <div style="margin-bottom: 20px; display: flex; gap: 12px; align-items: center;">
         <button onclick="switchTab('tab-search')" class="btn-secondary" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328;">&larr; Back to Search Results</button>
-        <button id="viewDetailsRefreshBtn" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Refresh current profile data (hover to refresh)">🔄 Refresh</button>
+        <button id="viewDetailsRefreshBtn" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Hover or click to refresh current profile data">🔄 Refresh</button>
+        <span id="refreshStatus" role="status" aria-live="polite" style="display:none; font-size:13px; color:#0369a1;"></span>
     </div>
     <div id="details-container">
         <div style="text-align:center; padding: 40px; color: var(--argent);">
@@ -5666,13 +5668,21 @@ function refreshCurrentProfile() {
     
     __isRefreshing = true;
     
-    // Show refresh status with loading indicator
+    // Show refresh status with loading indicator using dedicated aria-live region
     const refreshBtn = document.getElementById('viewDetailsRefreshBtn');
+    const refreshStatus = document.getElementById('refreshStatus');
+    
     if (refreshBtn) {
-        refreshBtn.innerHTML = '<span aria-live="polite" role="status">Refreshing...</span>';
+        refreshBtn.textContent = 'Refreshing...';
         refreshBtn.style.pointerEvents = 'none';
         refreshBtn.disabled = true;
     }
+    
+    if (refreshStatus) {
+        refreshStatus.textContent = 'Refreshing profile...';
+        refreshStatus.style.display = 'inline';
+    }
+    
     if (typeof setStatus === 'function') setStatus('Refreshing profile...', 'info');
     
     // Re-render the namecard which will fetch latest data
@@ -5684,18 +5694,26 @@ function refreshCurrentProfile() {
         setTimeout(() => {
             __isRefreshing = false;
             if (refreshBtn) {
-                refreshBtn.innerHTML = '🔄 Refresh';
+                refreshBtn.textContent = '🔄 Refresh';
                 refreshBtn.style.pointerEvents = 'auto';
                 refreshBtn.disabled = false;
+            }
+            if (refreshStatus) {
+                refreshStatus.textContent = '';
+                refreshStatus.style.display = 'none';
             }
         }, 500);
     } else {
         // If namecard not available, reset immediately
         __isRefreshing = false;
         if (refreshBtn) {
-            refreshBtn.innerHTML = '🔄 Refresh';
+            refreshBtn.textContent = '🔄 Refresh';
             refreshBtn.style.pointerEvents = 'auto';
             refreshBtn.disabled = false;
+        }
+        if (refreshStatus) {
+            refreshStatus.textContent = '';
+            refreshStatus.style.display = 'none';
         }
     }
 }
@@ -5712,11 +5730,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Add Match Level header click listener for sorting
+    // Add Match Level header click listener for sorting with toggle states
     const matchLevelHeader = document.getElementById('matchLevelHeader');
+    let __sortState = 'none'; // Track current sort state: 'none', 'descending', 'ascending'
+    
     if (matchLevelHeader) {
         matchLevelHeader.addEventListener('click', () => {
             if(!rowsData || rowsData.length === 0) return;
+            
+            // Cycle through sort states: none → descending → ascending → none
+            if (__sortState === 'none') {
+                __sortState = 'descending';
+            } else if (__sortState === 'descending') {
+                __sortState = 'ascending';
+            } else {
+                __sortState = 'none';
+                // Reload original order when returning to 'none'
+                loadRows(currentPage);
+                matchLevelHeader.setAttribute('aria-sort', 'none');
+                matchLevelHeader.querySelector('span').textContent = '';
+                setStatus('Sort order reset.', 'success');
+                return;
+            }
             
             // Sort rowsData based on cached score or experience text
             rowsData.sort((a, b) => {
@@ -5756,15 +5791,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     return score;
                 };
-                return getScore(b) - getScore(a); // Descending (highest to lowest)
+                
+                // Sort descending or ascending based on state
+                if (__sortState === 'descending') {
+                    return getScore(b) - getScore(a); // Descending (highest to lowest)
+                } else {
+                    return getScore(a) - getScore(b); // Ascending (lowest to highest)
+                }
             });
             
             renderTable();
             
-            // Update aria-sort attribute for accessibility
-            matchLevelHeader.setAttribute('aria-sort', 'descending');
-            
-            setStatus('Table sorted by Match Level (highest to lowest).', 'success');
+            // Update aria-sort attribute and visual indicator
+            matchLevelHeader.setAttribute('aria-sort', __sortState);
+            const arrow = matchLevelHeader.querySelector('span');
+            if (__sortState === 'descending') {
+                arrow.textContent = '▼';
+                setStatus('Table sorted by Match Level (highest to lowest).', 'success');
+            } else {
+                arrow.textContent = '▲';
+                setStatus('Table sorted by Match Level (lowest to highest).', 'success');
+            }
         });
     }
     
