@@ -4996,9 +4996,9 @@ def process_geography():
             if col == 'cv':
                  result[col] = bool(val)
             elif col == 'seniority':
-                 # Add "level" suffix for UI display if not already present
+                 # Add "-level" suffix for UI display if not already present
                  seniority_val = val if val is not None else ""
-                 if seniority_val and not seniority_val.endswith('level') and not seniority_val.endswith('-level'):
+                 if seniority_val and not seniority_val.endswith('-level'):
                      result[col] = seniority_val + '-level'
                  else:
                      result[col] = seniority_val
@@ -5490,8 +5490,8 @@ def _strip_level_suffix(seniority: str) -> str:
     """
     if not seniority:
         return ""
-    # Remove '-level' suffix (case-insensitive)
-    return re.sub(r'-level$', '', seniority, flags=re.IGNORECASE).strip()
+    # Remove '-level' suffix (lowercase only, as normalized values use consistent casing)
+    return re.sub(r'-level$', '', seniority).strip()
 
 def _normalize_seniority_to_8_levels(seniority_text: str, total_experience_years=None) -> str:
     """
@@ -6493,7 +6493,8 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         
         # Log product extraction for debugging
         if product_list and len(product_list) > 0:
-            logger.info(f"[CV BG] Extracted {len(product_list)} products for {linkedinurl[:50]}: {product_list[:3]}")
+            truncated = '...' if len(product_list) > 3 else ''
+            logger.info(f"[CV BG] Extracted {len(product_list)} products for {linkedinurl[:50]}: {product_list[:3]}{truncated}")
         else:
             logger.warning(f"[CV BG] No products extracted for {linkedinurl[:50]} (company: {company})")
         
@@ -7022,10 +7023,14 @@ def process_bulk_assess():
                     try:
                         # Product could be JSON array or comma-separated string
                         product = json.loads(product_str) if product_str.startswith('[') else [s.strip() for s in product_str.split(',') if s.strip()]
-                        if product:
-                            logger.info(f"[BULK_ASSESS] Loaded {len(product)} products from DB for {linkedinurl[:50]}")
                     except:
                         product = [s.strip() for s in product_str.split(',') if s.strip()]
+                    
+                    # Log product loading regardless of whether list is empty
+                    if product:
+                        logger.info(f"[BULK_ASSESS] Loaded {len(product)} products from DB for {linkedinurl[:50]}")
+                    else:
+                        logger.info(f"[BULK_ASSESS] Product field exists but is empty for {linkedinurl[:50]}")
                 else:
                     logger.info(f"[BULK_ASSESS] No product data in DB for {linkedinurl[:50]}")
             
