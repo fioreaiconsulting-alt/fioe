@@ -5633,6 +5633,10 @@ def _normalize_company_name(company_name):
     """
     Normalize company name for duplicate detection.
     Removes common suffixes and converts to lowercase for consistent matching.
+    
+    Note: Currently handles common US/UK company suffixes. International suffixes
+    (GmbH, S.A., AG, etc.) are not normalized but can be added if needed.
+    
     Returns normalized company name or None if input is empty.
     """
     if not company_name:
@@ -5640,7 +5644,7 @@ def _normalize_company_name(company_name):
     
     # Convert to lowercase and remove common company suffixes
     normalized = company_name.lower().strip()
-    normalized = re.sub(r'\s+(inc\.?|llc\.?|ltd\.?|corp\.?|corporation|company|co\.?)$', '', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'\s+(inc\.?|llc\.?|ltd\.?|corp\.?|corporation|company|co\.?|limited|group|plc)$', '', normalized, flags=re.IGNORECASE)
     normalized = normalized.strip()
     
     return normalized if normalized else None
@@ -5673,7 +5677,7 @@ def _recalculate_tenure_and_experience(experience_list):
             "total_roles": 0
         }
     
-    current_year = datetime.now().year
+    current_year = datetime.now().year  # Note: Uses year only, timezone not critical for year calculation
     employer_durations = {}  # Map: normalized_company -> total_years
     total_duration_excluding_interns = 0.0
     total_roles = len(experience_list)
@@ -5711,6 +5715,8 @@ def _recalculate_tenure_and_experience(experience_list):
             end_year = int(end_part)
         
         # Calculate duration in years
+        # Note: This calculates full years only (2020 to 2021 = 1 year)
+        # Partial years are not accounted for due to limited date precision in CV format
         if end_year >= start_year:
             duration_years = end_year - start_year
             
@@ -5864,6 +5870,10 @@ def _analyze_cv_bytes_sync(pdf_bytes):
              # This ensures consistent application of business rules regardless of Gemini's interpretation
              experience_list = obj.get('experience', [])
              if experience_list and isinstance(experience_list, list):
+                 # Store original Gemini values before recalculation
+                 gemini_total_exp = obj.get('total_experience_years', 0)
+                 gemini_tenure = obj.get('tenure', 0)
+                 
                  recalc = _recalculate_tenure_and_experience(experience_list)
                  
                  # Update the values with recalculated ones
@@ -5871,10 +5881,6 @@ def _analyze_cv_bytes_sync(pdf_bytes):
                  obj['tenure'] = recalc['tenure']
                  
                  # Log if there's a significant difference from Gemini's calculation
-                 gemini_total_exp = obj.get('total_experience_years_original', obj.get('total_experience_years', 0))
-                 gemini_tenure = obj.get('tenure_original', obj.get('tenure', 0))
-                 
-                 # Store original Gemini values for debugging (optional)
                  if abs(recalc['total_experience_years'] - float(gemini_total_exp or 0)) > 0.5:
                      logger.info(f"[CV Sync] Recalculated total_experience_years: {recalc['total_experience_years']} (Gemini: {gemini_total_exp})")
                  if abs(recalc['tenure'] - float(gemini_tenure or 0)) > 0.5:
