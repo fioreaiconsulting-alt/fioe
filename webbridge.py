@@ -980,37 +980,28 @@ def _persist_jskillset(username: str, skills):
         
         preferred = "jskillset" if has_jskillset else "skills"
 
-        # Try JSON update first
+        # Format skillset as comma-separated string (no brackets/quotes)
+        # Per requirement: Remove enclosing brackets and quotes
+        # Example: ["algorithms", "data structures"] -> algorithms, data structures
+        formatted_skills = ", ".join(final_skills)
+
+        # Try updating as plain text (comma-separated)
         try:
             cur.execute(sql.SQL("UPDATE login SET {} = %s WHERE username = %s").format(sql.Identifier(preferred)),
-                        (json.dumps(final_skills, ensure_ascii=False), username))
+                        (formatted_skills, username))
             if cur.rowcount == 0:
                 conn.commit()
                 cur.close(); conn.close()
                 return False, "username not found"
             conn.commit()
             cur.close(); conn.close()
-            logger.info(f"[PersistSkills] Updated {preferred} for {username} (json).")
-            return True, f"updated {preferred} as json"
-        except Exception as e_json:
+            logger.info(f"[PersistSkills] Updated {preferred} for {username} (comma-separated).")
+            return True, f"updated {preferred} as comma-separated"
+        except Exception as e_update:
             conn.rollback()
-            try:
-                # fallback to comma-separated text
-                cur.execute(sql.SQL("UPDATE login SET {} = %s WHERE username = %s").format(sql.Identifier(preferred)),
-                            (", ".join(final_skills), username))
-                if cur.rowcount == 0:
-                    conn.commit()
-                    cur.close(); conn.close()
-                    return False, "username not found"
-                conn.commit()
-                cur.close(); conn.close()
-                logger.info(f"[PersistSkills] Updated {preferred} for {username} (csv fallback).")
-                return True, f"updated {preferred} as csv (fallback)"
-            except Exception as e2:
-                conn.rollback()
-                cur.close(); conn.close()
-                logger.warning(f"[PersistSkills] Failed to persist into {preferred} for {username}: {e2}")
-                return False, f"DB write failed: {e2}"
+            cur.close(); conn.close()
+            logger.warning(f"[PersistSkills] Failed to persist into {preferred} for {username}: {e_update}")
+            return False, f"DB write failed: {e_update}"
     except Exception as e:
         logger.warning(f"[PersistSkills] DB connection or discovery failed: {e}")
         return False, f"DB error: {e}"

@@ -93,7 +93,7 @@
 
   <!-- New Weightage Configuration Panel -->
   <div class="weight-config-panel" id="weightConfigPanel">
-    <div class="weight-config-header" onclick="toggleWeightConfig()">
+    <div class="weight-config-header" id="weightConfigHeader">
       <span>Assessment Weightage Configuration</span>
       <span id="weightConfigArrow">▼</span>
     </div>
@@ -541,6 +541,44 @@ function toggleWeightConfig() {
   content.classList.toggle('open');
   arrow.textContent = content.classList.contains('open') ? '▲' : '▼';
 }
+
+// Setup hover behavior for Assessment Weightage Configuration
+(function setupWeightConfigHover() {
+  const panel = document.getElementById('weightConfigPanel');
+  const content = document.getElementById('weightConfigContent');
+  const arrow = document.getElementById('weightConfigArrow');
+  const header = document.getElementById('weightConfigHeader');
+  
+  if (panel && content && arrow && header) {
+    // Hover behavior - expand on mouseenter
+    panel.addEventListener('mouseenter', function() {
+      content.classList.add('open');
+      arrow.textContent = '▲';
+    });
+    
+    // Collapse on mouseleave
+    panel.addEventListener('mouseleave', function() {
+      content.classList.remove('open');
+      arrow.textContent = '▼';
+    });
+    
+    // Focus behavior for keyboard accessibility
+    header.addEventListener('focus', function() {
+      content.classList.add('open');
+      arrow.textContent = '▲';
+    });
+    
+    header.addEventListener('blur', function() {
+      // Delay to allow clicking on sliders inside the panel
+      setTimeout(function() {
+        if (!panel.contains(document.activeElement)) {
+          content.classList.remove('open');
+          arrow.textContent = '▼';
+        }
+      }, 150);
+    });
+  }
+})();
 
 function loadWeights() {
   let saved = localStorage.getItem('sv_assessment_weights');
