@@ -4107,7 +4107,13 @@ def sourcing_list():
         resp = {"rows": rows}
         if use_paging:
             resp.update({"page": page, "page_size": page_size, "total": total})
-        return jsonify(resp)
+        
+        # Add no-cache headers to ensure fresh data after assessments
+        response = jsonify(resp)
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         logger.warning(f"[Sourcing List] {e}")
         return jsonify({"error": str(e)}), 500
@@ -5009,7 +5015,12 @@ def process_geography():
             if inferred:
                 result["geographic"] = inferred
 
-        return jsonify(result), 200
+        # Add no-cache headers to ensure fresh data after assessments
+        response = jsonify(result)
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response, 200
     except Exception as e:
         logger.warning(f"[Process Geography] {e}")
         try:
