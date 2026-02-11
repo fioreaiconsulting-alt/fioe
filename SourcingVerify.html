@@ -93,7 +93,7 @@
 
   <!-- New Weightage Configuration Panel -->
   <div class="weight-config-panel" id="weightConfigPanel">
-    <div class="weight-config-header" onclick="toggleWeightConfig()">
+    <div class="weight-config-header" id="weightConfigHeader">
       <span>Assessment Weightage Configuration</span>
       <span id="weightConfigArrow">▼</span>
     </div>
@@ -199,6 +199,17 @@
       </div>
       <div style="height:6px; width:100%; background:#e0f2fe; border-radius:3px; overflow:hidden;">
           <div id="searchBulkProgressBar" style="height:100%; width:0%; background:#0ea5e9; transition:width 0.3s ease;"></div>
+      </div>
+  </div>
+
+  <!-- Bulk Upload Progress Indicator -->
+  <div id="bulkUploadProgressContainer" style="margin:10px 0; display:none; padding:10px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span id="bulkUploadProgressText" style="font-size:12px; font-weight:700; color:#15803d;">Uploading Files...</span>
+          <span id="bulkUploadProgressPercent" style="font-size:12px; font-weight:700; color:#15803d;">0%</span>
+      </div>
+      <div style="height:6px; width:100%; background:#dcfce7; border-radius:3px; overflow:hidden;">
+          <div id="bulkUploadProgressBar" style="height:100%; width:0%; background:#22c55e; transition:width 0.3s ease;"></div>
       </div>
   </div>
 
@@ -530,6 +541,44 @@ function toggleWeightConfig() {
   content.classList.toggle('open');
   arrow.textContent = content.classList.contains('open') ? '▲' : '▼';
 }
+
+// Setup hover behavior for Assessment Weightage Configuration
+(function setupWeightConfigHover() {
+  const panel = document.getElementById('weightConfigPanel');
+  const content = document.getElementById('weightConfigContent');
+  const arrow = document.getElementById('weightConfigArrow');
+  const header = document.getElementById('weightConfigHeader');
+  
+  if (panel && content && arrow && header) {
+    // Hover behavior - expand on mouseenter
+    panel.addEventListener('mouseenter', function() {
+      content.classList.add('open');
+      arrow.textContent = '▲';
+    });
+    
+    // Collapse on mouseleave
+    panel.addEventListener('mouseleave', function() {
+      content.classList.remove('open');
+      arrow.textContent = '▼';
+    });
+    
+    // Focus behavior for keyboard accessibility
+    header.addEventListener('focus', function() {
+      content.classList.add('open');
+      arrow.textContent = '▲';
+    });
+    
+    header.addEventListener('blur', function() {
+      // Delay to allow clicking on sliders inside the panel
+      setTimeout(function() {
+        if (!panel.contains(document.activeElement)) {
+          content.classList.remove('open');
+          arrow.textContent = '▼';
+        }
+      }, 150);
+    });
+  }
+})();
 
 function loadWeights() {
   let saved = localStorage.getItem('sv_assessment_weights');
@@ -2195,13 +2244,29 @@ async function getProcessGeography(linkedinurl) {
       // We should apply reference logic AFTER fetching the basic data to augment it.
   }
 
-  const tryFetch = async (val) => {
+  // Constants for retry logic - defined outside tryFetch for performance
+  // Using linear backoff (1s, 2s, 3s) instead of exponential (1s, 2s, 4s)
+  // Linear backoff is gentler on the server and provides adequate retry spacing for transient errors
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 1000;
+
+  const tryFetch = async (val, retryCount = 0) => {
     if (!val) return null;
     const url = PROCESS_GEO_API + '?linkedin=' + encodeURIComponent(val);
+    
     try {
       const res = await fetch(url, { credentials: 'omit', cache: 'no-store' });
       if (!res.ok) {
+        // For 404/400 errors, don't retry - data doesn't exist
         if (res.status === 404 || res.status === 400) return null;
+        
+        // For server errors (5xx) or transient errors, retry
+        if (res.status >= 500 && retryCount < MAX_RETRIES) {
+          console.warn(`[View Details] Server error ${res.status}, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+          return tryFetch(val, retryCount + 1);
+        }
+        
         return null;
       }
       const data = await res.json().catch(()=>null);
@@ -2292,7 +2357,13 @@ async function getProcessGeography(linkedinurl) {
       
       return { geographic: geographic || '', country: country || '', seniority, job_family: jobFamily, sector, skillset, product, cv, exp, education, experience, tenure, vskillset };
     } catch (e) {
-      console.warn('PROCESS_GEO_API fetch error:', e);
+      console.error('[View Details] PROCESS_GEO_API fetch error:', e);
+      // Retry for network errors
+      if ((e.name === 'TypeError' || e.message.includes('network')) && retryCount < MAX_RETRIES) {
+        console.warn(`[View Details] Network error, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+        return tryFetch(val, retryCount + 1);
+      }
       return null;
     }
   };
@@ -4326,6 +4397,44 @@ function renderTable(){
     });
   }
 
+  /* Helper function to create error/warning notices in View Details tab */
+  function createViewDetailsNotice(config) {
+    const { type, title, message, reasons, instructions } = config;
+    const isWarning = type === 'warning';
+    
+    const errorNotice = document.createElement('div');
+    errorNotice.style.cssText = isWarning
+      ? 'background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin: 16px 0; color: #92400e; font-size: 14px;'
+      : 'background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin: 16px 0; color: #991b1b; font-size: 14px;';
+    
+    // Create title
+    const titleEl = document.createElement('strong');
+    titleEl.textContent = title;
+    errorNotice.appendChild(titleEl);
+    errorNotice.appendChild(document.createElement('br'));
+    
+    // Add main message
+    if (message) {
+      errorNotice.appendChild(document.createTextNode(message));
+      errorNotice.appendChild(document.createElement('br'));
+    }
+    
+    // Add reasons if provided
+    if (reasons && Array.isArray(reasons)) {
+      reasons.forEach(reason => {
+        errorNotice.appendChild(document.createTextNode('• ' + reason));
+        errorNotice.appendChild(document.createElement('br'));
+      });
+    }
+    
+    // Add instructions
+    if (instructions) {
+      errorNotice.appendChild(document.createTextNode(instructions));
+    }
+    
+    return errorNotice;
+  }
+
   /* REFACTORED: renderNameCardToTab instead of creating a table row */
   function renderNameCardToTab(tr) {
     if(!tr) return null;
@@ -5178,10 +5287,50 @@ function renderTable(){
 
           } catch(_){}
         } else {
+          // No data returned from database - show empty state message
           sectorEl.textContent = rowCountry || sector || '—';
+          
+          // Display user-friendly warning message
+          const errorNotice = createViewDetailsNotice({
+            type: 'warning',
+            title: '⚠️ No additional data available',
+            message: 'The profile data could not be retrieved from the database. This may be due to:',
+            reasons: [
+              'The profile has not been fully processed yet',
+              'Network connectivity issues'
+            ],
+            instructions: 'Please try refreshing the profile using the 🔄 Refresh button above.'
+          });
+          
+          // Insert notice after the profile picture container
+          const firstContainer = content.querySelector('div[style*="text-align: center"]');
+          if (firstContainer && firstContainer.nextSibling) {
+            firstContainer.parentNode.insertBefore(errorNotice, firstContainer.nextSibling);
+          } else {
+            content.insertBefore(errorNotice, content.firstChild);
+          }
         }
       } catch (e) {
-        console.warn('Failed to populate process geography for namecard', e);
+        console.error('[View Details] Failed to populate process geography for namecard:', e);
+        
+        // Display user-friendly error message
+        const errorNotice = createViewDetailsNotice({
+          type: 'error',
+          title: '❌ Unable to load details',
+          message: 'An error occurred while retrieving profile data from the database.',
+          instructions: 'Please try again later or contact support if the problem persists.'
+        });
+        
+        // Insert notice after the profile picture container
+        const firstContainer = content.querySelector('div[style*="text-align: center"]');
+        if (firstContainer && firstContainer.nextSibling) {
+          firstContainer.parentNode.insertBefore(errorNotice, firstContainer.nextSibling);
+        } else {
+          content.insertBefore(errorNotice, content.firstChild);
+        }
+        
+        // Keep fallback values displayed
+        sectorEl.textContent = rowCountry || sector || '—';
       }
     })();
     
@@ -6058,6 +6207,16 @@ if (bulkUploadBtn && bulkDirInput) {
         const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nUpload and match these to candidates?`);
         if (!confirmUpload) return;
 
+        const bulkUploadProgressContainer = document.getElementById('bulkUploadProgressContainer');
+        const bulkUploadProgressBar = document.getElementById('bulkUploadProgressBar');
+        const bulkUploadProgressPercent = document.getElementById('bulkUploadProgressPercent');
+        const bulkUploadProgressText = document.getElementById('bulkUploadProgressText');
+        
+        bulkUploadProgressContainer.style.display = 'block';
+        bulkUploadProgressBar.style.width = '0%';
+        bulkUploadProgressPercent.textContent = '0%';
+        bulkUploadProgressText.textContent = 'Starting upload...';
+
         setStatus(`Uploading ${validFiles.length} files...`, "info");
         bulkUploadBtn.disabled = true;
         
@@ -6077,6 +6236,10 @@ if (bulkUploadBtn && bulkDirInput) {
         if (uid) formData.append('userid', uid);
 
         try {
+            bulkUploadProgressBar.style.width = '20%';
+            bulkUploadProgressPercent.textContent = '20%';
+            bulkUploadProgressText.textContent = 'Uploading files...';
+            
             // Use the new bulk upload endpoint
             console.log(`[Bulk Upload] Sending to ${API_UPLOAD_MULTIPLE}`);
             const res = await fetch(API_UPLOAD_MULTIPLE, {
@@ -6086,6 +6249,10 @@ if (bulkUploadBtn && bulkDirInput) {
             });
             const data = await res.json();
             console.log('[Bulk Upload] Response:', data);
+
+            bulkUploadProgressBar.style.width = '60%';
+            bulkUploadProgressPercent.textContent = '60%';
+            bulkUploadProgressText.textContent = 'Processing files...';
 
             if (res.ok) {
                 setStatus(`Bulk Upload Complete: Matched ${data.uploaded_count} CVs. Verifying data...`, "info");
@@ -6101,9 +6268,20 @@ if (bulkUploadBtn && bulkDirInput) {
                 if (data.uploaded_profiles && Array.isArray(data.uploaded_profiles)) {
                     setStatus(`Verifying ${data.uploaded_profiles.length} profiles in database...`, "info");
                     
+                    bulkUploadProgressBar.style.width = '80%';
+                    bulkUploadProgressPercent.textContent = '80%';
+                    bulkUploadProgressText.textContent = 'Verifying data...';
+                    
                     // Poll to verify all fields are populated
                     await verifyBulkUploadedProfiles(data.uploaded_profiles);
                 }
+                
+                bulkUploadProgressBar.style.width = '100%';
+                bulkUploadProgressPercent.textContent = '100%';
+                bulkUploadProgressText.textContent = 'Upload complete!';
+                setTimeout(() => {
+                    bulkUploadProgressContainer.style.display = 'none';
+                }, 2000);
                 
                 alert(msg);
                 
@@ -6112,10 +6290,12 @@ if (bulkUploadBtn && bulkDirInput) {
                 renderTable();
                 
             } else {
+                bulkUploadProgressContainer.style.display = 'none';
                 setStatus(`Upload failed: ${data.error || 'Unknown error'}`, "error");
                 alert(`Error: ${data.error}`);
             }
         } catch (e) {
+            bulkUploadProgressContainer.style.display = 'none';
             setStatus(`Upload request failed: ${e.message}`, "error");
             console.error(e);
         } finally {
