@@ -4984,11 +4984,21 @@ def process_geography():
                         result["geographic"] = inferred
 
                 cur.close(); conn.close()
-                return jsonify(result), 200
+                # Add no-cache headers to ensure fresh data after assessments
+                response = jsonify(result)
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response.headers['Pragma'] = 'no-cache'
+                response.headers['Expires'] = '0'
+                return response, 200
 
         cur.close(); conn.close()
         if not row:
-            return jsonify(None), 404
+            # Add no-cache headers even for 404 responses
+            response = jsonify(None)
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response, 404
 
         result = {}
         for idx, col in enumerate(selected):
