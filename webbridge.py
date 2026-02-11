@@ -4989,6 +4989,13 @@ def process_geography():
             val = row[idx]
             if col == 'cv':
                  result[col] = bool(val)
+            elif col == 'seniority':
+                 # Add "level" suffix for UI display if not already present
+                 seniority_val = val if val is not None else ""
+                 if seniority_val and not seniority_val.endswith('level') and not seniority_val.endswith('-level'):
+                     result[col] = seniority_val + '-level'
+                 else:
+                     result[col] = seniority_val
             else:
                  result[col] = val if val is not None else ""
 
@@ -5462,6 +5469,19 @@ def process_download_cv():
         logger.error(f"[Download CV] {e}")
         return f"Error: {str(e)}", 500
 
+def _strip_level_suffix(seniority: str) -> str:
+    """
+    Strip '-level' suffix from seniority for database storage.
+    Example: 'Mid-level' -> 'Mid', 'Senior-level' -> 'Senior'
+    
+    This ensures DB stores clean values without '-level' suffix.
+    UI layer should add 'level' back when displaying.
+    """
+    if not seniority:
+        return ""
+    # Remove '-level' suffix (case-insensitive)
+    return re.sub(r'-level$', '', seniority, flags=re.IGNORECASE).strip()
+
 def _normalize_seniority_to_8_levels(seniority_text: str, total_experience_years=None) -> str:
     """
     Normalize freeform seniority to one of the 8 specified levels:
@@ -5690,9 +5710,10 @@ def _analyze_cv_bytes_sync(pdf_bytes):
                      else:
                          obj[field] = value
              
-             # Normalize seniority to one of the 8 specified levels
+             # Normalize seniority to one of the 8 specified levels, then strip '-level' suffix for DB storage
              if obj.get('seniority'):
-                 obj['seniority'] = _normalize_seniority_to_8_levels(obj['seniority'], obj.get('total_experience_years'))
+                 normalized_seniority = _normalize_seniority_to_8_levels(obj['seniority'], obj.get('total_experience_years'))
+                 obj['seniority'] = _strip_level_suffix(normalized_seniority)
 
         return obj
     except Exception as e:
