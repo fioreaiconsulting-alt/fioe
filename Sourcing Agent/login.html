@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Login - AutoSourcing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg:#f5f7fa; --panel:#ffffff; --primary:#0b62c0;
+      --border:#d1dde9; --muted:#5c6d7c; --danger:#b00020;
+    }
+    html,body { height:100%; }
+    body {
+      margin:0; background:var(--bg); color:#182230;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      line-height:1.45; display:flex; align-items:center; justify-content:center; min-height:100vh;
+    }
+    .login-panel {
+      background:var(--panel);
+      max-width:360px; width:100%;
+      margin:auto; border-radius:18px;
+      box-shadow:0 10px 28px -10px rgba(0,0,0,.15),0 2px 6px -2px rgba(0,0,0,.08);
+      border:1px solid var(--border);
+      padding:34px 36px 32px;
+      display:flex; flex-direction:column; gap:20px;
+    }
+    h2 {
+      margin:0 0 18px; text-align:center; font-size:24px; letter-spacing:.4px; color:var(--primary);
+      font-weight:700; }
+    label {
+      font-weight:600; font-size:13px; letter-spacing:.55px; margin-bottom:6px; color:#334055;
+      text-transform:uppercase; display:block;}
+    input[type=text], input[type=password] {
+      width:100%; padding:12px 13px; font-size:15px; border:1px solid var(--border);
+      border-radius:8px; background:#fff; margin-bottom:8px;
+      transition:border-color .16s, box-shadow .13s;
+    }
+    input[type=text]:focus, input[type=password]:focus {
+      outline:none; border-color:var(--primary); box-shadow:0 0 0 2px rgba(11,98,192,.13);}
+    .form-actions { margin-top:8px; display:flex; flex-direction:column; gap:8px;}
+    button[type=submit] {
+      background:var(--primary); color:#fff; border:none; width:100%; padding:12px 0; font-size:16px;
+      border-radius:9px; cursor:pointer; font-weight:600; letter-spacing:.36px; margin-top:6px;
+      box-shadow:0 3px 12px -3px rgba(11,98,192,.17); transition:background .19s;
+    }
+    button[type=submit]:hover { background:#084d94;}
+    .login-msg { text-align:center; font-size:13.5px; margin-top:8px; min-height:22px; }
+    .error { color:var(--danger);}
+    .success { color:#1f8a45; }
+    .form-extra { margin-top:12px; text-align:center; color:var(--muted); font-size: 13px;}
+    .form-register { margin-top:6px; text-align:center; color:var(--muted); font-size: 13px;}
+    .form-register a { color: var(--primary); text-decoration: none; font-weight: 600;}
+    .form-register a:hover { text-decoration: underline; }
+    @media (max-width:500px) {
+      .login-panel { padding:18px 9vw 18px 9vw; }
+    }
+  </style>
+</head>
+<body>
+  <form class="login-panel" id="loginForm" autocomplete="off" novalidate>
+    <h2>Sign in to AutoSourcing</h2>
+    <div>
+      <label for="username">Username</label>
+      <input required type="text" id="username" name="username" placeholder="Enter Username" autocomplete="username" />
+    </div>
+    <div>
+      <label for="password">Password</label>
+      <input required type="password" id="password" name="password" placeholder="Enter Password" autocomplete="current-password" />
+    </div>
+    <div class="form-actions">
+      <button type="submit">Login</button>
+      <div class="login-msg" id="loginMsg"></div>
+    </div>
+    <div class="form-extra">Access is restricted – authorized users only</div>
+    <div class="form-register">
+      Don't have an account? <a href="register.html">Register here</a>.
+    </div>
+  </form>
+  <script>
+    const form = document.getElementById("loginForm");
+    const msg = document.getElementById("loginMsg");
+
+    function getQueryParam(name) {
+      const url = new URL(window.location);
+      return url.searchParams.get(name);
+    }
+
+    // =========================
+    // AFFECTED SECTION: Persist authentication info after successful login
+    // - Store fullname so index.html can greet with the user's full name.
+    // =========================
+    function persistAuth(username, userid, fullname, roleTag) {
+      try {
+        sessionStorage.setItem("username", username);
+        localStorage.setItem("username", username);
+        document.cookie = `username=${encodeURIComponent(username)}; path=/; max-age=2592000`;
+        if (userid) {
+          sessionStorage.setItem("userid", userid);
+          localStorage.setItem("userid", userid);
+          document.cookie = `userid=${encodeURIComponent(userid)}; path=/; max-age=2592000`;
+        }
+        if (fullname) {
+          sessionStorage.setItem("fullname", fullname);
+          localStorage.setItem("fullname", fullname);
+          // Optional cookie for redundancy
+          document.cookie = `fullname=${encodeURIComponent(fullname)}; path=/; max-age=2592000`;
+        }
+        if (roleTag) {
+          sessionStorage.setItem("role_tag", roleTag);
+          localStorage.setItem("role_tag", roleTag);
+        }
+      } catch (_) {}
+    }
+    // =========================
+    // End affected section
+    // =========================
+
+    form.addEventListener("submit", async function(e){
+      e.preventDefault();
+      msg.textContent = "";
+      msg.className = "login-msg";
+
+      const username = form.username.value.trim();
+      const password = form.password.value;
+
+      if (!username || !password) {
+        msg.textContent = "Please fill in both Username and Password.";
+        msg.classList.add("error");
+        return false;
+      }
+      if (!(/[a-zA-Z]/.test(password) && /\d/.test(password))) {
+        msg.textContent = "Password must contain both letters and numbers.";
+        msg.classList.add("error");
+        return false;
+      }
+
+      form.querySelector("button[type=submit]").disabled = true;
+      msg.textContent = "Signing in…";
+
+      try {
+        const resp = await fetch("/login", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ username, password })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.ok) {
+          msg.textContent = data.error || "Login failed.";
+          msg.classList.add("error");
+        } else {
+          // =========================
+          // AFFECTED SECTION: pass fullname to persistAuth
+          // - Accept multiple possible backend field names for robustness.
+          // =========================
+          const respUsername = (data.username || data.user || username || "").toString();
+          const respUserid = (data.userid || data.userId || data.id || "").toString();
+          const respFullname = (data.fullname || data.full_name || data.name || data.displayName || data.display_name || "").toString();
+          const respRoleTag = (data.role_tag || data.roleTag || data.role || "").toString();
+
+          persistAuth(respUsername || username, respUserid || data.userid || "", respFullname || "", respRoleTag || "");
+
+          msg.textContent = "Login successful! Redirecting…";
+          msg.classList.remove("error"); msg.classList.add("success");
+          setTimeout(function(){
+            window.location.replace("index.html");
+          }, 800);
+          return;
+        }
+      } catch (err) {
+        msg.textContent = "Network or server error. Try again?";
+        msg.classList.add("error");
+      } finally {
+        form.querySelector("button[type=submit]").disabled = false;
+      }
+    });
+
+    window.addEventListener("DOMContentLoaded", function(){
+      form.username.value = "";
+      form.password.value = "";
+      msg.textContent = "";
+    });
+  </script>
+</body>
+</html>

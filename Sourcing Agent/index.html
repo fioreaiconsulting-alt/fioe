@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AI Sourcing Bot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Appearance change: Orbitron font + cyber / I, Robot-inspired palette (visual only) -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      /* Cyber / I, Robot inspired tokens (keeps layout intact, only visual token changes) */
+      --desired-dawn: #d8d8d8;
+      --robins-egg:  #6deaf9;
+      --argent:      #87888a;
+      --cool-blue:   #4c82b8;
+      --azure-dragon:#073679;
+      --black-beauty:#222529;
+
+      --bg:#f5f7fa;
+      --panel:#ffffff;
+      --border:#d8dde2;
+      --bot:#ffffff;
+      --user:#fbfbfb;
+      --bot-border:#e9eef6;
+      --user-border:#e6e3dd;
+      --text:#0f1724;
+      --muted:#6b7280;
+      --link:var(--azure-dragon);
+      --accent:var(--azure-dragon);
+      --card-shadow: 0 6px 20px rgba(7,54,121,0.06);
+      --spinner:var(--azure-dragon);
+    }
+    /* Use Orbitron as primary font for the cyber aesthetic; fall back to system fonts */
+    body{
+      font-family:"Orbitron",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      margin:28px;
+      background:linear-gradient(180deg, #f7fbff 0%, var(--bg) 100%);
+      color:var(--text);
+    }
+    .wrap{max-width:980px;margin:auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px 18px 20px; box-shadow: var(--card-shadow);}
+    h1{margin:8px 0 14px;font-size:20px;color:var(--text);font-weight:700}
+    .chat{display:flex;flex-direction:column;gap:10px;max-height:64vh;overflow:auto;padding:12px;border-radius:8px;background:linear-gradient(180deg,#fff,#fbfdff);border:1px solid #f0f4f8;}
+    .msg{display:flex;width:100%;}
+    .msg.bot{justify-content:flex-start;}
+    .msg.user{justify-content:flex-end;}
+    .bubble{position:relative;max-width:72%;padding:12px 16px;border-radius:12px;box-shadow:0 2px 6px rgba(10,15,30,.04);word-wrap:break-word;white-space:pre-wrap;font-size:14px;line-height:1.45}
+    .bot .bubble{background:var(--bot);border:1px solid var(--bot-border);}
+    .user .bubble{background:var(--user);border:1px solid var(--user-border);}
+    .who{font-size:11px;color:var(--muted);margin-bottom:6px;}
+    .row{display:flex;gap:10px;margin-top:14px}
+    #userMsg{flex:1;padding:12px 14px;border:1px solid var(--border);border-radius:10px; font-size:14px}
+    #sendBtn{padding:10px 16px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(11,98,192,.14)}
+    #sendBtn[disabled]{opacity:.6;cursor:not-allowed}
+    a{color:var(--link);text-decoration:underline;}
+    .hint{margin-top:10px;color:var(--muted);font-size:13px}
+    .spinner{
+      width:18px;height:18px;
+      border:3px solid #d6e2f2;
+      border-top-color:var(--spinner);
+      border-radius:50%;
+      animation:spin .75s linear infinite;
+      display:inline-block;
+      vertical-align:middle;
+      margin-left:10px;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    #newQueryBtn{
+      padding:10px 12px;
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:#ffffff;
+      color:var(--text);
+      font-weight:700;
+      cursor:pointer;
+      box-shadow:none;
+    }
+    #newQueryBtn:hover{ background:#f3f6fb; }
+    #newQueryBtn[disabled]{ opacity:.6; cursor:not-allowed; }
+
+    .choice-btn {
+      padding:12px 16px;
+      margin:3px 0;
+      background:linear-gradient(180deg,#eef9ff,#eaf7fe);
+      border:1px solid #d9edf8;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:700;
+      color:var(--azure-dragon);
+      font-size:15px;
+      transition:background .13s, box-shadow .13s;
+      box-shadow:0 2px 8px -3px rgba(38,94,173,0.06);
+      text-align:left;
+    }
+    .choice-btn:hover { background:#e4f7ff; }
+    .choice-btn:active { background:#d6f0ff; }
+
+    .profiles-btn, .download-btn, .suggest-actions button{
+      margin-top:12px;
+      padding:12px 18px;
+      background:var(--accent);
+      color:#fff;
+      font-weight:700;
+      border:none;
+      border-radius:10px;
+      cursor:pointer;
+      font-size:15px;
+      box-shadow:0 6px 20px rgba(11,98,192,.12);
+    }
+    .profiles-btn:hover, .download-btn:hover, .suggest-actions button:hover { background:var(--cool-blue); }
+    .bubble button[disabled]{ opacity:.6; cursor:not-allowed; pointer-events:none; }
+    .download-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+    .suggest-wrap{ margin-top:10px; display:flex; gap:16px; flex-wrap:wrap; }
+    .suggest-col{ min-width:260px; }
+    .suggest-col h4{ margin:8px 0 6px; font-size:14px; color:#374151; }
+    .suggest-list{ display:flex; flex-direction:column; gap:6px; }
+    .suggest-list label{ display:flex; align-items:center; gap:10px; font-size:14px; color:#0f1724; }
+
+    .suggest-actions{ margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; }
+    .suggest-actions .secondary{
+      background:#f7fafc; color:#24425a; border:1px solid #dbeafe; box-shadow:none;
+    }
+    .suggest-actions .secondary:hover{ background:#f0f7fb; }
+
+    /* AFFECTED SECTION: top banner styling (welcome + logout) - enhanced professional look (visual tokens) */
+    .topbar {
+      display:flex; align-items:center; justify-content:space-between;
+      gap:12px; padding:10px 14px; border:1px solid var(--border);
+      border-radius:10px; background:linear-gradient(90deg,#ffffff,#fbfdff); margin:0 0 12px;
+      box-shadow: 0 4px 14px rgba(7,54,121,0.04);
+    }
+    .topbar .left {
+      display:flex; align-items:center; gap:12px;
+    }
+    .topbar .avatar {
+      width:44px; height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center;
+      background: linear-gradient(180deg,var(--azure-dragon),var(--cool-blue)); color:#fff; font-weight:700; font-size:15px;
+      box-shadow: 0 4px 10px rgba(11,98,192,0.12);
+    }
+    .topbar .welcome {
+      font-weight:700; color:var(--text); font-size:15px;
+      display:flex; flex-direction:column;
+    }
+    .topbar .welcome .name { font-weight:700; color:var(--text); }
+    .topbar .welcome .meta { font-size:12px; color:var(--muted); margin-top:2px; }
+    .topbar .role {
+      background:linear-gradient(180deg,#eef9ff,#eaf7fe); color:#083658; padding:6px 10px; border-radius:8px; font-weight:700; font-size:13px;
+      border:1px solid #d6eafc;
+    }
+    .topbar .right { display:flex; align-items:center; gap:10px; }
+    .topbar button.logout {
+      padding:8px 12px; border:1px solid #e2e8f0; border-radius:8px;
+      background:#fff; color:var(--text); font-weight:700; cursor:pointer;
+      transition:background .12s, transform .06s;
+    }
+    .topbar button.logout:hover { background:#fbfbfe; transform:translateY(-1px); }
+
+    /* Hide the top-level highlight button visually (conceal its visibility as requested).
+       Using display:none ensures it's concealed; keeping the element in DOM when needed for JS is not required,
+       but the selector is added here so it can be toggled later if desired. */
+    #highlightTopBtn {
+      display: none !important;
+      visibility: hidden !important;
+      /* fallback visual conceal (in case some browsers ignore display override in rare injection scenarios) */
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+    /* End topbar section */
+
+    /* JD upload bubble */
+    .jd-upload {
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .jd-upload input[type=file] { border-radius:8px; padding:6px; }
+    .jd-upload .note { color:var(--muted); font-size:13px; }
+
+    /* small skill pill list */
+    .skill-list {
+      display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;
+    }
+    .skill-pill {
+      background:#eef6ff; color:#073679; padding:6px 10px; border-radius:999px; font-weight:600; font-size:13px; border:1px solid #d6eafc;
+    }
+    .skill-actions { margin-top:8px; display:flex; gap:8px; align-items:center; }
+    .save-skills { padding:8px 12px; background:#0b62c0;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700; }
+    .save-skills[disabled]{ opacity:.6; cursor:not-allowed; }
+
+    /* A small UX tweak: hide the "Save skills to profile" button to present a more professional, read-only confirmation UI.
+       The frontend can still save skills via explicit actions or admin flows; hiding here avoids clutter during JD confirmation. */
+    .save-skills { display: none !important; }
+
+    /* Responsive tweaks */
+    @media (max-width: 640px){
+      .chat{max-height:56vh;padding:8px}
+      .bubble{font-size:13px}
+      .topbar .avatar{width:40px;height:40px;font-size:13px}
+    }
+  </style>
+  <script>
+    let sending = false;
+    let polling = false;
+    let pollTimer = null;
+    let pollAttempts = 0;
+    const MAX_POLL_ATTEMPTS = 60;
+    const POLL_INTERVAL_MS = 2000;
+
+    // Engine base captured from review URLs (used optionally later)
+    let ENGINE_BASE = "";
+
+    // AFFECTED SECTION: Control for Suggest button enable/disable
+    // Disabled only AFTER "Use Suggestions for Sourcing" is clicked.
+    // Re-enabled when the user provides a new chat response (typed message or choice button).
+    let suggestionUsed = false;
+    // AFFECTED SECTION: Modal lock while a "Try Something Else" button is present
+    // When true, the input and send button are disabled until a choice button is clicked.
+    let modalTryElseActive = false;
+
+    // AFFECTED SECTION: Authentication context helpers for /chat requests
+    function readCookie(name){
+      const safe = name.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&');
+      const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + safe + '=([^;]*)'));
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+    function getAuthUsername(){
+      return (localStorage.getItem('username') || sessionStorage.getItem('username') || readCookie('username') || '').trim();
+    }
+    function getAuthUserId(){
+      return (localStorage.getItem('userid') || sessionStorage.getItem('userid') || readCookie('userid') || '').trim();
+    }
+    // AFFECTED SECTION: Full name helper
+    function getAuthFullname(){
+      return (localStorage.getItem('fullname') || sessionStorage.getItem('fullname') || readCookie('fullname') || '').trim();
+    }
+
+    // AFFECTED SECTION: Enforce authentication – redirect unauthenticated users to login.html
+    (function enforceAuthRedirect(){
+      try{
+        const u = getAuthUsername();
+        if(!u){
+          window.location.replace('login.html');
+        }
+      }catch(_){}
+    })();
+
+    // AFFECTED SECTION: Logout handler (clears auth and redirects to login)
+    function clearCookie(name){
+      try{ document.cookie = name + '=; Max-Age=0; path=/'; }catch(_){}
+    }
+    function logout(){
+      try{
+        ['username','userid','role_tag','fullname'].forEach(k=>{
+          localStorage.removeItem(k);
+          sessionStorage.removeItem(k);
+        });
+        clearCookie('username'); clearCookie('userid'); clearCookie('fullname');
+      }catch(_){}
+      window.location.replace('login.html');
+    }
+
+    // AFFECTED SECTION: client helper to clear role and fullname locally and refresh UI
+    function clearRoleTagClient(){
+      try{
+        localStorage.removeItem('role_tag');
+        sessionStorage.removeItem('role_tag');
+        localStorage.removeItem('fullname');
+        sessionStorage.removeItem('fullname');
+      }catch(_){}
+      try{
+        clearCookie('role_tag');
+        clearCookie('fullname');
+      }catch(_){}
+      try{
+        updateBanner();
+      }catch(_){}
+    }
+
+    // AFFECTED SECTION: Update banner contents (now shows avatar, full name and role)
+    function updateBanner(){
+      const u = getAuthUsername();
+      const full = getAuthFullname();
+      const roleTag = (localStorage.getItem('role_tag') || sessionStorage.getItem('role_tag') || readCookie('role_tag') || '').trim();
+
+      const bannerText = document.getElementById('welcomeText');
+      const avatarEl = document.getElementById('avatarEl');
+      const roleEl = document.getElementById('roleEl');
+
+      // Build display name: prefer full name, fallback to username
+      const displayName = full || u || '';
+
+      if(avatarEl){
+        // avatar initials
+        const nameForInitials = displayName || (u || '');
+        let initials = '';
+        try{
+          const parts = nameForInitials.trim().split(/\s+/).filter(Boolean);
+          if(parts.length===0) initials = '?';
+          else if(parts.length===1) initials = parts[0].substring(0,2).toUpperCase();
+          else initials = (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+        }catch(_){ initials = (u || '').substring(0,2).toUpperCase(); }
+        avatarEl.textContent = initials;
+        avatarEl.title = displayName || 'User';
+      }
+
+      if(bannerText){
+        const nameNode = bannerText.querySelector('.name');
+        const metaNode = bannerText.querySelector('.meta');
+        if(nameNode) nameNode.textContent = displayName ? `Welcome, ${displayName}` : 'Welcome';
+        if(metaNode) metaNode.textContent = u && full ? `@${u}` : (u || '');
+      }
+
+      if(roleEl){
+        if(roleTag){
+          roleEl.textContent = roleTag;
+          roleEl.style.display = 'inline-block';
+        } else {
+          roleEl.style.display = 'none';
+        }
+      }
+
+      const logoutBtn = document.getElementById('logoutBtn');
+      if(logoutBtn && !logoutBtn._bound){
+        logoutBtn.addEventListener('click', logout);
+        logoutBtn._bound = true;
+      }
+    }
+
+    function escapeHtml(s){
+      return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function linkify(text){
+      const esc = escapeHtml(text);
+      const withLinks = esc.replace(/(https?:\/\/[^\s)]+)(?=[)\s]|$)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+      return withLinks.replace(/\n/g,'<br>');
+    }
+    function disableBubbleButtons(bubble){
+      if(!bubble) return;
+      bubble.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    }
+
+    function isConfirmPrompt(txt){
+      return !!txt && /Would you like me to:/i.test(txt) && /Start sourcing candidates/i.test(txt);
+    }
+    function parseConfirmPrompt(txt){
+      const m = txt.split(/Would you like me to:/i);
+      const leadin = m[0] ? m[0].trim().replace(/[\n\r]+$/,'') : "";
+      return {leadin};
+    }
+    function isDeliveryOptionsPrompt(txt){
+      return !!txt
+        && /How would you like to receive the results\?/i.test(txt)
+        && ( /Review & Flag Panel/i.test(txt) || /Tweak the search results/i.test(txt) );
+    }
+
+    function isProfilesSummary(txt){
+      if(!txt) return false;
+      const modern = /I've found\s+\d+\s+matching profiles\./i.test(txt) && /ReviewURL:\s*\S+/i.test(txt);
+      const legacy = /Live review:\s*(https?:\/\/\S+)/i.test(txt);
+      return modern || legacy;
+    }
+    function extractProfileSummaryInfo(txt){
+      let urlMatch = txt.match(/ReviewURL:\s*(\S+)/i);
+      let countMatch = txt.match(/I've found\s+(\d+|\w+)\s+matching profiles\./i);
+      if(!urlMatch){ urlMatch = txt.match(/Live review:\s*(https?:\/\/\S+)/i); }
+      if(!countMatch){ countMatch = txt.match(/Profiles\s+(?:initial count|found):\s*(\d+|\w+)/i); }
+      return { url: urlMatch ? urlMatch[1] : null, count: countMatch ? countMatch[1] : null };
+    }
+
+    function isDownloadLinks(txt){
+      if(!txt) return false;
+      const hasCsv = /CSV:\s*https?:\/\/\S+/i.test(txt);
+      const hasXlsx = /XLSX:\s*https?:\/\/\S+/i.test(txt);
+      return hasCsv || hasXlsx;
+    }
+    function extractDownloadsAndCount(txt){
+      const csvMatch = txt.match(/CSV:\s*(https?:\/\/\S+)/i);
+      const xlsxMatch = txt.match(/XLSX:\s*(https?:\/\/\S+)/i);
+      let count = null;
+      const m1 = txt.match(/I've found\s+(\d+)\s+matching profiles\./i);
+      const m2 = txt.match(/Found\s+(\d+)\s+profiles/i);
+      const m3 = txt.match(/Profiles\s+(?:found|initial count):\s*(\d+)/i);
+      if(m1) count = m1[1]; else if(m2) count = m2[1]; else if(m3) count = m3[1];
+      return { csv: csvMatch ? csvMatch[1] : null, xlsx: xlsxMatch ? xlsxMatch[1] : null, count };
+    }
+    function isExportPending(txt){
+      if(!txt) return false;
+      return /Export links are not ready yet/i.test(txt) && !isDownloadLinks(txt);
+    }
+
+    // Improved suggestion detection: match a variety of phrases and presence of "Job Title ideas"/"Company ideas"
+    function isSuggestionIdeas(txt){
+      if(!txt) return false;
+      const low = (txt || '').toLowerCase();
+      if (/^here are some ideas/i.test(low)) return true;
+      if (low.includes('here are some relevant') || low.includes('here are some ideas') || low.includes('here are some')) return true;
+      if (low.includes('job title ideas') || low.includes('company ideas') || low.includes('company ideas:') || low.includes('job title ideas:')) return true;
+      if (low.includes('here are some relevant companies') || low.includes('here are some relevant job titles')) return true;
+      return false;
+    }
+    function parseSuggestionIdeas(txt){
+      const jobs = [];
+      const companies = [];
+      const lines = (txt || '').split(/\r?\n/);
+      let mode = '';
+      for(const raw of lines){
+        const line = raw.trim();
+        if(/^job title ideas:/i.test(line)){ mode = 'jobs'; continue; }
+        if(/^company ideas:/i.test(line)){ mode = 'companies'; continue; }
+        if(/^here are some ideas/i.test(line)) { continue; }
+        if(line.startsWith('•') || /;/.test(line) || /•/.test(line)){
+          const cleaned = line.replace(/^•\s*/,'');
+          const parts = cleaned.split(';');
+          for(const p of parts){
+            const t = p.trim().replace(/[.,;]+$/,'');
+            if(!t) continue;
+            if(mode === 'jobs') jobs.push(t);
+            else if(mode === 'companies') companies.push(t);
+            else {
+              // If no explicit mode, try classify heuristically: contains 'Inc' or 'Corp' or multiple words -> company else job
+              if(/\b(inc|ltd|corp|group|company|technologies|systems|corporation)\b/i.test(t) || t.split(' ').length>3){
+                companies.push(t);
+              } else {
+                jobs.push(t);
+              }
+            }
+          }
+        } else {
+          // allow lines like "Job Title ideas: • A; • B" handled above; also pick up comma-separated lists
+          if(line.toLowerCase().includes('job title ideas')) mode='jobs';
+          if(line.toLowerCase().includes('company ideas')) mode='companies';
+          if(mode==='jobs'){
+            const parts = line.split(/[;•,]+/);
+            for(const p of parts){ const t=p.trim(); if(t) jobs.push(t); }
+          } else if(mode==='companies'){
+            const parts = line.split(/[;•,]+/);
+            for(const p of parts){ const t=p.trim(); if(t) companies.push(t); }
+          }
+        }
+      }
+      const dedupeArr=(arr)=>{ const seen=new Set(); const out=[]; for(const x of arr){ const k=x.toLowerCase(); if(!seen.has(k)){ seen.add(k); out.push(x);} } return out; };
+      return { jobs: dedupeArr(jobs), companies: dedupeArr(companies) };
+    }
+
+    function isDefaultSuggestionSet(jobs, companies){
+      const defJobs = [
+        "Software Engineer",
+        "Data Scientist",
+        "Product Manager",
+        "UX Designer",
+        "DevOps Engineer",
+        "Technical Lead"
+      ].map(s=>s.toLowerCase());
+      const defComps = [
+        "Sony",
+        "Panasonic",
+        "Hitachi",
+        "Toyota Motor Corporation",
+        "SoftBank Group",
+        "Fujitsu"
+      ].map(s=>s.toLowerCase());
+      const jSet = new Set((jobs||[]).map(s=>s.toLowerCase()));
+      const cSet = new Set((companies||[]).map(s=>s.toLowerCase()));
+      const jobsMatch = jSet.size===defJobs.length && defJobs.every(x=>jSet.has(x));
+      const compsMatch = cSet.size===defComps.length && defComps.every(x=>cSet.has(x));
+      return jobsMatch && compsMatch;
+    }
+
+    function arrayBufferToBase64(buffer){
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    }
+
+    // ------------------------------------------------------------
+    // New: Initial choice UI and JD upload handling
+    // ------------------------------------------------------------
+    function showInitialChoice() {
+      // Append a bot bubble with two choice buttons (Upload JD / Job Title + Country)
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'msg bot';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = '<div class="who">Bot</div><div class="bubble-content">How would you like to search for candidate profiles?<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;"><button type="button" class="choice-btn" id="chooseUpload">A. Upload a Job Description</button><button type="button" class="choice-btn" id="chooseManual">B. Provide Job Title and Country</button></div></div>';
+      wrap.appendChild(bubble);
+      chat.appendChild(wrap);
+      chat.scrollTop = chat.scrollHeight;
+      setTimeout(()=>{
+        document.getElementById('chooseUpload').addEventListener('click', onChooseUpload);
+        document.getElementById('chooseManual').addEventListener('click', onChooseManual);
+      },10);
+    }
+
+    function onChooseUpload(){
+      // Render a JD upload bubble containing file input and upload button
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'msg bot';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = '<div class="who">Bot</div><div class="bubble-content jd-upload"><div class="note">Please upload a Job Description file (TXT, DOCX, or PDF). We will analyze it to identify role, seniority, sector, and target country.</div><input type="file" id="jdFile" accept=".txt,.pdf,.docx" /><div style="display:flex;gap:8px;"><button id="uploadJdBtn" class="choice-btn">Upload & Analyze</button><button id="cancelJdBtn" class="choice-btn" style="background:#fff;color:var(--azure-dragon);border:1px solid var(--border)">Cancel</button></div></div>';
+      wrap.appendChild(bubble);
+      chat.appendChild(wrap);
+      chat.scrollTop = chat.scrollHeight;
+      setTimeout(()=>{
+        const uploadBtn = document.getElementById('uploadJdBtn');
+        if (uploadBtn) {
+          uploadBtn.addEventListener('click', handleJdUpload);
+        }
+        const cancelBtn = document.getElementById('cancelJdBtn');
+        if (cancelBtn) {
+          cancelBtn.addEventListener('click', () => { appendBubble('user','cancel'); appendBubble('bot','Okay — choose an option again.'); showInitialChoice(); });
+        }
+      },10);
+      // Lock input while upload step is active (modal-like)
+      modalTryElseActive = true;
+      disableInput(true);
+    }
+
+    // Modified handleJdUpload to actually POST multipart/form-data to the backend /user/upload_jd
+    async function handleJdUpload(){
+      const f = document.getElementById('jdFile').files[0];
+      if(!f){
+        alert('Please choose a file first (TXT, DOCX or PDF).');
+        return;
+      }
+      const filename = f.name || 'jobdesc';
+      const liveUser = appendBubble('user', `Uploading Job Description: ${filename}`);
+      const liveBot = appendBubble('bot','Uploading & analyzing Job Description…', true);
+      try{
+        // Build FormData and send to backend that stores JD (uploads to login.jd as implemented server-side)
+        const form = new FormData();
+        form.append('file', f);
+        form.append('username', getAuthUsername());
+
+        const uploadResp = await fetch('/user/upload_jd', {
+          method: 'POST',
+          body: form,
+          credentials: 'include'
+        });
+
+        let uploadData = null;
+        const ct = uploadResp.headers.get('content-type') || '';
+        if(ct.includes('application/json')) uploadData = await uploadResp.json().catch(()=>null);
+        else {
+          const txt = await uploadResp.text().catch(()=>null);
+          try{ uploadData = JSON.parse(txt); }catch(_){ uploadData = { message: txt }; }
+        }
+
+        if(!uploadResp.ok){
+          const emsg = (uploadData && (uploadData.error || uploadData.message)) ? (uploadData.error || uploadData.message) : `HTTP ${uploadResp.status}`;
+          setBubbleText(liveBot, `Upload failed: ${emsg}`);
+          removeSpinner(liveBot);
+          modalTryElseActive = false;
+          disableInput(false);
+          return;
+        }
+
+        // Upload successful
+        setBubbleText(liveBot, (uploadData && uploadData.message) ? `Upload successful: ${uploadData.message}` : 'Upload successful.');
+
+        // Now request analysis from the server-side Gemini analyzer using the stored JD (server will read login.jd when username provided)
+        try{
+          const analyzeResp = await fetch('/gemini/analyze_jd', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            credentials: 'include',
+            body: JSON.stringify({ username: getAuthUsername() })
+          });
+
+          let analyzeData = null;
+          const act = analyzeResp.headers.get('content-type') || '';
+          if(act.includes('application/json')) analyzeData = await analyzeResp.json().catch(()=>null);
+          else {
+            const txt = await analyzeResp.text().catch(()=>null);
+            try{ analyzeData = JSON.parse(txt); }catch(_){ analyzeData = { summary: txt }; }
+          }
+
+          if(!analyzeResp.ok){
+            const emsg = (analyzeData && (analyzeData.error || analyzeData.message)) ? (analyzeData.error || analyzeData.message) : `HTTP ${analyzeResp.status}`;
+            setBubbleText(liveBot, `Analysis failed: ${emsg}`);
+            removeSpinner(liveBot);
+            modalTryElseActive = false;
+            disableInput(false);
+            return;
+          }
+
+          // analyzeData is expected to be flattened: { job_title, seniority, sectors, country, summary, missing, observation, skills }
+          const parsed = analyzeData || {};
+
+          // A small client-side heuristic: if seniority missing but job_title suggests managerial level,
+          // infer a conservative seniority so we don't force the user to specify it.
+          // This keeps the UI flowing and matches common expectations (e.g., "Product Manager" => Manager).
+          try {
+            if ((!parsed.seniority || !String(parsed.seniority).trim()) && parsed.job_title) {
+              const jt = String(parsed.job_title).toLowerCase();
+              let inferred = "";
+              if (jt.includes("director")) inferred = "Director";
+              else if (jt.includes("head")) inferred = "Head";
+              else if (jt.includes("lead")) inferred = "Lead";
+              else if (jt.includes("senior") || jt.match(/\bsr\b/)) inferred = "Senior";
+              else if (jt.includes("manager") || jt.includes("product manager")) inferred = "Manager";
+              // Only set if we have some confidence
+              if (inferred) parsed.seniority = inferred;
+            }
+          } catch (_) {
+            // fail silently; parsed remains as returned
+          }
+
+          // Normalize sectors to array for display if server returned single string
+          if (parsed.sectors && !Array.isArray(parsed.sectors)) {
+            try {
+              // try split by commas if looks like a CSV
+              if (String(parsed.sectors).includes(",")) {
+                parsed.sectors = String(parsed.sectors).split(",").map(s=>s.trim()).filter(Boolean);
+              } else {
+                parsed.sectors = [String(parsed.sectors).trim()];
+              }
+            } catch (_) {
+              parsed.sectors = [String(parsed.sectors)];
+            }
+          }
+
+          // Normalize skills to array for display if server returned single string
+          if (parsed.skills && !Array.isArray(parsed.skills)) {
+            try {
+              if (String(parsed.skills).includes(",")) {
+                parsed.skills = String(parsed.skills).split(",").map(s=>s.trim()).filter(Boolean);
+              } else if (Array.isArray(parsed.parsed && parsed.parsed.skills)) {
+                parsed.skills = parsed.parsed.skills;
+              } else {
+                parsed.skills = [String(parsed.skills).trim()];
+              }
+            } catch(_) { parsed.skills = [String(parsed.skills || "").trim()]; }
+          } else if (!parsed.skills && parsed.parsed && parsed.parsed.skills) {
+            parsed.skills = parsed.parsed.skills;
+          }
+
+          const summary = parsed.summary || '';
+          const missing = [];
+          if(!parsed.job_title) missing.push('job title');
+          if(!parsed.country) missing.push('country');
+          if(!parsed.sectors || (Array.isArray(parsed.sectors) && parsed.sectors.length===0)) missing.push('sector');
+
+          // Build confirmation bubble (same UX as earlier)
+          const chat=document.getElementById('chat');
+          const wrap=document.createElement('div');
+          wrap.className='msg bot';
+          const bubble=document.createElement('div');
+          bubble.className='bubble';
+          let inner = '<div class="who">Bot</div><div class="bubble-content">';
+          if(summary){
+            inner += `<div style="margin-bottom:10px;">${escapeHtml(summary)}</div>`;
+          } else {
+            inner += `<div style="margin-bottom:10px;">I analysed the Job Description. Please confirm the detected tags below.</div>`;
+          }
+
+          // Include Observation (from Gemini) if present
+          const observation = (parsed.observation || parsed.justification || parsed.raw || "").trim();
+          if(observation){
+            // escape and preserve line breaks
+            const obsHtml = escapeHtml(observation).replace(/\n/g,'<br>');
+            inner += `<div style="margin-bottom:10px;padding:10px;background:#f7fbff;border-radius:8px;color:#083658;font-size:13px;"><strong>Observation:</strong><div style="margin-top:6px;">${obsHtml}</div></div>`;
+          }
+
+          // Show parsed tags
+          inner += '<div style="font-size:13px;color:var(--muted);margin-bottom:8px;">';
+          inner += `<div><strong>Job title:</strong> ${escapeHtml(parsed.job_title || '') || '<em>not detected</em>'}</div>`;
+          inner += `<div><strong>Seniority:</strong> ${escapeHtml(parsed.seniority || '') || '<em>not detected</em>'}</div>`;
+          const sectorDisplay = Array.isArray(parsed.sectors) ? parsed.sectors.join(', ') : (parsed.sectors || '');
+          inner += `<div><strong>Sector:</strong> ${escapeHtml(sectorDisplay) || '<em>not detected</em>'}</div>`;
+          inner += `<div><strong>Country:</strong> ${escapeHtml(parsed.country || '') || '<em>not detected</em>'}</div>`;
+          inner += '</div>';
+
+          // Display Skills beneath Country if present
+          const skillsArr = Array.isArray(parsed.skills) ? parsed.skills : (parsed.skills ? [parsed.skills] : []);
+          if (skillsArr && skillsArr.length > 0) {
+            inner += '<div style="font-size:13px;color:var(--muted);margin-top:6px;">';
+            inner += `<div><strong>Skills:</strong></div>`;
+            inner += '<div class="skill-list">';
+            for (const sk of skillsArr.slice(0, 40)) {
+              inner += `<div class="skill-pill">${escapeHtml(String(sk))}</div>`;
+            }
+            inner += '</div>';
+            // Note: The Save-to-profile button is hidden by CSS (.save-skills { display: none !important; })
+            inner += `<div class="skill-actions"><button class="save-skills" id="saveSkillsBtn">Save skills to profile</button><span style="color:var(--muted);font-size:12px;margin-left:8px;" id="saveSkillsNote"></span></div>`;
+            inner += '</div>';
+          }
+
+          // Modified section: remove Suggest and Highlight buttons from JD confirmation, restore Edit button
+          if(missing && missing.length>0){
+            inner += `<div style="color:#b45309;margin-bottom:8px;">Could you please specify which ${escapeHtml(missing.join(" and "))} you are targeting?</div>`;
+            inner += `<div style="display:flex;gap:8px;"><button class="choice-btn" id="specifyTagsBtn">Specify tags</button><button class="choice-btn" id="rejectJdBtn" style="background:#fff;color:var(--azure-dragon);border:1px solid var(--border)">No, edit</button></div>`;
+          } else {
+            // Restore "No, edit" button next to "Yes, that's correct"
+            inner += `<div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+                        <div style="display:flex;gap:8px;">
+                          <button class="choice-btn" id="acceptJdBtn">Yes, that's correct</button>
+                          <button class="choice-btn" id="rejectJdBtn" style="background:#fff;color:var(--azure-dragon);border:1px solid var(--border)">No, edit</button>
+                        </div>
+                      </div>`;
+          }
+          inner += '</div>';
+          bubble.innerHTML = inner;
+          wrap.appendChild(bubble);
+          chat.appendChild(wrap);
+          chat.scrollTop = chat.scrollHeight;
+          // Bind buttons
+          setTimeout(()=>{
+            const accept = document.getElementById('acceptJdBtn');
+            const specify = document.getElementById('specifyTagsBtn');
+            const reject = document.getElementById('rejectJdBtn');
+            const saveBtn = document.getElementById('saveSkillsBtn');
+
+            if(saveBtn){
+              saveBtn.addEventListener('click', async ()=>{
+                saveBtn.disabled = true;
+                const note = document.getElementById('saveSkillsNote');
+                note.textContent = 'Saving…';
+                try {
+                  const ok = await saveSkillsForUser(getAuthUsername(), skillsArr);
+                  if(ok){
+                    // Persist locally for immediate UX (enables highlight button)
+                    try { localStorage.setItem('jskillset', JSON.stringify(skillsArr)); } catch(_){}
+                  }
+                  note.textContent = ok ? 'Saved' : 'Save failed';
+                } catch(e){
+                  note.textContent = 'Save failed';
+                } finally {
+                  setTimeout(()=>{ if(note) note.textContent = ''; }, 3000);
+                  saveBtn.disabled = false;
+                  // re-check highlight availability after attempted save
+                  checkUserSkillsAvailability();
+                }
+              });
+            }
+
+            if(accept){
+              accept.addEventListener('click', async ()=>{
+                // If we have skills, attempt a background save, but do not block the main flow
+                if (skillsArr && skillsArr.length > 0) {
+                  try {
+                    // Fire-and-forget; show small ephemeral note
+                    const noteId = 'saveSkillsNote';
+                    const noteEl = document.getElementById(noteId);
+                    if(noteEl){ noteEl.textContent = 'Saving skills…'; }
+                    const ok = await saveSkillsForUser(getAuthUsername(), skillsArr);
+                    if(ok){
+                      try { localStorage.setItem('jskillset', JSON.stringify(skillsArr)); } catch(_){}
+                    }
+                    if(noteEl){ noteEl.textContent = ok ? 'Skills saved.' : 'Could not save skills.'; setTimeout(()=>{ if(noteEl) noteEl.textContent=''; }, 2500); }
+                    // ensure highlight availability reflects save
+                    checkUserSkillsAvailability();
+                  } catch(_) {
+                    const noteEl = document.getElementById('saveSkillsNote');
+                    if(noteEl){ noteEl.textContent = 'Could not save skills.'; setTimeout(()=>{ if(noteEl) noteEl.textContent=''; }, 2500); }
+                  }
+                }
+
+                const jt = (parsed.job_title || '').trim();
+                const ct = (parsed.country || '').trim();
+                const sec = sectorDisplay.trim();
+                // Build a concise constructed phrase for the chat pipeline (job title + optional country + optional sector)
+                let constructed = jt;
+                if(ct) constructed += (jt? ' in ' + ct : ct);
+                if(sec) constructed += (ct? ' in ' + sec : (jt? ' in ' + sec : sec));
+                if(!constructed || constructed.trim()===''){
+                  appendBubble('bot','I did not detect a searchable role/country. Please type the Job Title and Country.');
+                  modalTryElseActive = false;
+                  disableInput(false);
+                  return;
+                }
+                // send constructed phrase into main chat flow to continue normal sourcing flow
+                userChoiceSend(constructed);
+              });
+            }
+            if(specify){
+              specify.addEventListener('click', ()=>{
+                const ask = `Could you specify the ${missing.join(" and ")}?`;
+                appendBubble('bot', ask);
+                modalTryElseActive = false;
+                disableInput(false);
+              });
+            }
+            if(reject){
+              // NEW: When user clicks "No, edit" immediately request Gemini to clarify which parts are wrong
+              reject.addEventListener('click', async ()=>{
+                try {
+                  // user action for audit
+                  appendBubble('user', 'No, edit');
+                } catch(_) {}
+                modalTryElseActive = false;
+                disableInput(true);
+                // show a temporary bot bubble
+                const live = appendBubble('bot', 'Okay — checking which tags to correct…', true);
+                try {
+                  const resp = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    credentials: 'include',
+                    body: JSON.stringify({ action: 'request_jd_clarify', username: getAuthUsername() })
+                  });
+                  let data = null;
+                  const ctype = resp.headers.get('content-type') || '';
+                  if(ctype.includes('application/json')) data = await resp.json().catch(()=>null);
+                  else {
+                    const t = await resp.text().catch(()=>null);
+                    try { data = JSON.parse(t); } catch(_) { data = { response: t }; }
+                  }
+                  const text = (data && (data.response || '')) || '[no response]';
+                  setBubbleText(live, text);
+                  // If server returns structured suggestions (action show_suggestions), render them explicitly
+                  if(data && data.action === 'show_suggestions'){
+                    // use structured payload if provided
+                    renderSuggestionBubble(data);
+                  }
+                  // Re-enable input for user to reply with corrections
+                } catch(e){
+                  setBubbleText(live, 'Clarification request failed: ' + (e && e.message ? e.message : 'unknown'));
+                } finally {
+                  // ensure we remove spinner from the specific live bubble
+                  removeSpinner(live);
+                  disableInput(false);
+                }
+              });
+            }
+          }, 10);
+
+        }catch(e){
+          setBubbleText(liveBot, 'Analysis request failed: ' + (e && e.message ? e.message : 'unknown'));
+          removeSpinner(liveBot);
+          modalTryElseActive = false;
+          disableInput(false);
+          return;
+        }
+
+        // Unlock UI
+        removeSpinner(liveBot);
+        modalTryElseActive = false;
+        disableInput(false);
+
+      }catch(e){
+        setBubbleText(liveBot, 'Upload failed: ' + (e && e.message ? e.message : 'unknown'));
+        removeSpinner(liveBot);
+        modalTryElseActive = false;
+        disableInput(false);
+      }
+    }
+    // ------------------------------------------------------------
+    // End modified handleJdUpload
+    // ------------------------------------------------------------
+
+    // Save skills for a user by calling backend endpoint /user/update_skills
+    // Returns true on success, false otherwise.
+    // Enhanced: fallback to a /chat save_skills action if /user/update_skills is not present (404),
+    // so the frontend remains resilient while server-side endpoint is being added.
+    async function saveSkillsForUser(username, skillsArray){
+      if(!username || !skillsArray || !Array.isArray(skillsArray) || skillsArray.length===0) return false;
+      try{
+        const resp = await fetch('/user/update_skills', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          credentials: 'include',
+          body: JSON.stringify({ username: username, skills: skillsArray })
+        });
+        if(resp.ok){
+          const j = await resp.json().catch(()=>null);
+          // persist locally for immediate client-side availability (so highlight button can enable)
+          try { localStorage.setItem('jskillset', JSON.stringify(skillsArray)); } catch(_){}
+          // Also enable both highlight buttons on success
+          document.querySelectorAll('#highlightTalentBtn, #highlightTopBtn').forEach(b => { if(b) b.disabled = false; });
+          return (j && (j.status==='ok' || j.ok)) ? true : true;
+        }
+        // If endpoint not found, attempt graceful fallback to a /chat "save_skills" action
+        if(resp.status === 404){
+          try{
+            const fallback = await fetch('/chat', {
+              method: 'POST',
+              headers: {'Content-Type':'application/json'},
+              credentials: 'include',
+              body: JSON.stringify({ action: 'save_skills', username: username, skills: skillsArray })
+            });
+            if(fallback.ok){
+              try { localStorage.setItem('jskillset', JSON.stringify(skillsArray)); } catch(_){}
+              document.querySelectorAll('#highlightTalentBtn, #highlightTopBtn').forEach(b => { if(b) b.disabled = false; });
+              return true;
+            }
+          }catch(_){}
+        }
+        return false;
+      }catch(e){
+        return false;
+      }
+    }
+
+    // Helper: check whether server/user has jskillset available and enable highlight button(s)
+    async function checkUserSkillsAvailability(){
+      // If we have a local cached jskillset, enable immediately
+      try{
+        const local = localStorage.getItem('jskillset');
+        if(local){
+          const arr = JSON.parse(local);
+          if(Array.isArray(arr) && arr.length>0){
+            document.querySelectorAll('#highlightTalentBtn, #highlightTopBtn').forEach(b => { if(b) b.disabled = false; });
+            return true;
+          }
+        }
+      }catch(_){}
+
+      // Otherwise try to fetch from server (user/resolve may be extended to include skills/jskillset)
+      const uname = getAuthUsername();
+      if(!uname) return false;
+      try{
+        const resp = await fetch('/user/resolve?username=' + encodeURIComponent(uname), { credentials: 'include' });
+        if(!resp.ok) return false;
+        const j = await resp.json().catch(()=>null);
+        if(!j) return false;
+        // Accept a variety of field names the server might return in future
+        const skills = j.jskillset || j.jskills || j.skills || j.skillset || j.jskill || null;
+        if(Array.isArray(skills) && skills.length>0){
+          try { localStorage.setItem('jskillset', JSON.stringify(skills)); } catch(_){}
+          document.querySelectorAll('#highlightTalentBtn, #highlightTopBtn').forEach(b => { if(b) b.disabled = false; });
+          return true;
+        }
+        // if server returns CSV string
+        if(typeof skills === 'string' && skills.trim()){
+          const arr = skills.split(/[,\n;]+/).map(s=>s.trim()).filter(Boolean);
+          if(arr.length>0){
+            try { localStorage.setItem('jskillset', JSON.stringify(arr)); } catch(_){}
+            document.querySelectorAll('#highlightTalentBtn, #highlightTopBtn').forEach(b => { if(b) b.disabled = false; });
+            return true;
+          }
+        }
+      }catch(_){}
+      // if not found, ensure buttons remain disabled
+      document.querySelectorAll('#highlightTalentBtn, #highlightTopBtn').forEach(b => { if(b) b.disabled = true; });
+      return false;
+    }
+
+    function onChooseManual(){
+      // User prefers to type job title + country; simply append a user hint and unlock input
+      appendBubble('user', 'Provide Job Title and Country');
+      appendBubble('bot', 'Sure — please enter the Job Title and Country (for example: Clinical Research Associate in Malaysia).');
+      modalTryElseActive = false;
+      disableInput(false);
+    }
+
+    // ------------------------------------------------------------
+    // End of JD UI additions
+    // ------------------------------------------------------------
+
+    function appendBubble(side, rawText, withSpinner=false){
+      const chat=document.getElementById('chat');
+      const wrap=document.createElement('div');
+      wrap.className='msg '+(side==='user'?'user':'bot');
+      const bubble=document.createElement('div');
+      bubble.className='bubble';
+      const who= side==='user'?'':'<div class="who">Bot</div>';
+
+      if(side==="bot" && isDownloadLinks(rawText)){
+        const info=extractDownloadsAndCount(rawText);
+        const countText=info.count?`I've identified ${escapeHtml(info.count)} matching profiles.`:'I\'ve identified matching profiles.';
+        const csvBtn=info.csv?`<button type="button" class="download-btn" data-dl="${escapeHtml(info.csv)}">Download CSV</button>`:'';
+        const xlsxBtn=info.xlsx?`<button type="button" class="download-btn" data-dl="${escapeHtml(info.xlsx)}">Download XLSX</button>`:'';
+        bubble.innerHTML=who+`<div class="bubble-content">${countText}<br>To access them, simply click:<div class="download-actions">${csvBtn}${xlsxBtn}</div></div>`;
+        bubble.dataset.lock='final';
+        setTimeout(()=>{
+          bubble.querySelectorAll('.download-btn').forEach(btn=>{
+            btn.addEventListener('click',()=>{
+              disableBubbleButtons(bubble);
+              triggerDownload(btn.getAttribute('data-dl'));
+            });
+          });
+        },10);
+
+      } else if(side==="bot" && isExportPending(rawText)){
+        bubble.innerHTML=who+`<div class="bubble-content">“Just a sec—I’m on it!” Preparing your export…
+          <div class="download-actions">
+            <button type="button" class="download-btn" disabled>Download CSV</button>
+            <button type="button" class="download-btn" disabled>Download XLSX</button>
+          </div>
+          <div style="margin-top:6px;color:#6b7280;font-size:12.5px;">Buttons will enable automatically when the files are ready.</div>
+        </div>`;
+        bubble.dataset.lock='pending';
+        const sp=document.createElement('span'); sp.className='spinner'; sp.dataset.spinner='1'; bubble.appendChild(sp);
+        setTimeout(()=>pollStatus(bubble),10);
+
+      } else if(side==="bot" && isConfirmPrompt(rawText)){
+        const parsed = parseConfirmPrompt(rawText);
+        const disableSuggest = suggestionUsed;
+        const secondBtnHtml = disableSuggest
+          ? `<button type="button" class="choice-btn try-something-else" data-try="true">2. Try Something Else</button>`
+          : `<button type="button" class="choice-btn" data-choice="suggest">2. Suggest related job titles and companies to explore</button>`;
+        // Modified layout: third button below second
+        const thirdBtnHtml = `<button type="button" class="choice-btn" data-choice="highlight" id="highlightTalentBtn" disabled>3. Highlighting possible talent pools with skills aligned to the last JD</button>`;
+        
+        bubble.innerHTML = who+`<div class="bubble-content">
+          ${(parsed.leadin ? escapeHtml(parsed.leadin)+'<br>' : '')}Would you like me to:
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+            <button type="button" class="choice-btn" data-choice="yes">1. Start sourcing candidates</button>
+            ${secondBtnHtml}
+            ${thirdBtnHtml}
+          </div>
+          Just click the button to confirm
+        </div>`;
+        setTimeout(bindChoiceButtons,10,bubble);
+        // AFFECTED SECTION: Activate modal lock when Try Something Else button present
+        setTimeout(()=>{
+          if(bubble.querySelector('.try-something-else')){
+            modalTryElseActive = true;
+            disableInput(true);
+          }
+          // After rendering confirm prompt, check whether highlight should be enabled
+          setTimeout(()=>{ checkUserSkillsAvailability(); }, 50);
+        },15);
+
+      } else if(side==="bot" && isDeliveryOptionsPrompt(rawText)){
+        bubble.innerHTML = who+`<div class="bubble-content">
+          How would you like to receive the results?
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+            <button type="button" class="choice-btn" data-choice="review">1. Review & Flag Panel (Advanced tools + token rebates for flagged errors)</button>
+            <button type="button" class="choice-btn" data-choice="excel">2. Export everything into an Excel file</button>
+          </div>
+          Just hit the button to confirm
+        </div>`;
+        setTimeout(bindChoiceButtons,10,bubble);
+
+      } else if(side==="bot" && isProfilesSummary(rawText)){
+        const info = extractProfileSummaryInfo(rawText);
+        const countText = info.count ? escapeHtml(info.count) : '';
+        const url = info.url || '';
+        try { if (url) ENGINE_BASE = new URL(url).origin; } catch(_){}
+        bubble.innerHTML = who+`<div class="bubble-content">
+          I've found ${countText} matching profiles.<br>Ready to explore? Just hit
+          <div><button type="button" class="profiles-btn" data-review-url="${escapeHtml(url)}">View Matching Profiles</button></div>
+        </div>`;
+        bubble.dataset.lock='final';
+        setTimeout(()=>{
+          const btn=bubble.querySelector('.profiles-btn');
+            if(btn){
+              btn.addEventListener('click',()=>{
+                disableBubbleButtons(bubble);
+                const link=btn.getAttribute('data-review-url')||'/SourcingVerify.html';
+                if(link) window.open(link,'_blank','noopener,noreferrer');
+              });
+            }
+        },10);
+
+      } else if(side==="bot" && isSuggestionIdeas(rawText)){
+        // Render suggestion UI using parsed text
+        const { jobs, companies } = parseSuggestionIdeas(rawText);
+        renderSuggestionBubble({ jobs, companies, text: rawText }, bubble, wrap);
+      } else {
+        bubble.innerHTML=who+'<div class="bubble-content">'+linkify(rawText||'')+'</div>';
+      }
+
+      if(withSpinner){
+        const sp=document.createElement('span');
+        sp.className='spinner';
+        sp.dataset.spinner='1';
+        bubble.appendChild(sp);
+      }
+      wrap.appendChild(bubble);
+      chat.appendChild(wrap);
+      chat.scrollTop=chat.scrollHeight;
+      return bubble;
+    }
+
+    // Centralized function to render suggestion UI from structured payload (jobs/companies).
+    // Accepts either a payload object {jobs:[], companies:[]} or full text; optional bubble/wrap to reuse.
+    function renderSuggestionBubble(payload, bubbleArg = null, wrapArg = null){
+      try{
+        // Prevent duplicate suggestion UI: if a suggestion UI already exists in the chat, do not render another
+        const chat = document.getElementById('chat');
+        if (chat && chat.querySelector('.suggest-wrap')) {
+          // Already present - avoid duplication
+          return;
+        }
+
+        const jobs = (payload.jobs || payload.job_titles || []) .map(s=>String(s).trim()).filter(Boolean);
+        const companies = (payload.companies || payload.company || payload.companies_list || []) .map(s=>String(s).trim()).filter(Boolean);
+
+        let bubble, wrap;
+        if(bubbleArg && wrapArg){
+          bubble = bubbleArg;
+          wrap = wrapArg;
+        } else {
+          wrap = document.createElement('div');
+          wrap.className = 'msg bot';
+          bubble = document.createElement('div');
+          bubble.className = 'bubble';
+        }
+
+        // Construct suggestion UI same as earlier design
+        const jobsHtml = jobs.length ? jobs.map(j=>`<label><input type="checkbox" data-suggest-type="job" value="${escapeHtml(j)}"> ${escapeHtml(j)}</label>`).join('') : '<em>No job title ideas.</em>';
+        const compsHtml = companies.length ? companies.map(c=>`<label><input type="checkbox" data-suggest-type="company" value="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`).join('') : '<em>No company ideas.</em>';
+
+        bubble.innerHTML = '<div class="who">Bot</div><div class="bubble-content">Here are some ideas:<div class="suggest-wrap"><div class="suggest-col"><h4>Job Title ideas</h4><div class="suggest-list">' + jobsHtml + '</div></div><div class="suggest-col"><h4>Company ideas</h4><div class="suggest-list">' + compsHtml + '</div></div></div><div class="suggest-actions"><button type="button" class="use-suggest">Use Suggestions for Sourcing</button><button type="button" class="secondary try-else">Try Something Else</button></div></div>';
+
+        if(!wrapArg){
+          wrap.appendChild(bubble);
+          chat.appendChild(wrap);
+          chat.scrollTop = chat.scrollHeight;
+        }
+
+        // Bind events
+        setTimeout(()=>{
+          const useBtn=bubble.querySelector('.use-suggest');
+          const tryBtn=bubble.querySelector('.try-else');
+          if(useBtn){
+            useBtn.addEventListener('click',async()=>{
+              const jobInputs=bubble.querySelectorAll('input[data-suggest-type="job"]');
+              if(!jobInputs||jobInputs.length===0){
+                disableBubbleButtons(bubble);
+                appendBubble('bot','What Job Title are you trying to find?');
+                return;
+              }
+              disableBubbleButtons(bubble);
+              const selJobs=[...bubble.querySelectorAll('input[data-suggest-type="job"]:checked')].map(x=>x.value);
+              const selComps=[...bubble.querySelectorAll('input[data-suggest-type="company"]:checked')].map(x=>x.value);
+              await sendUseSuggestions(selJobs, selComps);
+            });
+          }
+          if(tryBtn){
+            tryBtn.addEventListener('click',async()=>{
+              disableBubbleButtons(bubble);
+              await sendTrySomethingElse();
+            });
+          }
+        },10);
+
+      }catch(e){
+        console.warn('renderSuggestionBubble error', e);
+      }
+    }
+
+    function bindChoiceButtons(bubble){
+      // NOTE: changed to always attach listeners so that buttons which are initially disabled
+      // (like #highlightTalentBtn) still receive handlers; the handler itself checks disabled state
+      // at click time. This ties the in-chat "3. Highlighting..." button to the same sendHighlightTalentPools()
+      // function used by the top highlight button.
+      bubble.querySelectorAll('.choice-btn').forEach(btn=>{
+        if(btn.classList.contains('try-something-else')){
+          btn.addEventListener('click',()=>{
+            modalTryElseActive = false;
+            disableBubbleButtons(bubble);
+            sendTrySomethingElse();
+          });
+          return;
+        }
+        // always attach handler; guard inside ensures disabled buttons don't run until enabled
+        btn.addEventListener('click',()=>{
+          if(btn.disabled) return;
+          modalTryElseActive = false;
+          suggestionUsed = false;
+          disableBubbleButtons(bubble);
+          const choice = btn.getAttribute('data-choice');
+          if(choice === 'highlight'){
+            // route highlight choice to dedicated handler (same as top button)
+            sendHighlightTalentPools();
+          } else {
+            userChoiceSend(choice);
+          }
+        });
+      });
+    }
+
+    // --- New: sendUseSuggestions and sendTrySomethingElse implementations ---
+    async function sendUseSuggestions(selJobs, selComps){
+      // Prevent sending if modal lock active (should be released by clicking)
+      if(modalTryElseActive) return;
+      suggestionUsed = true;
+      disableInput(true);
+      appendBubble('user', `Selected suggestions: ${Array.isArray(selJobs)? selJobs.join(', '): selJobs}`);
+      const liveBot = appendBubble('bot','Applying suggestions…', true);
+      try{
+        const payload = {
+          action: 'use_suggestions',
+          selectedJobs: selJobs || [],
+          selectedCompanies: selComps || [],
+          originalJobTitle: (Array.isArray(selJobs) && selJobs.length>0) ? selJobs[0] : '',
+          username: getAuthUsername()
+        };
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'include',
+          body: JSON.stringify(payload)
+        });
+        let data = null;
+        const ct = resp.headers.get('content-type') || '';
+        if(ct.includes('application/json')) data = await resp.json().catch(()=>null);
+        else {
+          const txt = await resp.text().catch(()=>null);
+          try{ data = JSON.parse(txt); }catch(_){ data = { response: txt }; }
+        }
+
+        if(!resp.ok){
+          const errMsg = data && (data.error || data.message) ? (data.error || data.message) : `HTTP ${resp.status}`;
+          setBubbleText(liveBot, 'Server error - ' + errMsg);
+          removeSpinner(liveBot);
+          return;
+        }
+
+        const botText = (data && data.response) ? data.response : (typeof data === 'string' ? data : '[no response]');
+        setBubbleText(liveBot, botText);
+
+        // If server returns structured suggestion payload, render suggestion UI directly
+        if(data && data.action === 'show_suggestions'){
+          try { renderSuggestionBubble(data); } catch(_) {}
+        } else {
+          // Also fallback to phrase detection in response text
+          try{
+            const txt = (data && (data.response || '') ) || '';
+            const low = txt.toLowerCase();
+            if(low.includes('please upload your job description') || low.includes('please upload a job description') || low.includes('upload a job description')){
+              setTimeout(()=>{ try{ onChooseUpload(); }catch(_){ } }, 150);
+            }
+            // if suggestion text present
+            if(isSuggestionIdeas(txt)){
+              // if client didn't render UI via renderSuggestionBubble, we rely on appendBubble path to render it
+            }
+          }catch(_){}
+        }
+      }catch(e){
+        setBubbleText(liveBot, 'error - ' + (e && e.message ? e.message : 'unknown'));
+      }finally{
+        removeSpinner(liveBot);
+        disableInput(false);
+        modalTryElseActive = false;
+      }
+    }
+
+    async function sendTrySomethingElse(){
+      // Called when user explicitly opts to "try something else"
+      // Ensure modal lock is released and notify server
+      modalTryElseActive = false;
+      disableInput(true);
+      appendBubble('user', 'Try something else');
+      const liveBot = appendBubble('bot','Processing…', true);
+      try{
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'include',
+          body: JSON.stringify({ action: 'try_something_else', username: getAuthUsername() })
+        });
+        let data = null;
+        const ct = resp.headers.get('content-type') || '';
+        if(ct.includes('application/json')) data = await resp.json().catch(()=>null);
+        else {
+          const txt = await resp.text().catch(()=>null);
+          try{ data = JSON.parse(txt); }catch(_){ data = { response: txt }; }
+        }
+
+        if(!resp.ok){
+          const errMsg = data && (data.error || data.message) ? (data.error || data.message) : `HTTP ${resp.status}`;
+          setBubbleText(liveBot, 'Server error - ' + errMsg);
+          removeSpinner(liveBot);
+          return;
+        }
+        const botText = (data && data.response) ? data.response : (typeof data === 'string' ? data : '[no response]');
+        setBubbleText(liveBot, botText);
+
+        // If server returns structured suggestion payload, render suggestion UI directly
+        if(data && data.action === 'show_suggestions'){
+          try { renderSuggestionBubble(data); } catch(_) {}
+        } else {
+          const txt = (data && data.response) ? data.response : (typeof data === 'string' ? data : '');
+          const low = txt.toLowerCase();
+          if(low.includes('please upload your job description') || low.includes('please upload a job description') || low.includes('upload a job description')){
+            setTimeout(()=>{ try{ onChooseUpload(); }catch(_){ } }, 150);
+          }
+        }
+      }catch(e){
+        setBubbleText(liveBot, 'error - ' + (e && e.message ? e.message : 'unknown'));
+      }finally{
+        removeSpinner(liveBot);
+        disableInput(false);
+        modalTryElseActive = false;
+      }
+    }
+    // --- End new helper functions ---
+
+    // NEW: Highlight Talent Pools flow (client-side)
+    async function sendHighlightTalentPools(){
+      if(modalTryElseActive) return;
+      disableInput(true);
+      appendBubble('user', 'Highlighting possible talent pools with skills aligned to the last JD');
+      const liveBot = appendBubble('bot','Finding talent pools…', true);
+      try{
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'include',
+          body: JSON.stringify({ action: 'highlight_talent_pools', username: getAuthUsername() })
+        });
+        let data = null;
+        const ct = resp.headers.get('content-type') || '';
+        if(ct.includes('application/json')) data = await resp.json().catch(()=>null);
+        else {
+          const txt = await resp.text().catch(()=>null);
+          try{ data = JSON.parse(txt); }catch(_){ data = { response: txt }; }
+        }
+
+        if(!resp.ok){
+          const errMsg = data && (data.error || data.message) ? (data.error || data.message) : `HTTP ${resp.status}`;
+          setBubbleText(liveBot, 'Server error - ' + errMsg);
+          removeSpinner(liveBot);
+          return;
+        }
+
+        const botText = (data && data.response) ? data.response : (typeof data === 'string' ? data : '[no response]');
+        setBubbleText(liveBot, botText);
+
+        // If server returns structured suggestion payload (same format as suggest), render it
+        if(data && data.action === 'show_suggestions'){
+          try { renderSuggestionBubble(data); } catch(_) {}
+        } else if(isSuggestionIdeas(botText)){
+          // appendBubble branch will render suggestion UI if text contains suggestion phrases
+        } else {
+          // nothing else, leave text displayed
+        }
+      }catch(e){
+        setBubbleText(liveBot, 'error - ' + (e && e.message ? e.message : 'unknown'));
+      }finally{
+        removeSpinner(liveBot);
+        disableInput(false);
+        modalTryElseActive = false;
+      }
+    }
+
+    // Always remove spinner for the specific bubble when updating its content.
+    // setBubbleText now ensures the spinner on that bubble is removed before rendering new content.
+    function setBubbleText(bubble,text){
+      if(!bubble) return;
+      // Remove spinner from this bubble if present
+      removeSpinner(bubble);
+
+      if (isProfilesSummary(text)) {
+        const info = extractProfileSummaryInfo(text);
+        try { if (info.url) ENGINE_BASE = new URL(info.url).origin; } catch(_){}
+      }
+
+      // If this text represents structured suggestion actions returned by server via JSON,
+      // the caller may already have invoked renderSuggestionBubble. We still render the text.
+      if(isDownloadLinks(text)){
+        const info=extractDownloadsAndCount(text);
+        const countText=info.count?`I've identified ${escapeHtml(info.count)} matching profiles.`:'I\'ve identified matching profiles.';
+        const csvBtn=info.csv?`<button type="button" class="download-btn" data-dl="${escapeHtml(info.csv)}">Download CSV</button>`:'';
+        const xlsxBtn=info.xlsx?`<button type="button" class="download-btn" data-dl="${escapeHtml(info.xlsx)}">Download XLSX</button>`:'';
+        bubble.innerHTML=`<div class="who">Bot</div><div class="bubble-content">${countText}<br>To access them, simply click:<div class="download-actions">${csvBtn}${xlsxBtn}</div></div>`;
+        bubble.dataset.lock='final';
+        bubble.querySelectorAll('.download-btn').forEach(btn=>{
+          btn.addEventListener('click',()=>{
+            disableBubbleButtons(bubble);
+            triggerDownload(btn.getAttribute('data-dl'));
+          });
+        });
+        return;
+      }
+
+      if(isExportPending(text)){
+        bubble.innerHTML=`<div class="who">Bot</div><div class="bubble-content">
+          “Just a sec—I’m on it!” Preparing your export…
+          <div class="download-actions">
+            <button type="button" class="download-btn" disabled>Download CSV</button>
+            <button type="button" class="download-btn" disabled>Download XLSX</button>
+          </div>
+          <div style="margin-top:6px;color:#6b7280;font-size:12.5px;">Buttons will enable automatically when the files are ready.</div>
+        </div>`;
+        bubble.dataset.lock='pending';
+        const sp=document.createElement('span');
+        sp.className='spinner';
+        sp.dataset.spinner='1';
+        bubble.appendChild(sp);
+        return;
+      }
+
+      if(isConfirmPrompt(text)){
+        bubble.innerHTML='<div class="who">Bot</div>';
+        const parsed=parseConfirmPrompt(text);
+        const disableSuggest = suggestionUsed;
+        const secondBtnHtml = disableSuggest
+          ? `<button type="button" class="choice-btn try-something-else" data-try="true">2. Try Something Else</button>`
+          : `<button type="button" class="choice-btn" data-choice="suggest">2. Suggest related job titles and companies to explore</button>`;
+        // Modified layout: third button stacked
+        const thirdBtnHtml = `<button type="button" class="choice-btn" data-choice="highlight" id="highlightTalentBtn" disabled>3. Highlighting possible talent pools with skills aligned to the last JD</button>`;
+        bubble.innerHTML+=`<div class="bubble-content">
+          ${(parsed.leadin?escapeHtml(parsed.leadin)+'<br>' : '')}Would you like me to:
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+            <button type="button" class="choice-btn" data-choice="yes">1. Start sourcing candidates</button>
+            ${secondBtnHtml}
+            ${thirdBtnHtml}
+          </div>
+          Just click the button to confirm
+        </div>`;
+        bindChoiceButtons(bubble);
+        const hasTryElse = !!bubble.querySelector('.try-something-else');
+        if(hasTryElse){
+          modalTryElseActive = true;
+          disableInput(true);
+        }
+        // ensure highlight enablement check runs
+        setTimeout(()=>{ checkUserSkillsAvailability(); }, 50);
+        return;
+      }
+
+      if(isDeliveryOptionsPrompt(text)){
+        bubble.innerHTML=`<div class="who">Bot</div><div class="bubble-content">
+          How would you like to receive the results?
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+            <button type="button" class="choice-btn" data-choice="review">1. Review & Flag Panel (Advanced tools + token rebates for flagged errors)</button>
+            <button type="button" class="choice-btn" data-choice="excel">2. Export everything into an Excel file</button>
+          </div>
+          Just hit the button to confirm
+        </div>`;
+        bindChoiceButtons(bubble);
+        return;
+      }
+
+      if(isProfilesSummary(text)){
+        const info=extractProfileSummaryInfo(text);
+        const countText=info.count?escapeHtml(info.count):'';
+        const url=info.url||'';
+        try { if (url) ENGINE_BASE = new URL(url).origin; } catch(_){}
+        bubble.innerHTML=`<div class="who">Bot</div><div class="bubble-content">
+          I've found ${countText} matching profiles.<br>Ready to explore? Just hit
+          <div><button type="button" class="profiles-btn" data-review-url="${escapeHtml(url)}">View Matching Profiles</button></div>
+        </div>`;
+        bubble.dataset.lock='final';
+        const btn=bubble.querySelector('.profiles-btn');
+        if(btn){
+          btn.addEventListener('click',()=>{
+            disableBubbleButtons(bubble);
+            const link=btn.getAttribute('data-review-url')||'/SourcingVerify.html';
+            if(link) window.open(link,'_blank','noopener,noreferrer');
+          });
+        }
+        return;
+      }
+
+      if(isSuggestionIdeas(text)){
+        // If the server text qualifies as suggestions, render suggestion UI
+        // We rely on appendBubble's isSuggestionIdeas branch to call parseSuggestionIdeas,
+        // but here we also ensure spinner is removed and the suggestion UI is shown.
+        const parsed=parseSuggestionIdeas(text);
+        renderSuggestionBubble(parsed, bubble, bubble.parentElement || null);
+        return;
+      }
+
+      const c=bubble.querySelector('.bubble-content');
+      if(c) c.innerHTML=linkify(text||''); else bubble.innerHTML=linkify(text||'');
+    }
+
+    function ensureSpinner(bubble){
+      if(!bubble) return;
+      if(!bubble.querySelector('[data-spinner]')){
+        const sp=document.createElement('span');
+        sp.className='spinner';
+        sp.dataset.spinner='1';
+        bubble.appendChild(sp);
+      }
+    }
+    function removeSpinner(bubble){
+      try{
+        if(!bubble) return;
+        const sp=bubble.querySelector('[data-spinner]');
+        if(sp) sp.remove();
+      }catch(e){
+        // best-effort
+        const anySp = document.querySelector('[data-spinner]');
+        if(anySp) anySp.remove();
+      }
+    }
+    function isFinal(text){
+      return !!text && (
+        /Pulled the data from Excel—ready to go/i.test(text) ||
+        /Pulled the data from Excel-?ready to go/i.test(text) ||
+        (isDownloadLinks(text))
+      );
+    }
+    function isProgress(text){
+      return !!text && (
+        /Just a sec—I’m on it/i.test(text) ||
+        /Found\s+\d+\s+profiles/i.test(text) ||
+        /Organizing the results into an Excel sheet/i.test(text)
+      );
+    }
+    function disableInput(d){
+      document.getElementById('sendBtn').disabled=d;
+      document.getElementById('userMsg').disabled=d;
+      document.getElementById('newQueryBtn').disabled=d;
+    }
+
+    async function pollStatus(updateBubble){
+      if(!updateBubble) return;
+      if(updateBubble.dataset.lock==='final') return;
+      if(polling) return;
+      polling=true; pollAttempts=0;
+      const step=async()=>{
+        if(updateBubble.dataset.lock==='final'){ polling=false; removeSpinner(updateBubble); return;}
+        pollAttempts++;
+        let statusText='';
+        try{
+          const resp=await fetch('/chat',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            credentials:'include',
+            body:JSON.stringify({
+              message:'status',
+              username: getAuthUsername(),
+              userid: getAuthUserId()
+            })
+          });
+          let dataObj=null, textBody='';
+          const ct=resp.headers.get('content-type')||'';
+          if(ct.includes('application/json')){ try{ dataObj=await resp.json(); }catch(e){} }
+          if(!dataObj){ try{ textBody=await resp.text(); }catch(e){} }
+          statusText = dataObj ? (dataObj.response||'') : (textBody||'');
+        }catch(_){}
+        if(statusText){
+          if(isDownloadLinks(statusText) || isExportPending(statusText) || isProgress(statusText) || isProfilesSummary(statusText)){
+            setBubbleText(updateBubble,statusText);
+          }
+          if(updateBubble.dataset.lock==='final'){
+            removeSpinner(updateBubble);
+            polling=false; sending=false; if(!modalTryElseActive) disableInput(false);
+            return;
+          }
+          if(isExportPending(statusText) || isProgress(statusText)){
+            ensureSpinner(updateBubble);
+          } else if(isDownloadLinks(statusText)){
+            removeSpinner(updateBubble);
+            polling=false;
+            return;
+          }
+        }
+        if(pollAttempts<MAX_POLL_ATTEMPTS && polling){
+            pollTimer=setTimeout(step,POLL_INTERVAL_MS);
+        } else {
+            polling=false; removeSpinner(updateBubble); sending=false; if(!modalTryElseActive) disableInput(false);
+        }
+      };
+      step();
+    }
+
+    // AFFECTED SECTION: Prevent sending while modalTryElseActive
+    async function sendMsg(){
+      if(modalTryElseActive) return;
+      const input=document.getElementById('userMsg');
+      const text=input.value.trim();
+      if(!text||sending) return;
+      suggestionUsed = false;
+      sending=true;
+      appendBubble('user', text);
+      const liveBubble=appendBubble('bot','“Just a sec—I’m on it!”', true);
+      try{
+        disableInput(true);
+        const resp=await fetch('/chat',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body:JSON.stringify({
+            message:text,
+            username: getAuthUsername(),
+            userid: getAuthUserId()
+          })
+        });
+        let payload=null, bodyText='';
+        const ct=resp.headers.get('content-type')||'';
+        if(ct.includes('application/json')){ try{ payload=await resp.json(); }catch(e){} }
+        if(!payload){ try{ bodyText=await resp.text(); }catch(e){} }
+        if(!resp.ok){
+          const errMsg=bodyText && bodyText.trim()?bodyText.trim():(`[HTTP ${resp.status}]`);
+          setBubbleText(liveBubble,'Server error - '+errMsg);
+          removeSpinner(liveBubble);
+          sending=false; if(!modalTryElseActive) disableInput(false); input.value=''; input.focus();
+          return;
+        }
+        const botText=payload?(payload.response||'[no response]'):(bodyText||'[no response]');
+        setBubbleText(liveBubble, botText);
+
+        // Server may return structured action signals
+        try{
+          if(payload && payload.action === 'show_jd_upload'){
+            setTimeout(()=>{ try{ onChooseUpload(); }catch(_){ } }, 150);
+          } else if(payload && payload.action === 'show_suggestions'){
+            // Render structured suggestions if present
+            try{ renderSuggestionBubble(payload); }catch(_){}
+          } else {
+            const txt = (payload && (payload.response || '') ) || '';
+            const low = txt.toLowerCase();
+            if(low.includes('please upload your job description') || low.includes('please upload a job description') || low.includes('upload a job description')){
+              setTimeout(()=>{ try{ onChooseUpload(); }catch(_){ } }, 150);
+            }
+          }
+        }catch(_){}
+
+        if(isFinal(botText) || isDownloadLinks(botText)){
+          removeSpinner(liveBubble); sending=false; if(!modalTryElseActive) disableInput(false);
+        } else if(isProgress(botText) || isExportPending(botText)){
+          pollStatus(liveBubble);
+        } else if(isSuggestionIdeas(botText)){
+          removeSpinner(liveBubble); sending=false; if(!modalTryElseActive) disableInput(false);
+        } else {
+          removeSpinner(liveBubble); sending=false; if(!modalTryElseActive) disableInput(false);
+        }
+        input.value=''; input.focus();
+      }catch(e){
+        setBubbleText(liveBubble,'error - '+(e&&e.message?e.message:'unknown'));
+        removeSpinner(liveBubble); sending=false; if(!modalTryElseActive) disableInput(false);
+      }
+    }
+
+    // AFFECTED SECTION: Prevent choice sending while modalTryElseActive (should only use buttons to clear it)
+    async function userChoiceSend(txt){
+      if(modalTryElseActive) return;
+      if(sending) return;
+      suggestionUsed = false;
+      sending=true;
+      appendBubble('user', txt);
+      const liveBubble=appendBubble('bot','“Just a sec—I’m on it!”', true);
+      disableInput(true);
+      try{
+        const resp=await fetch('/chat',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body:JSON.stringify({
+            message:txt,
+            username: getAuthUsername(),
+            userid: getAuthUserId()
+          })
+        });
+        let payload=null, bodyText='';
+        const ct=resp.headers.get('content-type')||'';
+        if(ct.includes('application/json')){ try{ payload=await resp.json(); }catch(e){} }
+        if(!payload){ try{ bodyText=await resp.text(); }catch(e){} }
+        const botText=payload?(payload.response||'[no response]'):(bodyText||'[no response]');
+        setBubbleText(liveBubble, botText);
+
+        // handle structured actions
+        try{
+          if(payload && payload.action === 'show_jd_upload'){
+            setTimeout(()=>{ try{ onChooseUpload(); }catch(_){ } }, 150);
+          } else if(payload && payload.action === 'show_suggestions'){
+            try{ renderSuggestionBubble(payload); }catch(_){}
+          } else {
+            const txt2 = (payload && (payload.response || '')) || '';
+            const low = (txt2 || '').toLowerCase();
+            if(low.includes('please upload your job description') || low.includes('please upload a job description') || low.includes('upload a job description')){
+              setTimeout(()=>{ try{ onChooseUpload(); }catch(_){ } }, 150);
+            }
+          }
+        }catch(_){}
+
+        if(isFinal(botText) || isDownloadLinks(botText)){
+          removeSpinner(liveBubble);
+        } else if(isProgress(botText) || isExportPending(botText)){
+          pollStatus(liveBubble);
+        } else {
+          removeSpinner(liveBubble);
+        }
+      }catch(e){
+        setBubbleText(liveBubble,'error - '+(e&&e.message?e.message:'unknown'));
+        removeSpinner(liveBubble);
+      }finally{
+        sending=false; if(!modalTryElseActive) disableInput(false);
+        document.getElementById('userMsg').value='';
+        document.getElementById('userMsg').focus();
+      }
+    }
+
+    async function resetSessionOnLoad(){
+      try{
+        await fetch('/chat',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body:JSON.stringify({
+            message:'reset session',
+            username: getAuthUsername(),
+            userid: getAuthUserId()
+          })
+        });
+      }catch(_){}
+      // ensure client-side role/fullname cleared on load reset as well
+      try { clearRoleTagClient(); } catch(_){}
+      const chat=document.getElementById('chat');
+      chat.innerHTML='';
+
+      // Try to get fullname from local sources first
+      let full = (getAuthFullname() || '').trim();
+
+      // If not available locally, try to fetch from server /user/resolve using the username (if present)
+      if(!full){
+        const uname = getAuthUsername();
+        if(uname){
+          try{
+            const resp = await fetch('/user/resolve?username=' + encodeURIComponent(uname), { credentials: 'include' });
+            if(resp.ok){
+              const j = await resp.json().catch(()=>null);
+              const serverFull = (j && (j.fullname || '')).trim();
+              if(serverFull){
+                full = serverFull;
+                try{
+                  // persist for client usage
+                  localStorage.setItem('fullname', serverFull);
+                  document.cookie = 'fullname=' + encodeURIComponent(serverFull) + '; path=/; SameSite=Lax';
+                }catch(_){}
+                try{ updateBanner(); }catch(_){}
+              }
+            }
+          }catch(_){
+            // ignore fetch errors and continue with empty/full fallback
+          }
+        }
+      }
+
+      // PATCHED: Use personalized greeting as requested
+      // If fullname is available, greet with it; otherwise use a friendly generic greeting.
+      const hello = full
+        ? `Hello ${full}, it’s a pleasure to meet you! I’m an AI assistant designed to help source candidates.`
+        : `Hello, it’s a pleasure to meet you! I’m an AI assistant designed to help source candidates.`;
+
+      appendBubble('bot', hello);
+      // Show initial choice right after greeting
+      setTimeout(showInitialChoice, 350);
+      ENGINE_BASE="";
+      suggestionUsed=false;
+      modalTryElseActive=false;
+      disableInput(false);
+
+      // After initial load, check highlight availability (in case saved skills exist)
+      setTimeout(()=>{ checkUserSkillsAvailability(); }, 300);
+    }
+
+    async function newQuery(){
+      if(sending) return;
+      sending=true;
+      disableInput(true);
+      const liveBubble=appendBubble('bot','Resetting session…', true);
+      try{
+        const resp=await fetch('/chat',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body:JSON.stringify({
+            message:'reset session',
+            username: getAuthUsername(),
+            userid: getAuthUserId()
+          })
+        });
+        let payload=null, bodyText='';
+        const ct=resp.headers.get('content-type')||'';
+        if(ct.includes('application/json')){ try{ payload=await resp.json(); }catch(e){} }
+        if(!payload){ try{ bodyText=await resp.text(); }catch(e){} }
+        const botText=payload?(payload.response||'Session cleared. Ready for a fresh start.'):(bodyText||'Session cleared. Ready for a fresh start.');
+        setBubbleText(liveBubble, botText);
+      }catch(e){
+        setBubbleText(liveBubble,'Reset failed: '+(e&&e.message?e.message:'unknown'));
+      }finally{
+        removeSpinner(liveBubble);
+        sending=false;
+        modalTryElseActive=false;
+        disableInput(false);
+        // AFFECTED SECTION: ensure client clears the role_tag/fullname and refresh banner immediately
+        try { clearRoleTagClient(); } catch(_){}
+        const input=document.getElementById('userMsg'); input.value=''; input.focus();
+        suggestionUsed=false;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded',()=>{
+      updateBanner();
+      // Bind highlight top button if present (ties top button to same function)
+      try{
+        const topHighlight = document.getElementById('highlightTopBtn');
+        if(topHighlight && !topHighlight._bound){
+          topHighlight.addEventListener('click', (e)=>{
+            if(modalTryElseActive) return;
+            // Reuse same highlight flow
+            sendHighlightTalentPools();
+          });
+          topHighlight._bound = true;
+        }
+      }catch(_){}
+
+      const input=document.getElementById('userMsg');
+      document.getElementById('sendBtn').addEventListener('click', sendMsg);
+      document.getElementById('newQueryBtn').addEventListener('click', newQuery);
+      input.addEventListener('keydown', e=>{
+        if(e.key==='Enter'){
+          e.preventDefault();
+          sendMsg();
+        }
+      });
+      resetSessionOnLoad();
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <!-- AFFECTED SECTION: top banner -->
+    <div class="topbar" id="topbar">
+      <div class="left">
+        <div id="avatarEl" class="avatar" aria-hidden="true">?</div>
+        <div class="welcome" id="welcomeText">
+          <span class="name">Welcome</span>
+          <span class="meta"></span>
+        </div>
+        <div id="roleEl" class="role" style="display:none;"></div>
+      </div>
+      <div class="right">
+        <!-- Added top-level highlight button that uses same client action as the in-chat '3.' button -->
+        <button id="highlightTopBtn" type="button" style="margin-right:8px;padding:8px 12px;background:#eef9ff;border:1px solid #d6eafc;border-radius:8px;color:#083658;font-weight:700;">Highlight Talent Pools</button>
+        <button id="logoutBtn" class="logout" type="button" title="Log out">Logout</button>
+      </div>
+    </div>
+
+    <h1>AI Sourcing Bot</h1>
+    <div id="chat" class="chat" aria-live="polite"></div>
+    <div class="row">
+      <input id="userMsg" type="text" placeholder="Type a message, e.g., Find Clinical Research Associate in Japan at IQVIA" />
+      <button id="sendBtn" onclick="sendMsg()">Send</button>
+      <button id="newQueryBtn" type="button" title="Start a fresh sourcing conversation">Reset Session</button>
+    </div>
+    <div class="hint">
+      Use the buttons to accelerate confirmation, delivery choice, selection of suggestions, profile review, and downloads.
+    </div>
+  </div>
+</body>
+</html>

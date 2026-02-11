@@ -1,0 +1,1502 @@
+[
+  {
+    "ts": "2026-01-19T21:54:34Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:54:34Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:54:41Z",
+    "role": "user",
+    "content": "SAP Business Consultant and Malaysia"
+  },
+  {
+    "ts": "2026-01-19T21:54:42Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a SAP Business Consultant based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-19T21:54:47Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-01-19T21:54:54Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • SAP Business Consultant; SAP FI Consultant; SAP CO Consultant; SAP SD Consultant; SAP MM Consultant; SAP ABAP Developer\nCompany ideas:\n • Accenture; Deloitte; IBM; PwC; KPMG; Capgemini; T-Systems; Infosys; Wipro; TCS; Siemens; Microsoft; Google; Amazon; Salesforce; Oracle; SAP; NCS; Singtel; Maxis; Celcom; Axiata; Petronas; Maybank; CIMB; RHB Bank; Standard Chartered Bank; HSBC; UOB; Pfizer"
+  },
+  {
+    "ts": "2026-01-19T21:55:03Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:55:03Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:55:39Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:55:39Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:55:43Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-19T21:55:43Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:55:47Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:55:47Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:55:52Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-19T21:55:52Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:34Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:56:35Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:39Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:56:39Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:41Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:56:41Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:43Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:56:43Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:49Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:56:49Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:53Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-19T21:56:53Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:56:56Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T21:56:56Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T21:57:20Z",
+    "role": "user",
+    "content": "request_jd_clarify"
+  },
+  {
+    "ts": "2026-01-19T21:57:21Z",
+    "role": "bot",
+    "content": "I detected the following from the Job Description:\n\nJob title: Product Manager\nSeniority: Manager\nSector: Banking Operations\nCountry: Singapore\n\nWhich of these are incorrect or would you like to change? You can reply with corrections like:\n- Job title: <correct title>\n- Country: <correct country>\nOr simply type the corrected information."
+  },
+  {
+    "ts": "2026-01-19T21:57:29Z",
+    "role": "user",
+    "content": "Malaysia"
+  },
+  {
+    "ts": "2026-01-19T21:57:29Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Manager in the Banking Operations sector based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-19T21:57:32Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-01-19T21:57:37Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nCompany ideas:\n • Maybank; CIMB Bank; Public Bank Berhad; Hong Leong Bank; RHB Bank; AmBank; OCBC Bank; DBS Bank; UOB; Standard Chartered Bank; HSBC; Citibank; JPMorgan Chase; Goldman Sachs; Morgan Stanley; Bank of America; BNP Paribas; Societe Generale; Deutsche Bank; Credit Suisse; UBS; ING; Rabobank; Lloyds Banking Group; Barclays; NatWest Group; Siam Commercial Bank; Kasikornbank; Bangkok Bank; United Overseas Bank (Malaysia) Bhd\nJob Title ideas:\n • Product Manager; Head of Product Management; Senior Product Manager; Product Owner; Product Lead; Associate Product Manager"
+  },
+  {
+    "ts": "2026-01-19T21:57:44Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-19T21:57:44Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Manager in the Banking Operations sector based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-19T21:57:46Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-19T21:57:46Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-19T21:57:52Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-19T21:58:14Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 80"
+  },
+  {
+    "ts": "2026-01-19T22:07:03Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:07:03Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:07:07Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-19T22:07:07Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:07:21Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:07:21Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:07:27Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-19T22:07:27Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:07:44Z",
+    "role": "user",
+    "content": "Software Engineering in Taiwan in Semiconductor Manufacturing > Electronics"
+  },
+  {
+    "ts": "2026-01-19T22:07:45Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Software Engineering in the Semiconductor Manufacturing sector based in Taiwan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-19T22:07:53Z",
+    "role": "user",
+    "content": "highlight_talent_pools"
+  },
+  {
+    "ts": "2026-01-19T22:07:56Z",
+    "role": "bot",
+    "content": "Here are some talent pool ideas aligned to your last JD's skills:\nJob Title ideas:\n • Embedded Software Engineer; Firmware Engineer; Wireless Engineer; Driver Developer; Full-Stack Engineer; Embedded Linux Developer; RTOS Engineer; Android Developer\nCompany ideas:\n • Qualcomm; Intel; Broadcom; MediaTek; NXP Semiconductors; Apple; Google; Samsung; Cisco; Aruba Networks (HPE); Ubiquiti Networks; TP-Link; Netgear; Sony; Panasonic; Bosch; General Motors; Tesla; Amazon; Microsoft"
+  },
+  {
+    "ts": "2026-01-19T22:07:59Z",
+    "role": "user",
+    "content": "try_something_else"
+  },
+  {
+    "ts": "2026-01-19T22:08:00Z",
+    "role": "bot",
+    "content": "Okay, let's start a fresh search.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:08:17Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:08:17Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:08:19Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:08:19Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:08:21Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:08:21Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:08:27Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-19T22:08:29Z",
+    "role": "bot",
+    "content": "Where do you want to find your Engine Programmer?"
+  },
+  {
+    "ts": "2026-01-19T22:08:34Z",
+    "role": "user",
+    "content": "Malaysia"
+  },
+  {
+    "ts": "2026-01-19T22:08:35Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Engine Programmer based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-19T22:08:47Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:08:47Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:27:55Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-19T22:27:55Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-19T22:28:02Z",
+    "role": "user",
+    "content": "SAP Business Consultant and Malaysia"
+  },
+  {
+    "ts": "2026-01-19T22:28:04Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a SAP Business Consultant based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T02:33:58Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T02:33:59Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T02:34:02Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T02:34:02Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T02:34:12Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T02:34:13Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T03:35:55Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T03:35:55Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T03:36:11Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-21T03:36:11Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T03:36:18Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T03:36:18Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T03:38:16Z",
+    "role": "user",
+    "content": "Product Manager in Singapore in Financial Services > Banking"
+  },
+  {
+    "ts": "2026-01-21T03:38:17Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Manager in the Financial Services sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T03:38:36Z",
+    "role": "user",
+    "content": "highlight_talent_pools"
+  },
+  {
+    "ts": "2026-01-21T03:38:40Z",
+    "role": "bot",
+    "content": "Here are some talent pool ideas aligned to your last JD's skills:\nJob Title ideas:\n • Business Analyst; Process Improvement Manager; Digital Transformation Lead; Product Manager; Project Manager; Operations Analyst; Change Management Consultant; Automation Specialist\nCompany ideas:\n • Accenture; Deloitte; IBM; Microsoft; Google; Salesforce; PwC; EY; KPMG; Infosys; Capgemini; Tata Consultancy Services; Siemens; General Electric; JPMorgan Chase; Bank of America; Johnson & Johnson; Procter & Gamble; Unilever; Amazon"
+  },
+  {
+    "ts": "2026-01-21T03:39:08Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-21T03:39:08Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Business Analyst, Process Improvement Manager, Digital Transformation Lead, Automation Specialist in the Financial Services sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T03:39:10Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-21T03:39:10Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T03:39:12Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-21T03:39:34Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 79"
+  },
+  {
+    "ts": "2026-01-21T04:25:23Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T04:25:23Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T10:49:04Z",
+    "role": "user",
+    "content": "Product Manager in Singapore in Financial Services > Banking"
+  },
+  {
+    "ts": "2026-01-21T10:49:06Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Manager in the Financial Services sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T10:49:21Z",
+    "role": "user",
+    "content": "highlight_talent_pools"
+  },
+  {
+    "ts": "2026-01-21T10:49:25Z",
+    "role": "bot",
+    "content": "Here are some talent pool ideas aligned to your last JD's skills:\nJob Title ideas:\n • RPA Developer; Business Process Analyst; Digital Transformation Specialist; Automation Engineer; Process Improvement Consultant; AI Solutions Architect; Business Analyst; Change Manager\nCompany ideas:\n • Accenture; IBM; Deloitte; PwC; KPMG; Capgemini; Infosys; TCS; Wipro; Cognizant; UiPath; Automation Anywhere; Microsoft; Google; Amazon; Salesforce; SAP; Oracle; JPMorgan Chase; Bank of America"
+  },
+  {
+    "ts": "2026-01-21T10:49:43Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-21T10:49:43Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a RPA Developer, Business Process Analyst, Digital Transformation Specialist, Automation Engineer, Process Improvement Consultant, AI Solutions Architect in the Financial Services sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T10:50:45Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-21T10:50:45Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T10:50:46Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-21T10:51:09Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 74"
+  },
+  {
+    "ts": "2026-01-21T13:44:13Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T13:44:13Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T14:18:38Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T14:18:38Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T15:02:30Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T15:02:30Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T15:19:44Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T15:19:44Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T15:19:47Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-21T15:19:49Z",
+    "role": "bot",
+    "content": "Where do you want to find your Engine Programmer?"
+  },
+  {
+    "ts": "2026-01-21T15:19:52Z",
+    "role": "user",
+    "content": "Malaysia"
+  },
+  {
+    "ts": "2026-01-21T15:19:53Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Engine Programmer based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T15:19:57Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T15:19:57Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T15:20:20Z",
+    "role": "user",
+    "content": "request_jd_clarify"
+  },
+  {
+    "ts": "2026-01-21T15:20:21Z",
+    "role": "bot",
+    "content": "I detected the following from the Job Description:\n\nJob title: Solution Architect\nSector: Guangzhou-Foshan Metropolitan\nCountry: China\n\nWhich of these are incorrect or would you like to change? You can reply with corrections like:\n- Job title: <correct title>\n- Country: <correct country>\nOr simply type the corrected information."
+  },
+  {
+    "ts": "2026-01-21T15:20:49Z",
+    "role": "user",
+    "content": "seniority is manager and skillset include RPA"
+  },
+  {
+    "ts": "2026-01-21T15:20:50Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Manager, RPA in the Guangzhou-Foshan Metropolitan sector based in China…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T15:20:52Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-01-21T15:20:57Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nCompany ideas:\n • IBM; Microsoft; UiPath; Automation Anywhere; Kofax; Blue Prism; Capgemini; Accenture; Deloitte; PwC; KPMG; Infosys; TCS; Wipro; HCLTech; NTT DATA; NEC; Fujitsu; Hitachi; Canon; Sony; Panasonic; Toshiba; Alibaba; Tencent; Baidu; JD.com; Huawei; Pfizer; Roche\nJob Title ideas:\n • Manager, RPA; Robotic Process Automation Manager; RPA Program Manager; Head of RPA; RPA Lead; Automation Manager"
+  },
+  {
+    "ts": "2026-01-21T15:21:09Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-21T15:21:09Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Manager, RPA, Robotic Process Automation Manager, RPA Program Manager in the Guangzhou-Foshan Metropolitan sector based in China…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T15:21:11Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-21T15:21:11Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-21T15:21:12Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-21T15:21:20Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 2"
+  },
+  {
+    "ts": "2026-01-21T15:42:30Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T15:42:30Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-21T15:49:11Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-21T15:49:11Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-25T04:56:37Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-25T04:56:37Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T04:03:47Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T04:03:47Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T04:58:54Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T04:58:54Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T04:59:10Z",
+    "role": "user",
+    "content": "Product Manager in Singapore in Financial Services > Banking"
+  },
+  {
+    "ts": "2026-01-26T04:59:12Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Manager in the Financial Services sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-26T04:59:18Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-01-26T04:59:26Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • Product Manager; Product Manager, Fintech; Product Manager, Payments; Product Manager, Digital Banking; Product Manager, Financial Technology; Product Manager, Wealth Management\nCompany ideas:\n • DBS Bank; OCBC Bank; United Overseas Bank; Standard Chartered Singapore; HSBC Singapore; J.P. Morgan; Goldman Sachs; Morgan Stanley; Citigroup; Bank of America; Mastercard; Visa; Stripe; Revolut; N26; Grab Financial Group; ShopeePay; Paytm; Ant Group; Tencent Holdings; Alipay; JD Digits; Ping An Technology; Temasek Holdings; GIC Private Limited; Manulife; Prudential plc; AIA Group; Great Eastern Holdings; NTUC Income"
+  },
+  {
+    "ts": "2026-01-26T04:59:37Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-26T04:59:37Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Manager, Product Manager, Fintech, Product Manager, Payments, Product Manager, Digital Banking, Product Manager, Financial Technology in the financial services sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-26T04:59:39Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-26T04:59:39Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-26T04:59:41Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-26T05:00:03Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 78"
+  },
+  {
+    "ts": "2026-01-26T08:03:54Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:03:54Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:05Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:04:05Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:10Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:10Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:11Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:11Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:11Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:11Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:11Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:11Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:18Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:04:18Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:22Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:22Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:23Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:23Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:25Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:04:25Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:29Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:04:30Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:04:47Z",
+    "role": "user",
+    "content": "request_jd_clarify"
+  },
+  {
+    "ts": "2026-01-26T08:04:48Z",
+    "role": "bot",
+    "content": "I detected the following from the Job Description:\n\nJob title: Game Programmer\nSector: Gaming\nCountry: China\n\nWhich of these are incorrect or would you like to change? You can reply with corrections like:\n- Job title: <correct title>\n- Country: <correct country>\nOr simply type the corrected information."
+  },
+  {
+    "ts": "2026-01-26T08:04:59Z",
+    "role": "user",
+    "content": "country is in japan"
+  },
+  {
+    "ts": "2026-01-26T08:04:59Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Game Programmer in the Gaming sector based in Japan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-26T08:05:02Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-01-26T08:05:08Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nCompany ideas:\n • Nintendo; Sony Interactive Entertainment; Square Enix; Capcom; Bandai Namco Entertainment; Konami; Sega; Nexon; GungHo Online Entertainment; Netmarble; Kakao Games; NCSoft; Cygames; PlatinumGames; FromSoftware; Koei Tecmo Games; Level-5; Activision Blizzard; Electronic Arts; Ubisoft; Riot Games; Epic Games; Rockstar Games; CD Projekt Red; NetEase Games; Tencent Games; miHoYo; Google (Gaming); Microsoft (Gaming); Meta (Gaming)\nJob Title ideas:\n • Game Programmer; Game Developer; Software Engineer (Gaming); Gameplay Programmer; Engine Programmer; Senior Game Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:05:21Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-26T08:05:21Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Game Programmer, Game Developer, Software Engineer (Gaming), Gameplay Programmer, Engine Programmer, Senior Game Programmer in the Gaming sector based in Japan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-26T08:05:24Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-26T08:05:25Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-26T08:05:26Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-26T08:05:49Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 41"
+  },
+  {
+    "ts": "2026-01-26T08:13:04Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:13:04Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:14Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:13:14Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:24Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:13:24Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:31Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:13:31Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:51Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:13:51Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:53Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:13:53Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:54Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:13:55Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:13:58Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:13:58Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:14:03Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-01-26T08:14:03Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:14:07Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-26T08:14:07Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-26T08:14:15Z",
+    "role": "user",
+    "content": "Engine Programmer in Malaysia"
+  },
+  {
+    "ts": "2026-01-26T08:14:17Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Engine Programmer based in Malaysia…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-27T15:55:10Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-27T15:55:10Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-27T15:55:31Z",
+    "role": "user",
+    "content": "Site Activation Manager in Japan in Pharmaceuticals > Clinical Research"
+  },
+  {
+    "ts": "2026-01-27T15:55:34Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Site Activation Manager in the Pharmaceuticals sector based in Japan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-27T15:55:42Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-01-27T15:55:50Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • Site Activation Manager; Clinical Trials Manager; Regulatory Affairs Manager; Clinical Operations Manager; Project Manager, Clinical Trials; Clinical Research Manager\nCompany ideas:\n • Takeda Pharmaceutical Company; Astellas Pharma; Daiichi Sankyo; Eisai Co., Ltd.; Sumitomo Pharma; Kyowa Kirin; Chugai Pharmaceutical; Bayer; Pfizer; Roche; Novartis; Merck & Co.; Johnson & Johnson; AbbVie; Gilead Sciences; Amgen; AstraZeneca; Sanofi; Bristol Myers Squibb; Eli Lilly and Company; GlaxoSmithKline; Boehringer Ingelheim; Shionogi; Ono Pharmaceutical; Sekisui Medical; AGC Inc.; Nipro Corporation; Terumo Corporation; Sysmex Corporation; Olympus Corporation"
+  },
+  {
+    "ts": "2026-01-27T15:56:23Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-01-27T15:56:23Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Site Activation Manager in the pharma sector based in Japan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-27T15:56:26Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-27T15:56:26Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-27T15:56:28Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-27T15:56:35Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 1"
+  },
+  {
+    "ts": "2026-01-27T15:56:47Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-01-27T15:56:47Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-01-27T15:56:58Z",
+    "role": "user",
+    "content": "Site Activation Manager in Japan in Life Sciences > Pharmaceuticals > Clinical Research"
+  },
+  {
+    "ts": "2026-01-27T15:57:00Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Site Activation Manager in the Life Sciences sector based in Japan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-01-27T15:57:03Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-01-27T15:57:06Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Advanced tools + token rebates for flagged errors)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-01-27T15:57:07Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-01-27T15:57:15Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 1"
+  },
+  {
+    "ts": "2026-02-02T17:15:56Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-02T17:15:56Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-02T17:16:02Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-02T17:16:02Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-02T17:16:09Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-02-02T17:16:09Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-02T17:16:12Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-02T17:16:12Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-02T17:16:29Z",
+    "role": "user",
+    "content": "Software Engineer in South Korea in Technology"
+  },
+  {
+    "ts": "2026-02-02T17:16:30Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Software Engineer in the Technology sector based in South Korea…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-02T17:16:35Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-02-02T17:16:42Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • Software Engineer; Software Developer; Senior Software Engineer; Backend Engineer; Frontend Engineer; Full Stack Developer\nCompany ideas:\n • Samsung Electronics; LG Electronics; SK Hynix; Naver; Kakao; Coupang; NCSoft; Netmarble; Krafton; Wemade; Com2uS; Nexon; Google; Microsoft; Amazon; Apple; Meta; IBM; Oracle; SAP; Adobe; Salesforce; Intel; Nvidia; Qualcomm; Broadcom; TSMC; Sony; Panasonic; Toshiba"
+  },
+  {
+    "ts": "2026-02-02T17:16:58Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-02-02T17:16:58Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Software Engineer, Software Developer in the technology sector based in South Korea…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-02T17:16:59Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-02-02T17:16:59Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-02-02T17:17:01Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-02-02T17:17:15Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 44"
+  },
+  {
+    "ts": "2026-02-02T17:23:07Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-02T17:23:07Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-02T17:43:08Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-02T17:43:08Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-03T06:55:51Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-03T06:55:51Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-03T06:56:04Z",
+    "role": "user",
+    "content": "Web Backend Engineer in Taiwan in Financial Services > Banking"
+  },
+  {
+    "ts": "2026-02-03T06:56:06Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Web Backend Engineer in the Financial Services sector based in Taiwan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-03T06:56:13Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-02-03T06:56:21Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • Web Backend Engineer; Software Engineer; Backend Developer; Full Stack Engineer; Senior Backend Engineer; Java Developer\nCompany ideas:\n • JPMorgan Chase; Goldman Sachs; Morgan Stanley; Citigroup; Bank of America; HSBC; Standard Chartered; DBS Bank; OCBC Bank; UOB; Maybank; BNP Paribas; Societe Generale; Deutsche Bank; ING; Rabobank; Credit Suisse; UBS; Nomura; Daiwa Securities; Mizuho Financial Group; Sumitomo Mitsui Financial Group; Mitsubishi UFJ Financial Group; Taishin Financial Holding; Fubon Financial Holding; CTBC Financial Holding; E.SUN Financial Holding; Cathay Financial Holding; Mega Financial Holding; First Financial Holding"
+  },
+  {
+    "ts": "2026-02-03T06:56:34Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-02-03T06:56:34Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Web Backend Engineer, Software Engineer, Backend Developer, Full Stack Engineer in the financial services sector based in Taiwan…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-03T06:56:37Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-02-03T06:56:37Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-02-03T06:56:38Z",
+    "role": "user",
+    "content": "review"
+  },
+  {
+    "ts": "2026-02-03T06:56:49Z",
+    "role": "bot",
+    "content": "Live review: http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html\nProfiles initial count: 8"
+  },
+  {
+    "ts": "2026-02-04T12:30:27Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-04T12:30:27Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-04T12:30:28Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-04T12:30:28Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-04T12:30:33Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-02-04T12:30:33Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-04T12:30:36Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-04T12:30:36Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-04T12:30:52Z",
+    "role": "user",
+    "content": "Server Developer in China in Gaming"
+  },
+  {
+    "ts": "2026-02-04T12:30:53Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Server Developer in the Gaming sector based in China…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-04T12:30:57Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-02-04T12:31:04Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • Server Developer; Backend Developer; Network Programmer; Systems Engineer; Multiplayer Programmer; Game Server Engineer\nCompany ideas:\n • Tencent; NetEase; miHoYo; Perfect World; 37Games; IGG; ByteDance; Lilith Games; Ejoy; AlphaDream; Shengqu Games; Shanda Games; Changyou; Ourpalm; Playtika; Scopely; Zynga; Activision Blizzard; Riot Games; Epic Games; Valve; Sony Interactive Entertainment; Microsoft Xbox Game Studios; Nintendo; Ubisoft; Electronic Arts; Rockstar Games; Square Enix; Bandai Namco Entertainment; Capcom"
+  },
+  {
+    "ts": "2026-02-04T12:31:10Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-04T12:31:11Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-04T12:35:08Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-04T12:35:08Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-04T14:51:53Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-04T14:51:53Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-05T17:49:25Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-05T17:49:25Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-05T17:49:30Z",
+    "role": "user",
+    "content": "Engine Programmer"
+  },
+  {
+    "ts": "2026-02-05T17:49:30Z",
+    "role": "bot",
+    "content": "How would you like to search?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-05T17:49:33Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-05T17:49:33Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  },
+  {
+    "ts": "2026-02-05T17:49:46Z",
+    "role": "user",
+    "content": "Product Marketing in Singapore in Technology > Printing Solutions"
+  },
+  {
+    "ts": "2026-02-05T17:49:47Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Marketing in the Technology sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-05T17:49:50Z",
+    "role": "user",
+    "content": "suggest"
+  },
+  {
+    "ts": "2026-02-05T17:49:58Z",
+    "role": "bot",
+    "content": "Here are some ideas:\nJob Title ideas:\n • Product Marketing; Product Marketing Manager; Senior Product Marketing Manager; Director of Product Marketing; Product Marketing Specialist; Go-to-Market Manager\nCompany ideas:\n • Xerox; Canon; Ricoh; HP Inc.; Epson; Brother Industries; Konica Minolta; Lexmark; Sharp Corporation; Fujifilm; Toshiba; 3D Systems; Stratasys; Canon USA; Epson America; Ricoh USA; Xerox Canada; Canon Europe; HP Europe; Ricoh Europe; Lexmark International; Sharp Electronics; Fujifilm Business Innovation; Toshiba America; 3D Systems Corporation; Stratasys Ltd.; HP Singapore; Canon Singapore; Epson Singapore; Johnson & Johnson"
+  },
+  {
+    "ts": "2026-02-05T17:50:06Z",
+    "role": "user",
+    "content": "use_suggestions"
+  },
+  {
+    "ts": "2026-02-05T17:50:06Z",
+    "role": "bot",
+    "content": "Before I proceed with the search for a Product Marketing, Product Marketing Manager in the technology sector based in Singapore…\nWould you like me to:\n1. Start sourcing candidates\n2. Suggest related job titles and companies to explore?\nJust click the button to confirm"
+  },
+  {
+    "ts": "2026-02-05T17:50:13Z",
+    "role": "user",
+    "content": "yes"
+  },
+  {
+    "ts": "2026-02-05T17:50:13Z",
+    "role": "bot",
+    "content": "Perfect—getting started now.\nHow would you like to receive the results?\n1. Review & Flag Panel (Highly Recommended)\n2. Export everything into an Excel file\nJust hit the button to confirm"
+  },
+  {
+    "ts": "2026-02-05T17:50:17Z",
+    "role": "user",
+    "content": "excel"
+  },
+  {
+    "ts": "2026-02-05T17:50:39Z",
+    "role": "bot",
+    "content": "Export links are not ready yet. Please try again shortly.\nProfiles found: 40"
+  },
+  {
+    "ts": "2026-02-05T17:50:39Z",
+    "role": "user",
+    "content": "status"
+  },
+  {
+    "ts": "2026-02-05T17:50:41Z",
+    "role": "bot",
+    "content": "“Pulled the data from Excel—ready to go”\nCSV: http://localhost:8091/download/bf3c56e5e7_results.csv\nXLSX: http://localhost:8091/download/bf3c56e5e7_results.xlsx"
+  },
+  {
+    "ts": "2026-02-05T17:52:20Z",
+    "role": "user",
+    "content": "reset session"
+  },
+  {
+    "ts": "2026-02-05T17:52:20Z",
+    "role": "bot",
+    "content": "Session cleared. Ready for a fresh start.\nHow would you like to search for candidate profiles?\n1. Upload a Job Description\n2. Provide Job Title and Country"
+  }
+]
