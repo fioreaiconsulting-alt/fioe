@@ -2195,11 +2195,13 @@ async function getProcessGeography(linkedinurl) {
       // We should apply reference logic AFTER fetching the basic data to augment it.
   }
 
+  // Constants for retry logic - defined outside tryFetch for performance
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 1000;
+
   const tryFetch = async (val, retryCount = 0) => {
     if (!val) return null;
     const url = PROCESS_GEO_API + '?linkedin=' + encodeURIComponent(val);
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY_MS = 1000;
     
     try {
       const res = await fetch(url, { credentials: 'omit', cache: 'no-store' });
@@ -5202,7 +5204,27 @@ function renderTable(){
           // Display user-friendly message in the details container
           const errorNotice = document.createElement('div');
           errorNotice.style.cssText = 'background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin: 16px 0; color: #92400e; font-size: 14px;';
-          errorNotice.innerHTML = '<strong>⚠️ No additional data available</strong><br/>The profile data could not be retrieved from the database. This may be due to:<br/>• The profile has not been fully processed yet<br/>• Network connectivity issues<br/>Please try refreshing the profile using the 🔄 Refresh button above.';
+          
+          // Create error message elements safely
+          const warningTitle = document.createElement('strong');
+          warningTitle.textContent = '⚠️ No additional data available';
+          errorNotice.appendChild(warningTitle);
+          errorNotice.appendChild(document.createElement('br'));
+          
+          const warningText = document.createTextNode('The profile data could not be retrieved from the database. This may be due to:');
+          errorNotice.appendChild(warningText);
+          errorNotice.appendChild(document.createElement('br'));
+          
+          const reason1 = document.createTextNode('• The profile has not been fully processed yet');
+          errorNotice.appendChild(reason1);
+          errorNotice.appendChild(document.createElement('br'));
+          
+          const reason2 = document.createTextNode('• Network connectivity issues');
+          errorNotice.appendChild(reason2);
+          errorNotice.appendChild(document.createElement('br'));
+          
+          const instructionText = document.createTextNode('Please try refreshing the profile using the 🔄 Refresh button above.');
+          errorNotice.appendChild(instructionText);
           
           // Insert notice after the profile picture container
           const firstContainer = content.querySelector('div[style*="text-align: center"]');
@@ -5218,7 +5240,19 @@ function renderTable(){
         // Display user-friendly error message
         const errorNotice = document.createElement('div');
         errorNotice.style.cssText = 'background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin: 16px 0; color: #991b1b; font-size: 14px;';
-        errorNotice.innerHTML = '<strong>❌ Unable to load details</strong><br/>An error occurred while retrieving profile data from the database.<br/>Please try again later or contact support if the problem persists.';
+        
+        // Create error message elements safely
+        const errorTitle = document.createElement('strong');
+        errorTitle.textContent = '❌ Unable to load details';
+        errorNotice.appendChild(errorTitle);
+        errorNotice.appendChild(document.createElement('br'));
+        
+        const errorText = document.createTextNode('An error occurred while retrieving profile data from the database.');
+        errorNotice.appendChild(errorText);
+        errorNotice.appendChild(document.createElement('br'));
+        
+        const instructionText = document.createTextNode('Please try again later or contact support if the problem persists.');
+        errorNotice.appendChild(instructionText);
         
         // Insert notice after the profile picture container
         const firstContainer = content.querySelector('div[style*="text-align: center"]');

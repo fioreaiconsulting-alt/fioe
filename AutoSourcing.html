@@ -1661,7 +1661,7 @@ function updateSourcingSection() {
   
   // Check if Smart Search Builder is expanded
   const smartSearchContent = document.getElementById('smartSearchContent');
-  const isSmartSearchExpanded = smartSearchContent && smartSearchContent.classList.contains('open');
+  const isSmartSearchExpanded = smartSearchContent?.classList.contains('open') ?? false;
   
   // Show sourcing only if basic conditions are met AND at least one toggle is active
   const showSourcing = ((hasJobTitle && hasLocation) || jdUploaded) && isAnyToggleActive;
