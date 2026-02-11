@@ -1915,7 +1915,8 @@ Return ONLY the JSON object, no other text."""
                     # Preserve order: keep existing skills first, then add new ones (avoiding duplicates)
                     existing_set = set(existing_skillset)
                     merged_skillset = existing_skillset + [skill for skill in confirmed_skills if skill not in existing_set]
-                    skillset_str = ", ".join(merged_skillset)  # Store as comma-separated string, not JSON array
+                    # Ensure all skills are strings before joining
+                    skillset_str = ", ".join([str(s) for s in merged_skillset if s])
                     
                     # Check if vskillset column exists
                     cur.execute("""
@@ -2478,7 +2479,8 @@ Return ONLY the JSON object, no other text."""
         
         vskillset_json = json.dumps(results, ensure_ascii=False)
         confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
-        skillset_str = ", ".join(confirmed_skills)  # Store as comma-separated string, not JSON array
+        # Ensure all skills are strings before joining
+        skillset_str = ", ".join([str(s) for s in confirmed_skills if s])
         
         # Check if vskillset column exists
         cur.execute("""
@@ -6900,7 +6902,8 @@ Return ONLY the JSON object, no other text."""
             
             vskillset_json = json.dumps(results, ensure_ascii=False)
             confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
-            skillset_str = ", ".join(confirmed_skills)  # Store as comma-separated string, not JSON array
+            # Ensure all skills are strings before joining
+            skillset_str = ", ".join([str(s) for s in confirmed_skills if s])
             
             # Check if vskillset column exists
             cur.execute("""
