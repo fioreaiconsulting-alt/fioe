@@ -244,7 +244,7 @@
 <div id="tab-details" class="tab-pane">
     <div style="margin-bottom: 20px; display: flex; gap: 12px; align-items: center;">
         <button onclick="switchTab('tab-search')" class="btn-secondary" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328;">&larr; Back to Search Results</button>
-        <button onclick="refreshCurrentProfile()" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Refresh current profile data">🔄 Refresh</button>
+        <button id="detailsRefreshBtn" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Hover to refresh current profile data">🔄 Refresh</button>
     </div>
     <div id="details-container">
         <div style="text-align:center; padding: 40px; color: var(--argent);">
@@ -5583,6 +5583,39 @@ function refreshCurrentProfile() {
         if (typeof setStatus === 'function') setStatus('Profile refreshed', 'success');
     }
 }
+
+// Setup hover-to-refresh behavior for View Details refresh button
+(function setupRefreshHover() {
+    const refreshBtn = document.getElementById('detailsRefreshBtn');
+    if (!refreshBtn) return;
+    
+    let refreshTimeout = null;
+    const HOVER_DELAY = 300; // 300ms debounce
+    
+    refreshBtn.addEventListener('mouseenter', function() {
+        // Clear any existing timeout
+        if (refreshTimeout) clearTimeout(refreshTimeout);
+        
+        // Set timeout to trigger refresh after hover delay
+        refreshTimeout = setTimeout(() => {
+            refreshCurrentProfile();
+        }, HOVER_DELAY);
+    });
+    
+    refreshBtn.addEventListener('mouseleave', function() {
+        // Cancel refresh if user moves away quickly
+        if (refreshTimeout) {
+            clearTimeout(refreshTimeout);
+            refreshTimeout = null;
+        }
+    });
+    
+    // Also keep click functionality as fallback
+    refreshBtn.addEventListener('click', function() {
+        if (refreshTimeout) clearTimeout(refreshTimeout);
+        refreshCurrentProfile();
+    });
+})();
 
 /* New functionality: Listen to toggle change to start/stop snipper API removed */
 
