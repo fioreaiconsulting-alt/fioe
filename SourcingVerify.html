@@ -221,7 +221,7 @@
                   <th>Job Title</th>
                   <th style="width:8%;">Country</th>
                   <th style="width:8%;">Action</th>
-                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer; user-select:none;" title="Click to sort by Match Level (Highest to Lowest)">Match Level ▼</th>
+                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer; user-select:none;" title="Click to sort by Match Level (Highest to Lowest)" aria-sort="none" role="columnheader">Match Level <span aria-hidden="true">▼</span></th>
               </tr>
           </thead>
           <tbody id="tableBody">
@@ -5669,8 +5669,9 @@ function refreshCurrentProfile() {
     // Show refresh status with loading indicator
     const refreshBtn = document.getElementById('viewDetailsRefreshBtn');
     if (refreshBtn) {
-        refreshBtn.innerHTML = '⏳ Refreshing...';
+        refreshBtn.innerHTML = '<span aria-live="polite" role="status">Refreshing...</span>';
         refreshBtn.style.pointerEvents = 'none';
+        refreshBtn.disabled = true;
     }
     if (typeof setStatus === 'function') setStatus('Refreshing profile...', 'info');
     
@@ -5678,16 +5679,25 @@ function refreshCurrentProfile() {
     if (window.__sv_namecard && window.__sv_namecard.renderNameCardToTab) {
         window.__sv_namecard.renderNameCardToTab(__currentProfileRow);
         if (typeof setStatus === 'function') setStatus('Profile refreshed', 'success');
-    }
-    
-    // Reset button state after refresh
-    setTimeout(() => {
+        
+        // Reset button state after refresh completes
+        setTimeout(() => {
+            __isRefreshing = false;
+            if (refreshBtn) {
+                refreshBtn.innerHTML = '🔄 Refresh';
+                refreshBtn.style.pointerEvents = 'auto';
+                refreshBtn.disabled = false;
+            }
+        }, 500);
+    } else {
+        // If namecard not available, reset immediately
         __isRefreshing = false;
         if (refreshBtn) {
             refreshBtn.innerHTML = '🔄 Refresh';
             refreshBtn.style.pointerEvents = 'auto';
+            refreshBtn.disabled = false;
         }
-    }, 1000);
+    }
 }
 
 /* New functionality: Listen to toggle change to start/stop snipper API removed */
@@ -5750,6 +5760,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             renderTable();
+            
+            // Update aria-sort attribute for accessibility
+            matchLevelHeader.setAttribute('aria-sort', 'descending');
+            
             setStatus('Table sorted by Match Level (highest to lowest).', 'success');
         });
     }

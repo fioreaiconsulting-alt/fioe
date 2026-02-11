@@ -2322,7 +2322,7 @@ function updateSectorEnabledState(){
           
           if (box) {
             box.classList.remove('hidden');
-            if (summaryEl) summaryEl.innerHTML = '<div style="display:flex; align-items:center; gap:8px;"><span class="spinner" style="width:16px; height:16px;"></span><span>Analyzing Job Description...</span></div>';
+            if (summaryEl) summaryEl.innerHTML = '<div style="display:flex; align-items:center; gap:8px;" role="status" aria-live="polite"><span class="spinner" style="width:16px; height:16px;"></span><span>Analyzing Job Description...</span></div>';
             if (tagsEl) tagsEl.innerHTML = '';
           }
           
