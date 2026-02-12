@@ -2117,50 +2117,52 @@ Return ONLY the JSON object, no other text."""
                 logger.warning(f"[Assess -> jskill] Sync failed: {e_js}")
         # -----------------------------------------------------------------
         
-        # --- NEW: Persist username and userid to process table ---
-        # Ensure username and userid are populated in process table after individual assessment
-        if username or userid:
-            try:
-                # Check which columns exist in process table
-                # Note: Schema check is done per-request for database compatibility across deployments
+        # --- Patch: set owner fields (username, userid) on process row after assessment ---
+        try:
+            # Only attempt when we have values to set and a linkedinurl
+            if (username or userid) and linkedinurl:
+                # Ensure columns exist before attempting update
                 cur.execute("""
                     SELECT column_name
                     FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='process' 
-                      AND column_name IN ('username', 'userid')
+                    WHERE table_schema = 'public' AND table_name = 'process'
+                      AND column_name IN ('username','userid')
                 """)
-                available_cols = {r[0] for r in cur.fetchall()}
-                
-                # Build update statement for available columns
-                # Whitelist validation: only allow specific columns
-                ALLOWED_COLS = {'username', 'userid'}
-                updates = []
-                values = []
-                if 'username' in available_cols and username:
-                    if 'username' in ALLOWED_COLS:  # Explicit whitelist check
-                        updates.append("username = %s")
-                        values.append(username)
-                if 'userid' in available_cols and userid:
-                    if 'userid' in ALLOWED_COLS:  # Explicit whitelist check
-                        updates.append("userid = %s")
-                        values.append(userid)
-                
-                if updates:
-                    update_sql = f"UPDATE process SET {', '.join(updates)} WHERE "
-                    uu_updated = 0
-                    # Try normalized_linkedin first (if available), then fallback to linkedinurl
-                    # These are mutually exclusive identifiers; only the first match will be updated
-                    if normalized:
-                        cur.execute(update_sql + "normalized_linkedin = %s", tuple(values + [normalized]))
-                        uu_updated = cur.rowcount
-                    if uu_updated == 0:
-                        cur.execute(update_sql + "linkedinurl = %s", tuple(values + [linkedinurl]))
-                        uu_updated = cur.rowcount
-                    conn.commit()
-                    logger.info(f"[Assess -> username/userid] Updated {uu_updated} rows with username='{username}', userid='{userid}'")
-            except Exception as e_uu:
-                logger.warning(f"[Assess -> username/userid] Update failed: {e_uu}")
-        # -----------------------------------------------------------------
+                existing_cols = {r[0] for r in cur.fetchall()}
+
+                update_parts = []
+                params = []
+
+                # Use COALESCE so we don't overwrite existing owner data (change to direct assignment if you want overwrite)
+                if 'username' in existing_cols and username:
+                    update_parts.append("username = COALESCE(username, %s)")
+                    params.append(username)
+                if 'userid' in existing_cols and userid:
+                    update_parts.append("userid = COALESCE(userid, %s)")
+                    params.append(userid)
+
+                if update_parts:
+                    # Use normalized_linkedin if available, fallback to raw linkedinurl
+                    try:
+                        norm = _normalize_linkedin_to_path(linkedinurl)
+                    except Exception:
+                        norm = None
+
+                    # Bind params then the WHERE args (normalized, linkedinurl)
+                    where_args = (norm if norm else linkedinurl, linkedinurl)
+                    params.extend(where_args)
+
+                    sql_update = "UPDATE process SET " + ", ".join(update_parts) + " WHERE normalized_linkedin = %s OR linkedinurl = %s"
+                    try:
+                        cur.execute(sql_update, tuple(params))
+                        conn.commit()
+                        logger.info(f"[Assess -> owner] Set username/userid for linkedin={linkedinurl}")
+                    except Exception as e_up:
+                        conn.rollback()
+                        logger.warning(f"[Assess -> set owner] failed to set userid/username: {e_up}")
+        except Exception as e:
+            logger.warning(f"[Assess -> set owner] unexpected error: {e}")
+        # --- End patch ---
 
         cur.close(); conn.close()
     except Exception as e:
