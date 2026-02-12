@@ -471,10 +471,14 @@ function switchTab(tabId) {
         }
     } else if(tabId === 'tab-details') {
         document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
-        // Refresh data when switching to View Details tab
-        if (typeof refreshData === 'function') {
-            refreshData();
-        }
+        // Auto-refresh View Details tab: trigger refresh button after 1 second
+        // The 1-second delay is intentional as per requirement specification
+        setTimeout(() => {
+            const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
+            if (viewDetailsRefreshBtn) {
+                viewDetailsRefreshBtn.click();
+            }
+        }, 1000);
     } else if (tabId === 'tab-research') {
         document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
         // Trigger Deep Research logic when tab is activated to ensure data is present
@@ -3571,6 +3575,7 @@ async function triggerLevel1Assessment(tr, anchor) {
         skillset: candidateSkillset,
         experience_text: experienceText,
         username: window.__SV_ACTIVE_USERNAME || '',
+        userid: window.__SV_ACTIVE_USERID || '',
         custom_weights: customWeights, // Sending custom weights
         tenure: tenureVal
     };
@@ -3871,6 +3876,7 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         skillset: candidateSkillset,
         experience_text: experienceText,
         username: window.__SV_ACTIVE_USERNAME || '',
+        userid: window.__SV_ACTIVE_USERID || '',
         custom_weights: customWeights,
         tenure: tenureVal,
         assessment_level: isLevel2Request ? 'L2' : 'L1'  // L1 = extractive only, L2 = contextual inference
