@@ -796,17 +796,25 @@ const BACKEND_PROCESSING_BUFFER_MS = 1000;
 
 /* Helper: Auto-refresh Search Results after bulk assessment completes */
 function autoRefreshViewDetailsIfActive() {
-    // After bulk assessment completes, simulate click on Search Result tab's Refresh button
-    // This reloads the table data which triggers the View Details to refresh with updated skillset/product
-    console.log('[Bulk Assessment] Triggering auto-refresh by simulating Refresh button click');
+    // After bulk assessment completes, trigger auto-refresh to show updated skillset/product
+    console.log('[Bulk Assessment] Triggering auto-refresh after assessment completion');
     
     setTimeout(() => {
+        // 1. First, refresh the Search Result table data
         const reloadBtn = document.getElementById('reloadBtn');
         if (reloadBtn) {
             console.log('[Bulk Assessment] Clicking Refresh button in Search Result tab');
             reloadBtn.click();
         } else {
-            console.warn('[Bulk Assessment] Refresh button not found');
+            console.warn('[Bulk Assessment] Search Result Refresh button not found');
+        }
+        
+        // 2. Also refresh View Details tab if it's currently active
+        const detailsTab = document.getElementById('tab-details');
+        const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
+        if (detailsTab && detailsTab.classList.contains('active') && viewDetailsRefreshBtn) {
+            console.log('[Bulk Assessment] View Details tab is active - clicking its Refresh button');
+            viewDetailsRefreshBtn.click();
         }
     }, BACKEND_PROCESSING_BUFFER_MS); // Pause for backend processing to complete
 }

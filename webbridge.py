@@ -5246,16 +5246,26 @@ def process_upload_multiple_cvs():
         
         def clean_name_for_display(s):
             """Clean special characters and artifacts from names for display.
-            Removes non-printable characters, special Unicode artifacts, and normalizes whitespace.
-            Preserves valid Unicode letters for international names."""
+            Removes non-printable characters, special Unicode artifacts, and non-Latin characters.
+            Preserves Latin letters (including accented characters like José, François) and common name punctuation."""
             if not s:
                 return s
-            # Remove non-printable characters and known problematic sequences
-            # Allow Unicode letters (including international characters) plus common name punctuation
-            cleaned = ''.join(char for char in s if char.isprintable() and (char.isalpha() or char in ' -.\','))
+            # Remove non-printable characters and non-Latin Unicode characters
+            # Keep only Latin letters (ASCII + Latin-1 Supplement + Latin Extended blocks),
+            # spaces, hyphens, periods, apostrophes, commas
+            # This filters out Korean (님), special artifacts (δïÿ), etc.
+            cleaned = []
+            for char in s:
+                if not char.isprintable():
+                    continue  # Skip non-printable characters
+                # Allow ASCII letters and common punctuation
+                if (ord(char) < 128 and (char.isalpha() or char in ' -.\',')) or \
+                   (128 <= ord(char) <= 591 and char.isalpha()):  # Latin-1 Supplement + Latin Extended A/B
+                    cleaned.append(char)
+            result = ''.join(cleaned)
             # Normalize multiple spaces to single space
-            cleaned = re.sub(r'\s+', ' ', cleaned)
-            return cleaned.strip()
+            result = re.sub(r'\s+', ' ', result)
+            return result.strip()
 
         candidate_map = {}
         # Map: normalized_name -> list of records
