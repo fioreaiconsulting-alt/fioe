@@ -794,7 +794,7 @@ const CACHE_UPDATE_DELAY_MS = 200;
 // Total: 1000ms ensures data availability without excessive delay
 const BACKEND_PROCESSING_BUFFER_MS = 1000;
 
-/* Helper: Auto-refresh View Details tab if currently active and viewing a profile */
+/* Helper: Auto-refresh Search Results after bulk assessment completes */
 function autoRefreshViewDetailsIfActive() {
     // After bulk assessment completes, simulate click on Search Result tab's Refresh button
     // This reloads the table data which triggers the View Details to refresh with updated skillset/product
@@ -808,7 +808,7 @@ function autoRefreshViewDetailsIfActive() {
         } else {
             console.warn('[Bulk Assessment] Refresh button not found');
         }
-    }, BACKEND_PROCESSING_BUFFER_MS); // 1-second pause as requested
+    }, BACKEND_PROCESSING_BUFFER_MS); // Pause for backend processing to complete
 }
 
 /* Helper: animate button during bulk assessment processing */
