@@ -319,8 +319,9 @@ def analyze_job_description(jd_text: str):
                         sector_list.append(f"{sector_name}: {', '.join(domains)}")
                 if sector_list:
                     sectors_reference = "\nAVAILABLE SECTORS (use these when identifying sector):\n" + "\n".join(sector_list) + "\n"
-    except Exception:
-        pass  # If sectors.json not available, continue without it
+    except (json.JSONDecodeError, IOError, KeyError) as e:
+        # Log or handle expected errors during sector loading
+        pass  # If sectors.json not available or invalid, continue without it
 
     # Construct a careful prompt that asks for strict JSON including an "observation" field and "skills"
     prompt = (
