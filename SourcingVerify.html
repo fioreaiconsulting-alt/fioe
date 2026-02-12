@@ -796,35 +796,19 @@ const BACKEND_PROCESSING_BUFFER_MS = 1000;
 
 /* Helper: Auto-refresh View Details tab if currently active and viewing a profile */
 function autoRefreshViewDetailsIfActive() {
-    // Capture current profile row reference to prevent race conditions
-    const currentRow = __currentProfileRow;
-    const detailsTab = document.getElementById('tab-details');
+    // After bulk assessment completes, simulate click on Search Result tab's Refresh button
+    // This reloads the table data which triggers the View Details to refresh with updated skillset/product
+    console.log('[Bulk Assessment] Triggering auto-refresh by simulating Refresh button click');
     
-    if (detailsTab && detailsTab.classList.contains('active') && currentRow) {
-        console.log('[Bulk Assessment] Auto-refreshing View Details tab with updated assessment data');
-        
-        // Clear skillset and product from cache to force fresh fetch from server
-        const anchor = currentRow.dataset.linkedinurl;
-        if (anchor && window.__sv_namecard && window.__sv_namecard.getCardCache) {
-            const cached = window.__sv_namecard.getCardCache(anchor);
-            if (cached) {
-                // Clear only skillset and product to force reload, keep other cached data
-                delete cached.skillset;
-                delete cached.product;
-                delete cached.vskillset;
-                window.__sv_namecard.setCardCache(anchor, cached);
-                console.log('[View Details] Cleared skillset/product cache to force refresh');
-            }
+    setTimeout(() => {
+        const reloadBtn = document.getElementById('reloadBtn');
+        if (reloadBtn) {
+            console.log('[Bulk Assessment] Clicking Refresh button in Search Result tab');
+            reloadBtn.click();
+        } else {
+            console.warn('[Bulk Assessment] Refresh button not found');
         }
-        
-        // Re-render the captured profile to show updated assessment results
-        // Use combined delay: cache update + backend processing buffer
-        setTimeout(() => {
-            if (typeof renderNameCardToTab === 'function') {
-                renderNameCardToTab(currentRow);
-            }
-        }, CACHE_UPDATE_DELAY_MS + BACKEND_PROCESSING_BUFFER_MS);
-    }
+    }, BACKEND_PROCESSING_BUFFER_MS); // 1-second pause as requested
 }
 
 /* Helper: animate button during bulk assessment processing */

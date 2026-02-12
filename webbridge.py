@@ -5325,8 +5325,9 @@ def process_upload_multiple_cvs():
                         if r_link: pid = r_link[0]
 
                     if pid:
-                        # Update existing record
-                        cur.execute("UPDATE process SET cv=%s WHERE id=%s", (binary_cv, pid))
+                        # Update existing record - also update name to clean any special characters
+                        cleaned_name = matched_entry['name']  # Already cleaned from clean_name_for_display
+                        cur.execute("UPDATE process SET cv=%s, name=%s WHERE id=%s", (binary_cv, cleaned_name, pid))
                         conn.commit()
                         uploaded_count += 1
                         threading.Thread(target=analyze_cv_background, args=(m_link, file_bytes)).start()
