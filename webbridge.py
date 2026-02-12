@@ -1642,6 +1642,7 @@ def gemini_assess_profile():
     sector = (data.get("sector") or "").strip()
     experience_text = (data.get("experience_text") or "").strip()
     username = (data.get("username") or "").strip()
+    userid = (data.get("userid") or "").strip()  # Extract userid from payload
     custom_weights = data.get("custom_weights") or {}
     assessment_level = (data.get("assessment_level") or "L1").strip().upper()  # L1 or L2
     tenure = data.get("tenure")  # Average tenure value
@@ -2114,6 +2115,47 @@ Return ONLY the JSON object, no other text."""
 
             except Exception as e_js:
                 logger.warning(f"[Assess -> jskill] Sync failed: {e_js}")
+        # -----------------------------------------------------------------
+
+        # --- NEW: Ensure username and userid are persisted into process for this profile (best-effort) ---
+        try:
+            # Discover available columns once
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='process'
+                  AND column_name IN ('username','userid')
+            """)
+            proc_cols = {r[0].lower() for r in cur.fetchall()}
+
+            # Only attempt updates if columns exist
+            if ('username' in proc_cols or 'userid' in proc_cols):
+                upd_parts = []
+                upd_vals = []
+                if 'username' in proc_cols and username:
+                    upd_parts.append("username = %s"); upd_vals.append(username)
+                if 'userid' in proc_cols and userid:
+                    upd_parts.append("userid = %s"); upd_vals.append(userid)
+                if upd_parts:
+                    # Try normalized_linkedin first (if available), fallback to linkedinurl
+                    updated = 0
+                    if normalized:
+                        try:
+                            cur.execute(f"UPDATE process SET {', '.join(upd_parts)} WHERE normalized_linkedin = %s", tuple(upd_vals + [normalized]))
+                            updated = cur.rowcount
+                            conn.commit()
+                        except Exception:
+                            conn.rollback()
+                    # If no rows updated (or normalized not provided) update by linkedinurl
+                    if updated == 0:
+                        try:
+                            cur.execute(f"UPDATE process SET {', '.join(upd_parts)} WHERE linkedinurl = %s", tuple(upd_vals + [linkedinurl]))
+                            conn.commit()
+                        except Exception:
+                            conn.rollback()
+                    logger.info(f"[Gemini Assess -> DB] Persisted username/userid for linkedin='{linkedinurl}'")
+        except Exception as e:
+            logger.warning(f"[Gemini Assess -> DB] Failed to persist username/userid: {e}")
         # -----------------------------------------------------------------
 
         cur.close(); conn.close()

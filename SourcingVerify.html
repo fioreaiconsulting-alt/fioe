@@ -3578,6 +3578,7 @@ async function triggerLevel1Assessment(tr, anchor) {
         skillset: candidateSkillset,
         experience_text: experienceText,
         username: window.__SV_ACTIVE_USERNAME || '',
+        userid: window.__SV_ACTIVE_USERID || '',
         custom_weights: customWeights, // Sending custom weights
         tenure: tenureVal
     };
@@ -3878,6 +3879,7 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         skillset: candidateSkillset,
         experience_text: experienceText,
         username: window.__SV_ACTIVE_USERNAME || '',
+        userid: window.__SV_ACTIVE_USERID || '',
         custom_weights: customWeights,
         tenure: tenureVal,
         assessment_level: isLevel2Request ? 'L2' : 'L1'  // L1 = extractive only, L2 = contextual inference
