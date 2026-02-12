@@ -2117,52 +2117,54 @@ Return ONLY the JSON object, no other text."""
                 logger.warning(f"[Assess -> jskill] Sync failed: {e_js}")
         # -----------------------------------------------------------------
         
-        # --- Patch: set owner fields (username, userid) on process row after assessment ---
+        # Patch: safer owner update (replace the existing owner-setting block in gemini_assess_profile)
         try:
             # Only attempt when we have values to set and a linkedinurl
             if (username or userid) and linkedinurl:
-                # Ensure columns exist before attempting update
+                # Discover which columns exist in process table (we will check for username, userid and normalized_linkedin)
                 cur.execute("""
                     SELECT column_name
                     FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = 'process'
-                      AND column_name IN ('username','userid')
+                      AND column_name IN ('username','userid','normalized_linkedin','linkedinurl')
                 """)
-                existing_cols = {r[0] for r in cur.fetchall()}
+                process_cols = {r[0] for r in cur.fetchall()}
 
+                # Build update parts and parameters
                 update_parts = []
                 params = []
 
-                # Use COALESCE so we don't overwrite existing owner data (change to direct assignment if you want overwrite)
-                if 'username' in existing_cols and username:
+                if 'username' in process_cols and username:
                     update_parts.append("username = COALESCE(username, %s)")
                     params.append(username)
-                if 'userid' in existing_cols and userid:
+                if 'userid' in process_cols and userid:
                     update_parts.append("userid = COALESCE(userid, %s)")
                     params.append(userid)
 
                 if update_parts:
-                    # Use normalized_linkedin if available, fallback to raw linkedinurl
+                    # Determine WHERE clause depending on whether normalized_linkedin exists
                     try:
                         norm = _normalize_linkedin_to_path(linkedinurl)
                     except Exception:
                         norm = None
 
-                    # Bind params then the WHERE args (normalized, linkedinurl)
-                    where_args = (norm if norm else linkedinurl, linkedinurl)
-                    params.extend(where_args)
+                    if 'normalized_linkedin' in process_cols and norm:
+                        sql_update = "UPDATE process SET " + ", ".join(update_parts) + " WHERE normalized_linkedin = %s OR linkedinurl = %s"
+                        params.extend([norm, linkedinurl])
+                    else:
+                        # fallback: update by linkedinurl only
+                        sql_update = "UPDATE process SET " + ", ".join(update_parts) + " WHERE linkedinurl = %s"
+                        params.append(linkedinurl)
 
-                    sql_update = "UPDATE process SET " + ", ".join(update_parts) + " WHERE normalized_linkedin = %s OR linkedinurl = %s"
                     try:
                         cur.execute(sql_update, tuple(params))
                         conn.commit()
-                        logger.info(f"[Assess -> owner] Set username/userid for linkedin={linkedinurl}")
+                        logger.info(f"[Assess -> owner] Set username/userid for linkedin={linkedinurl} (rows={cur.rowcount})")
                     except Exception as e_up:
                         conn.rollback()
                         logger.warning(f"[Assess -> set owner] failed to set userid/username: {e_up}")
         except Exception as e:
             logger.warning(f"[Assess -> set owner] unexpected error: {e}")
-        # --- End patch ---
 
         cur.close(); conn.close()
     except Exception as e:
