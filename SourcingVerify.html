@@ -558,10 +558,17 @@ function toggleWeightConfig() {
       arrow.textContent = '▲';
     });
     
-    // Collapse on mouseleave
+    // Collapse on mouseleave - validate weights when closing
     panel.addEventListener('mouseleave', function() {
       content.classList.remove('open');
       arrow.textContent = '▼';
+      
+      // Validate weights when panel closes
+      setTimeout(function() {
+        if (typeof window.validateWeightsOnClose === 'function') {
+          window.validateWeightsOnClose();
+        }
+      }, 200);
     });
     
     // Focus behavior for keyboard accessibility
@@ -576,6 +583,11 @@ function toggleWeightConfig() {
         if (!panel.contains(document.activeElement)) {
           content.classList.remove('open');
           arrow.textContent = '▼';
+          
+          // Validate weights when panel closes
+          if (typeof window.validateWeightsOnClose === 'function') {
+            window.validateWeightsOnClose();
+          }
         }
       }, 150);
     });
@@ -690,28 +702,28 @@ document.addEventListener('DOMContentLoaded', loadWeights);
     validateTotalWeight(); // update total display and saved state
   }
 
+  // Global function to validate weights when panel closes
+  window.validateWeightsOnClose = function() {
+    const sum = Array.from(document.querySelectorAll('.weight-sliders input[type=range]'))
+                     .reduce((acc, el) => acc + (parseInt(el.value) || 0), 0);
+    if (sum !== 100) {
+      // Revert to snapshot and prompt user
+      restorePrevWeights();
+      // Show alert when panel is toggled off with invalid total
+      alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
+    }
+  };
+
   // Save snapshot when user begins interacting with any slider (pointerdown/focus)
   document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.weight-sliders input[type=range]').forEach(input => {
       input.addEventListener('pointerdown', savePrevWeightsSnapshot);
       input.addEventListener('touchstart', savePrevWeightsSnapshot, {passive:true});
       input.addEventListener('focus', savePrevWeightsSnapshot);
-      // On change (user finished moving), enforce total==100
+      // On change (user finished moving), just update display without alert
       input.addEventListener('change', function() {
-        const sum = Array.from(document.querySelectorAll('.weight-sliders input[type=range]'))
-                         .reduce((acc, el) => acc + (parseInt(el.value) || 0), 0);
-        if (sum !== 100) {
-          // Revert to snapshot and prompt user
-          restorePrevWeights();
-          // Provide friendly UX: prompt the user to re-adjust
-          // Use setTimeout to avoid interrupting slider events in some browsers
-          setTimeout(function(){
-            alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
-          }, 50);
-        } else {
-          // valid: we already save in validateTotalWeight when sum===100
-          validateTotalWeight();
-        }
+        // Update display but don't show alert yet - wait until panel closes
+        validateTotalWeight();
       });
     });
   });
