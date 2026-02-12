@@ -558,10 +558,17 @@ function toggleWeightConfig() {
       arrow.textContent = '▲';
     });
     
-    // Collapse on mouseleave
+    // Collapse on mouseleave - validate weights when closing
     panel.addEventListener('mouseleave', function() {
       content.classList.remove('open');
       arrow.textContent = '▼';
+      
+      // Validate weights when panel closes
+      setTimeout(function() {
+        if (typeof window.validateWeightsOnClose === 'function') {
+          window.validateWeightsOnClose();
+        }
+      }, 200);
     });
     
     // Focus behavior for keyboard accessibility
@@ -576,6 +583,11 @@ function toggleWeightConfig() {
         if (!panel.contains(document.activeElement)) {
           content.classList.remove('open');
           arrow.textContent = '▼';
+          
+          // Validate weights when panel closes
+          if (typeof window.validateWeightsOnClose === 'function') {
+            window.validateWeightsOnClose();
+          }
         }
       }, 150);
     });
@@ -653,6 +665,104 @@ function resetWeightsToDefault() {
 }
 
 document.addEventListener('DOMContentLoaded', loadWeights);
+
+// Weight snapshot + enforcement (restore previous weights if total != 100)
+(function() {
+  // previous weights snapshot (in-memory and persisted briefly)
+  let _prevWeights = null;
+
+  function readSavedWeights() {
+    try {
+      const raw = localStorage.getItem('sv_assessment_weights');
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) { return null; }
+  }
+
+  function savePrevWeightsSnapshot() {
+    // capture current displayed slider values as snapshot
+    const inputs = document.querySelectorAll('.weight-sliders input[type=range]');
+    const snap = {};
+    inputs.forEach(i => { if (i.dataset && i.dataset.key) snap[i.dataset.key] = parseInt(i.value) || 0; });
+    _prevWeights = snap;
+    try { localStorage.setItem('sv_assessment_weights_prev', JSON.stringify(snap)); } catch(_) {}
+  }
+
+  function restorePrevWeights() {
+    const prev = _prevWeights || (function(){ try { return JSON.parse(localStorage.getItem('sv_assessment_weights_prev')||'{}'); } catch(e){return null;} })();
+    if (!prev) return;
+    document.querySelectorAll('.weight-sliders input[type=range]').forEach(input => {
+      const key = input.dataset.key;
+      if (key && typeof prev[key] !== 'undefined') {
+        input.value = prev[key];
+        const labelEl = document.getElementById('val-' + key);
+        if (labelEl) labelEl.textContent = prev[key] + '%';
+      }
+    });
+    validateTotalWeight(); // update total display and saved state
+  }
+
+  // Global function to validate weights when panel closes
+  window.validateWeightsOnClose = function() {
+    const sum = Array.from(document.querySelectorAll('.weight-sliders input[type=range]'))
+                     .reduce((acc, el) => acc + (parseInt(el.value) || 0), 0);
+    if (sum !== 100) {
+      // Revert to snapshot and prompt user
+      restorePrevWeights();
+      // Show alert when panel is toggled off with invalid total
+      alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
+    }
+  };
+
+  // Save snapshot when user begins interacting with any slider (pointerdown/focus)
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.weight-sliders input[type=range]').forEach(input => {
+      input.addEventListener('pointerdown', savePrevWeightsSnapshot);
+      input.addEventListener('touchstart', savePrevWeightsSnapshot, {passive:true});
+      input.addEventListener('focus', savePrevWeightsSnapshot);
+      // On change (user finished moving), just update display without alert
+      input.addEventListener('change', function() {
+        // Update display but don't show alert yet - wait until panel closes
+        validateTotalWeight();
+      });
+    });
+  });
+
+  // Wrap/extend validateTotalWeight so it only writes to localStorage when sum === 100
+  const _origValidateTotalWeight = window.validateTotalWeight;
+  window.validateTotalWeight = function() {
+    // If original exists, use it to update labels; otherwise run current implementation
+    try {
+      // compute sum here (avoid calling original which also persisted)
+      const inputs = document.querySelectorAll('.weight-sliders input[type=range]');
+      let sum = 0;
+      let config = {};
+      inputs.forEach(input => {
+        if (!input.disabled) {
+          const val = parseInt(input.value) || 0;
+          sum += val;
+          if (input.dataset && input.dataset.key) config[input.dataset.key] = val;
+        }
+      });
+      const display = document.getElementById('weightTotalDisplay');
+      if (display) display.textContent = `Total: ${sum}%`;
+      if (sum === 100) {
+        if (display) { display.classList.remove('invalid'); display.style.color = '#10b981'; }
+        try { localStorage.setItem('sv_assessment_weights', JSON.stringify(config)); } catch(_) {}
+      } else {
+        if (display) { display.classList.add('invalid'); display.style.color = '#ef4444'; }
+        // do not save invalid totals
+      }
+    } catch (e) {
+      // Fallback to original if available
+      if (typeof _origValidateTotalWeight === 'function') _origValidateTotalWeight();
+    }
+  };
+
+  // Keep resetDefaults behavior (if you still want a hard reset to application defaults)
+  // Existing resetWeightsToDefault continues to call loadWeights()
+
+})();
 </script>
 
 <script>
