@@ -2827,24 +2827,26 @@ export default function App() {
       .then(() => setUser(null));
   };
 
-  // Socket & Autosave setup (only if logged in)
-  const socketRef = useRef(null);
+  // SSE & Autosave setup (only if logged in)
+  const eventSourceRef = useRef(null);
   const pendingSavesRef = useRef(new Map()); // id -> timeout
 
   useEffect(() => {
     if (!user) return;
     let mounted = true;
-    (async () => {
-      try {
-        const mod = await import('socket.io-client').catch(() => null);
-        if (!mounted || !mod) return;
-        const { io } = mod;
-        const sock = io('http://localhost:4000');
-        socketRef.current = sock;
-        sock.on('connect', () => {
-          console.log('[SOCKET] connected', sock.id);
-        });
-        sock.on('candidate_updated', (updated) => {
+
+    try {
+      // Create EventSource connection for SSE
+      const eventSource = new EventSource('http://localhost:4000/api/events');
+      eventSourceRef.current = eventSource;
+
+      eventSource.addEventListener('connected', (e) => {
+        console.log('[SSE] connected', e.data);
+      });
+
+      eventSource.addEventListener('candidate_updated', (e) => {
+        try {
+          const updated = JSON.parse(e.data);
           if (!updated || updated.id == null) return;
           setCandidates(prev => {
             const exists = prev.some(c => String(c.id) === String(updated.id));
@@ -2854,16 +2856,35 @@ export default function App() {
           setEditRows(prev => ({ ...(prev || {}), [updated.id]: { ...(prev[updated.id] || {}), ...updated } }));
           // Update resume candidate in view if selected
           setResumeCandidate(prev => (prev && String(prev.id) === String(updated.id) ? { ...prev, ...updated } : prev));
-        });
-        sock.on('candidates_changed', (payload) => {
+        } catch (err) {
+          console.warn('[SSE] Error parsing candidate_updated:', err);
+        }
+      });
+
+      eventSource.addEventListener('candidates_changed', (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          console.log('[SSE] candidates_changed:', payload);
           // simple reaction: refetch list
           fetchCandidates();
-        });
-      } catch (e) {
-        console.warn('[SOCKET] connection failed', e && e.message);
-      }
-    })();
-    return () => { mounted = false; try { socketRef.current?.disconnect(); } catch {} };
+        } catch (err) {
+          console.warn('[SSE] Error parsing candidates_changed:', err);
+        }
+      });
+
+      eventSource.onerror = (err) => {
+        console.warn('[SSE] connection error', err);
+      };
+    } catch (e) {
+      console.warn('[SSE] connection failed', e && e.message);
+    }
+
+    return () => {
+      mounted = false;
+      try {
+        eventSourceRef.current?.close();
+      } catch {}
+    };
     // eslint-disable-next-line
   }, [user]);
 
