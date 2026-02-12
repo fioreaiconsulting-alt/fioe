@@ -39,8 +39,9 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use('/image', express.static(path.join(__dirname, 'image')));
 
 // Update CORS to allow credentials (cookies)
+const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'];
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'], // Added 8000 for standard python test server
+  origin: allowedOrigins,
   credentials: true
 }));
 
@@ -607,21 +608,7 @@ function toISODate(value) {
 }
 
 function normalizeIncomingRow(c) {
-  // Canonical title/date from multiple spreadsheet header variants
-  const pTitle = firstVal(c, ['Project_Title', 'Project Title', 'project_title', 'project_name', 'Project Name']) || '';
-  const pDateRaw = firstVal(c, ['Project_Date', 'Project Date', 'project_date', 'employment_date', 'Employment Date']) ?? null;
-  const pDateISO = toISODate(pDateRaw);
-
-  // Legacy aliases preserved for backward compatibility
-  const legacyName = firstVal(c, ['project_name', 'Project Name']);
-  const legacyDate = firstVal(c, ['employment_date', 'Employment Date']);
-  const employmentISO = toISODate(legacyDate ?? pDateRaw);
-
   return {
-    project_title: pTitle || '',
-    project_date: pDateISO,                   // DATE
-    project_name: legacyName ?? pTitle,       // TEXT
-    employment_date: employmentISO,           // DATE
     name: firstVal(c, ['name', 'Name']) || '',
     role: firstVal(c, ['role', 'Role']) || '',
     // Accept multiple job title keys (some inputs use 'jobtitle' already)
@@ -647,10 +634,6 @@ function normalizeIncomingRow(c) {
 
 // Mapping from normalized candidate-style keys to process table columns
 const processColumnMap = {
-  project_title: 'project_title',
-  project_date: 'project_date',
-  project_name: 'project_name',
-  employment_date: 'employment_date',
   name: 'name',
   role: 'jobtitle',
   jobtitle: 'jobtitle',
@@ -695,8 +678,6 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
 
   // Canonical + legacy insertion keys (normalized)
   const normKeys = [
-    'project_title', 'project_date',
-    'project_name', 'employment_date',
     'name', 'role', 'jobtitle', 'organisation', 'sector', 'job_family',
     'role_tag', 'skillset', 'geographic', 'country',
     'email', 'mobile', 'office', 'personal',
@@ -732,7 +713,6 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
         const k = normKeys[idx];
         let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
         if (v === '') v = null;
-        if ((k === 'project_date' || k === 'employment_date') && v != null) v = toISODate(v);
 	if (k === 'seniority' && v != null && String(v).trim() !== '') {
 	 const std = standardizeSeniority(v);
 	 v = std || null;
@@ -775,9 +755,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
 
     // Notify clients that new candidates were inserted (clients can choose to refetch)
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'bulk_insert', count: result.rowCount });
-      }
+      broadcastSSE('candidates_changed', { action: 'bulk_insert', count: result.rowCount });
     } catch (_) { /* ignore emit errors */ }
 
     res.json({ rowsInserted: result.rowCount });
@@ -826,9 +804,6 @@ app.get('/candidates', requireLogin, async (req, res) => {
         sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
         // type maps to product
         type: r.product ?? null,
-        // keep project_date accessible as both project_date and employment_date for UI compatibility
-        project_date: r.project_date ?? r.employment_date ?? null,
-        employment_date: r.employment_date ?? r.project_date ?? null,
         // personal: prefer the DB personal if present, otherwise fallback to canonicalized jobtitle
         personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : personalFallback
       };
@@ -978,10 +953,8 @@ app.delete('/candidates/:id', requireLogin, async (req, res) => {
 
     // Emit deletion event so connected clients can react if they listen
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidate_deleted', { id });
-        global.__io.emit('candidates_changed', { action: 'delete', ids: [id] });
-      }
+      broadcastSSE('candidate_deleted', { id });
+      broadcastSSE('candidates_changed', { action: 'delete', ids: [id] });
     } catch (_) { /* ignore emit errors */ }
 
     res.json({ deleted: id });
@@ -1025,9 +998,7 @@ app.post('/candidates/bulk-delete', requireLogin, async (req, res) => {
 
     // emit event to notify clients
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'bulk_delete', ids: result.rows.map(r => r.id) });
-      }
+      broadcastSSE('candidates_changed', { action: 'bulk_delete', ids: result.rows.map(r => r.id) });
     } catch (_) { /* ignore */ }
 
     res.json({ deletedCount: result.rowCount, attempted: cleanIds.length, ids: result.rows.map(r => r.id) });
@@ -1062,9 +1033,7 @@ app.post('/generate-skillsets', requireLogin, async (req, res) => {
 
     // Let clients know skillsets changed (they can refetch)
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'skillset_update', count: updatedCount });
-      }
+      broadcastSSE('candidates_changed', { action: 'skillset_update', count: updatedCount });
     } catch (_) { /* ignore */ }
 
     res.json({ message: `Skillsets generated for ${updatedCount} process rows.` });
@@ -1104,10 +1073,6 @@ app.post('/candidates', requireLogin, async (req, res) => {
     sourcingstatus: 'sourcingstatus',
 
     // same-name fields
-    project_title: 'project_title',
-    project_date: 'project_date',
-    project_name: 'project_name',
-    employment_date: 'employment_date',
     name: 'name',
     sector: 'sector',
     role_tag: 'role_tag',
@@ -1134,10 +1099,6 @@ app.post('/candidates', requireLogin, async (req, res) => {
   if (!Object.prototype.hasOwnProperty.call(createFieldMap, key)) continue;
   let col = createFieldMap[key];
   let val = body[key];
-
-  if ((key === 'project_date' || key === 'employment_date') && val != null && val !== '') {
-    val = toISODate(val) || val;
-  }
 
   // Canonicalize seniority on create
   if (key === 'seniority' && val != null && String(val).trim() !== '') {
@@ -1215,17 +1176,13 @@ app.post('/candidates', requireLogin, async (req, res) => {
       job_family: fresh.job_family ?? fresh.jobfamily ?? null,
       sourcing_status: fresh.sourcing_status ?? fresh.sourcingstatus ?? null,
       type: fresh.product ?? null,
-      project_date: fresh.project_date ?? fresh.employment_date ?? null,
-      employment_date: fresh.employment_date ?? fresh.project_date ?? null,
       personal: (fresh.personal && String(fresh.personal).trim()) ? String(fresh.personal).trim() : (fresh.jobtitle ? canonicalJobTitle(fresh.jobtitle) : null)
     };
 
     // Emit creation event
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidate_created', mapped);
-        global.__io.emit('candidates_changed', { action: 'create', id: mapped.id });
-      }
+      broadcastSSE('candidate_created', mapped);
+      broadcastSSE('candidates_changed', { action: 'create', id: mapped.id });
     } catch (_) { /* ignore */ }
 
     res.status(201).json(mapped);
@@ -1267,10 +1224,6 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
 
     // same-name fields
     name: 'name',
-    project_title: 'project_title',
-    project_date: 'project_date',
-    project_name: 'project_name',
-    employment_date: 'employment_date',
     sector: 'sector',
     role_tag: 'role_tag',
     skillset: 'skillset',
@@ -1297,9 +1250,6 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     for (const k of keys) {
       const col = fieldMap[k];
       let v = body[k];
-      if ((k === 'project_date' || k === 'employment_date') && v != null && v !== '') {
-        try { v = toISODate(v) || v; } catch (e) { /* ignore */ }
-      }
       if (k === 'seniority' && v != null && String(v).trim() !== '') {
         const std = standardizeSeniority(v);
         v = std || null;
@@ -1353,16 +1303,12 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       job_family: r.job_family ?? r.jobfamily ?? null,
       sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
       type: r.product ?? null, // return product as type for frontend
-      project_date: r.project_date ?? r.employment_date ?? null,
-      employment_date: r.employment_date ?? r.project_date ?? null,
       personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null)
     };
 
-    // Emit candidate_updated via socket if io is available
+    // Emit candidate_updated via SSE if connections exist
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidate_updated', mapped);
-      }
+      broadcastSSE('candidate_updated', mapped);
     } catch (e) {
       // ignore socket emit errors
     }
@@ -1490,9 +1436,7 @@ app.post('/candidates/:id/calculate-unmatched', requireLogin, async (req, res) =
 
         // Emit update
         try {
-            if (global.__io && typeof global.__io.emit === 'function') {
-              global.__io.emit('candidate_updated', mapped);
-            }
+            broadcastSSE('candidate_updated', mapped);
         } catch (_) {}
 
         res.json({ lskillset: unmatchedStr, fullUpdate: mapped });
@@ -1594,10 +1538,6 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
     jobfamily: 'jobfamily',
     sourcingstatus: 'sourcingstatus',
     name: 'name',
-    project_title: 'project_title',
-    project_date: 'project_date',
-    project_name: 'project_name',
-    employment_date: 'employment_date',
     sector: 'sector',
     role_tag: 'role_tag',
     skillset: 'skillset',
@@ -1641,9 +1581,6 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
       for (const k of keys) {
         const col = fieldMap[k];
         let v = item[k];
-        if ((k === 'project_date' || k === 'employment_date') && v != null && v !== '') {
-          try { v = toISODate(v) || v; } catch (e) { /* ignore */ }
-        }
         if (k === 'seniority' && v != null && String(v).trim() !== '') {
           const std = standardizeSeniority(v);
           v = std || null;
@@ -1687,8 +1624,6 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
           job_family: r.job_family ?? r.jobfamily ?? null,
           sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
           type: r.product ?? null,
-          project_date: r.project_date ?? r.employment_date ?? null,
-          employment_date: r.employment_date ?? r.project_date ?? null,
           personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null),
           jskillset: r.jskillset ?? null
         };
@@ -1699,11 +1634,9 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
 
     // Emit change notification
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'bulk_update', count: updatedRows.length });
-        for (const u of updatedRows) {
-          global.__io.emit('candidate_updated', u);
-        }
+      broadcastSSE('candidates_changed', { action: 'bulk_update', count: updatedRows.length });
+      for (const u of updatedRows) {
+        broadcastSSE('candidate_updated', u);
       }
     } catch (e) { /* ignore */ }
 
@@ -2949,29 +2882,52 @@ app.get('/auth/google/callback', requireLogin, async (req, res) => {
 
 // ========================= END DASHBOARD API =========================
 
-// Create HTTP server and attach Socket.IO
-const server = http.createServer(app);
-let io;
-try {
-  const { Server } = require('socket.io');
-  io = new Server(server, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
+// SSE Connection Management
+const sseConnections = new Set();
+
+function broadcastSSE(event, data) {
+  const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  sseConnections.forEach(client => {
+    try {
+      client.write(message);
+    } catch (e) {
+      // Log error with full context for debugging
+      console.warn(`[SSE] Error broadcasting event '${event}' to client:`, e);
+      sseConnections.delete(client);
     }
   });
-  // attach to global so handlers above can emit without closure ref
-  global.__io = io;
-
-  io.on('connection', (socket) => {
-    console.log('[SOCKET] client connected', socket.id);
-    socket.on('disconnect', () => {
-      console.log('[SOCKET] client disconnected', socket.id);
-    });
-  });
-} catch (e) {
-  console.warn('[WARN] socket.io not available; real-time notifications disabled.');
 }
+
+// SSE Endpoint for real-time updates
+app.get('/api/events', (req, res) => {
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  // Use the same CORS origins as the rest of the app
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.flushHeaders();
+
+  // Add this connection to the set
+  sseConnections.add(res);
+  console.log('[SSE] client connected, total:', sseConnections.size);
+
+  // Send initial connection confirmation
+  res.write(`event: connected\ndata: ${JSON.stringify({ message: 'Connected to SSE' })}\n\n`);
+
+  // Clean up on client disconnect
+  req.on('close', () => {
+    sseConnections.delete(res);
+    console.log('[SSE] client disconnected, total:', sseConnections.size);
+  });
+});
+
+// Create HTTP server
+const server = http.createServer(app);
 
 // START SERVER
 server.listen(port, () => {

@@ -7,6 +7,13 @@ import { Tree, TreeNode } from 'react-organizational-chart';
 import './sourcing_verify.css'; // switched to Sourcing_Verify theme
 // Admin feature removed (AdminUploadButton not imported)
 
+/* ========================= CONSTANTS ========================= */
+// SSE Configuration
+const SSE_RECONNECT_BASE_DELAY_MS = 1000;
+const SSE_RECONNECT_MAX_DELAY_MS = 30000;
+const SSE_MAX_RECONNECT_ATTEMPTS = 5;
+const API_PORT = 4000;
+
 /* ========================= HELPERS ========================= */
 function isHumanName(name) {
   if (!name || typeof name !== 'string') return false;
@@ -2586,13 +2593,7 @@ function CandidateUpload({ onUpload }) {
   };
 
   const mapRow = (row) => {
-    const pTitle = first(row, 'Project_Title', 'Project Title', 'project_title', 'project_name', 'Project Name') || '';
-    const pDateRaw = first(row, 'Project_Date', 'Project Date', 'project_date', 'employment_date', 'Employment Date') ?? null;
     return {
-      project_title: pTitle,
-      project_date: pDateRaw,
-      project_name: first(row, 'project_name', 'Project Name') ?? pTitle,
-      employment_date: first(row, 'employment_date', 'Employment Date') ?? pDateRaw,
       type: first(row, 'type', 'Type', 'product', 'Product') || '',
       name: first(row, 'name', 'Name') || '',
       role: first(row, 'role', 'Role') || '',
@@ -2833,43 +2834,92 @@ export default function App() {
       .then(() => setUser(null));
   };
 
-  // Socket & Autosave setup (only if logged in)
-  const socketRef = useRef(null);
+  // SSE & Autosave setup (only if logged in)
+  const eventSourceRef = useRef(null);
   const pendingSavesRef = useRef(new Map()); // id -> timeout
+  const reconnectTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!user) return;
     let mounted = true;
-    (async () => {
+    let reconnectAttempts = 0;
+
+    const connectSSE = () => {
+      if (!mounted) return;
+
       try {
-        const mod = await import('socket.io-client').catch(() => null);
-        if (!mounted || !mod) return;
-        const { io } = mod;
-        const sock = io('http://localhost:4000');
-        socketRef.current = sock;
-        sock.on('connect', () => {
-          console.log('[SOCKET] connected', sock.id);
+        // Use relative URL or environment-based URL
+        // For production, use the same protocol/host without explicit port
+        const sseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+          ? `http://localhost:${API_PORT}/api/events`
+          : `${window.location.protocol}//${window.location.host}/api/events`;
+
+        const eventSource = new EventSource(sseUrl);
+        eventSourceRef.current = eventSource;
+
+        eventSource.addEventListener('connected', (e) => {
+          console.log('[SSE] connected', e.data);
+          reconnectAttempts = 0; // Reset on successful connection
         });
-        sock.on('candidate_updated', (updated) => {
-          if (!updated || updated.id == null) return;
-          setCandidates(prev => {
-            const exists = prev.some(c => String(c.id) === String(updated.id));
-            if (!exists) return prev;
-            return prev.map(c => (String(c.id) === String(updated.id) ? { ...c, ...updated } : c));
-          });
-          setEditRows(prev => ({ ...(prev || {}), [updated.id]: { ...(prev[updated.id] || {}), ...updated } }));
-          // Update resume candidate in view if selected
-          setResumeCandidate(prev => (prev && String(prev.id) === String(updated.id) ? { ...prev, ...updated } : prev));
+
+        eventSource.addEventListener('candidate_updated', (e) => {
+          try {
+            const updated = JSON.parse(e.data);
+            if (!updated || updated.id == null) return;
+            setCandidates(prev => {
+              const exists = prev.some(c => String(c.id) === String(updated.id));
+              if (!exists) return prev;
+              return prev.map(c => (String(c.id) === String(updated.id) ? { ...c, ...updated } : c));
+            });
+            setEditRows(prev => ({ ...(prev || {}), [updated.id]: { ...(prev[updated.id] || {}), ...updated } }));
+            // Update resume candidate in view if selected
+            setResumeCandidate(prev => (prev && String(prev.id) === String(updated.id) ? { ...prev, ...updated } : prev));
+          } catch (err) {
+            console.warn('[SSE] Error parsing candidate_updated:', err);
+          }
         });
-        sock.on('candidates_changed', (payload) => {
-          // simple reaction: refetch list
-          fetchCandidates();
+
+        eventSource.addEventListener('candidates_changed', (e) => {
+          try {
+            const payload = JSON.parse(e.data);
+            console.log('[SSE] candidates_changed:', payload);
+            // simple reaction: refetch list
+            fetchCandidates();
+          } catch (err) {
+            console.warn('[SSE] Error parsing candidates_changed:', err);
+          }
         });
+
+        eventSource.onerror = (err) => {
+          console.warn('[SSE] connection error', err);
+          eventSource.close();
+
+          // Implement exponential backoff reconnection
+          if (mounted && reconnectAttempts < SSE_MAX_RECONNECT_ATTEMPTS) {
+            const delay = Math.min(SSE_RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts), SSE_RECONNECT_MAX_DELAY_MS);
+            reconnectAttempts++;
+            console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${SSE_MAX_RECONNECT_ATTEMPTS})`);
+            reconnectTimeoutRef.current = setTimeout(connectSSE, delay);
+          } else if (reconnectAttempts >= SSE_MAX_RECONNECT_ATTEMPTS) {
+            console.error('[SSE] Max reconnection attempts reached');
+          }
+        };
       } catch (e) {
-        console.warn('[SOCKET] connection failed', e && e.message);
+        console.warn('[SSE] connection failed', e && e.message);
       }
-    })();
-    return () => { mounted = false; try { socketRef.current?.disconnect(); } catch {} };
+    };
+
+    connectSSE();
+
+    return () => {
+      mounted = false;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      try {
+        eventSourceRef.current?.close();
+      } catch {}
+    };
     // eslint-disable-next-line
   }, [user]);
 
