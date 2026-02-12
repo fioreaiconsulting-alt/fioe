@@ -2892,7 +2892,7 @@ function broadcastSSE(event, data) {
       client.write(message);
     } catch (e) {
       // Log error with full context for debugging
-      console.warn('[SSE] Error broadcasting to client:', e);
+      console.warn(`[SSE] Error broadcasting event '${event}' to client:`, e);
       sseConnections.delete(client);
     }
   });

@@ -2849,9 +2849,10 @@ export default function App() {
 
       try {
         // Use relative URL or environment-based URL
+        // For production, use the same protocol/host without explicit port
         const sseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
           ? `http://localhost:${API_PORT}/api/events`
-          : `${window.location.protocol}//${window.location.hostname}:${API_PORT}/api/events`;
+          : `${window.location.protocol}//${window.location.host}/api/events`;
 
         const eventSource = new EventSource(sseUrl);
         eventSourceRef.current = eventSource;
@@ -2895,8 +2896,8 @@ export default function App() {
 
           // Implement exponential backoff reconnection
           if (mounted && reconnectAttempts < SSE_MAX_RECONNECT_ATTEMPTS) {
-            reconnectAttempts++;
             const delay = Math.min(SSE_RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts), SSE_RECONNECT_MAX_DELAY_MS);
+            reconnectAttempts++;
             console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${SSE_MAX_RECONNECT_ATTEMPTS})`);
             reconnectTimeoutRef.current = setTimeout(connectSSE, delay);
           } else if (reconnectAttempts >= SSE_MAX_RECONNECT_ATTEMPTS) {
