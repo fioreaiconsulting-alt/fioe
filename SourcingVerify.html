@@ -471,10 +471,13 @@ function switchTab(tabId) {
         }
     } else if(tabId === 'tab-details') {
         document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
-        // Refresh data when switching to View Details tab
-        if (typeof refreshData === 'function') {
-            refreshData();
-        }
+        // Trigger 1-second auto refresh by simulating click on View Details Refresh button
+        setTimeout(() => {
+            const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
+            if (viewDetailsRefreshBtn) {
+                viewDetailsRefreshBtn.click();
+            }
+        }, 1000); // 1-second delay as required
     } else if (tabId === 'tab-research') {
         document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
         // Trigger Deep Research logic when tab is activated to ensure data is present
@@ -1851,9 +1854,13 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
                 }
             } catch(e) {}
             
+            // Get username and userid from session (consistent with bulk assessment)
+            const userid = window.__SV_ACTIVE_USERID || '';
+            const username = window.__SV_ACTIVE_USERNAME || '';
+            
             const payload = {
                 name, company, role: jobtitle, country, linkedinurl,
-                rating, experience
+                rating, experience, userid, username
             };
             
             const ok = await transferSingleRecordToMarket(payload);
