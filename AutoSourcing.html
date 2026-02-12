@@ -2496,19 +2496,23 @@ function updateSectorEnabledState(){
               try {
                 await fetchSuggestions(true);
                 
-                // NEW: Always auto-select the two closest suggested job titles to broaden the talent pool
-                // This happens regardless of whether the JD provided a job title or not
+                // NEW: Always ensure 2 job titles total to broaden the talent pool
+                // - If JD provides a title: Use JD title + 1 suggested title (total = 2)
+                // - If no JD title: Use 2 suggested titles (total = 2)
                 try {
                   // Wait a moment for suggestions to be rendered
                   await new Promise(resolve => setTimeout(resolve, 100));
                   
-                  // Get up to 2 suggested job titles from lastGeneralSuggestions or the rendered grid
+                  // Determine how many suggested titles to add based on whether JD provided a title
+                  const numSuggestionsToAdd = hasJobTitleInJD ? 1 : 2;
+                  
+                  // Get suggested job titles from lastGeneralSuggestions or the rendered grid
                   let suggestedJobs = [];
                   
                   // Try to get from lastGeneralSuggestions data (preferred source)
                   if (lastGeneralSuggestions && lastGeneralSuggestions.job && lastGeneralSuggestions.job.related && lastGeneralSuggestions.job.related.length > 0) {
-                    // Take the first 2 suggestions
-                    const suggestions = lastGeneralSuggestions.job.related.slice(0, 2);
+                    // Take the required number of suggestions
+                    const suggestions = lastGeneralSuggestions.job.related.slice(0, numSuggestionsToAdd);
                     suggestedJobs = suggestions.map(s => normalizeSpaces(s)).filter(s => s);
                   }
                   
@@ -2516,12 +2520,12 @@ function updateSectorEnabledState(){
                   if (suggestedJobs.length === 0) {
                     const jobGrid = document.getElementById('jobTitleSuggestionsGrid');
                     if (jobGrid && jobGrid.children.length > 0) {
-                      const chips = Array.from(jobGrid.children).slice(0, 2);
+                      const chips = Array.from(jobGrid.children).slice(0, numSuggestionsToAdd);
                       suggestedJobs = chips.map(chip => normalizeSpaces(chip.textContent)).filter(s => s);
                     }
                   }
                   
-                  // Add the suggested job titles (up to 2) if found and not already present
+                  // Add the suggested job titles if found and not already present
                   let addedCount = 0;
                   for (const suggestedJob of suggestedJobs) {
                     if (suggestedJob && !jobTitleIndex.has(canonicalKey(suggestedJob))) {
