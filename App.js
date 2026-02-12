@@ -2586,13 +2586,7 @@ function CandidateUpload({ onUpload }) {
   };
 
   const mapRow = (row) => {
-    const pTitle = first(row, 'Project_Title', 'Project Title', 'project_title', 'project_name', 'Project Name') || '';
-    const pDateRaw = first(row, 'Project_Date', 'Project Date', 'project_date', 'employment_date', 'Employment Date') ?? null;
     return {
-      project_title: pTitle,
-      project_date: pDateRaw,
-      project_name: first(row, 'project_name', 'Project Name') ?? pTitle,
-      employment_date: first(row, 'employment_date', 'Employment Date') ?? pDateRaw,
       type: first(row, 'type', 'Type', 'product', 'Product') || '',
       name: first(row, 'name', 'Name') || '',
       role: first(row, 'role', 'Role') || '',
