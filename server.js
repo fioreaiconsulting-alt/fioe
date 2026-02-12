@@ -754,9 +754,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
 
     // Notify clients that new candidates were inserted (clients can choose to refetch)
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'bulk_insert', count: result.rowCount });
-      }
+      broadcastSSE('candidates_changed', { action: 'bulk_insert', count: result.rowCount });
     } catch (_) { /* ignore emit errors */ }
 
     res.json({ rowsInserted: result.rowCount });
@@ -954,10 +952,8 @@ app.delete('/candidates/:id', requireLogin, async (req, res) => {
 
     // Emit deletion event so connected clients can react if they listen
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidate_deleted', { id });
-        global.__io.emit('candidates_changed', { action: 'delete', ids: [id] });
-      }
+      broadcastSSE('candidate_deleted', { id });
+      broadcastSSE('candidates_changed', { action: 'delete', ids: [id] });
     } catch (_) { /* ignore emit errors */ }
 
     res.json({ deleted: id });
@@ -1001,9 +997,7 @@ app.post('/candidates/bulk-delete', requireLogin, async (req, res) => {
 
     // emit event to notify clients
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'bulk_delete', ids: result.rows.map(r => r.id) });
-      }
+      broadcastSSE('candidates_changed', { action: 'bulk_delete', ids: result.rows.map(r => r.id) });
     } catch (_) { /* ignore */ }
 
     res.json({ deletedCount: result.rowCount, attempted: cleanIds.length, ids: result.rows.map(r => r.id) });
@@ -1038,9 +1032,7 @@ app.post('/generate-skillsets', requireLogin, async (req, res) => {
 
     // Let clients know skillsets changed (they can refetch)
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'skillset_update', count: updatedCount });
-      }
+      broadcastSSE('candidates_changed', { action: 'skillset_update', count: updatedCount });
     } catch (_) { /* ignore */ }
 
     res.json({ message: `Skillsets generated for ${updatedCount} process rows.` });
@@ -1188,10 +1180,8 @@ app.post('/candidates', requireLogin, async (req, res) => {
 
     // Emit creation event
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidate_created', mapped);
-        global.__io.emit('candidates_changed', { action: 'create', id: mapped.id });
-      }
+      broadcastSSE('candidate_created', mapped);
+      broadcastSSE('candidates_changed', { action: 'create', id: mapped.id });
     } catch (_) { /* ignore */ }
 
     res.status(201).json(mapped);
@@ -1317,11 +1307,9 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null)
     };
 
-    // Emit candidate_updated via socket if io is available
+    // Emit candidate_updated via SSE if connections exist
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidate_updated', mapped);
-      }
+      broadcastSSE('candidate_updated', mapped);
     } catch (e) {
       // ignore socket emit errors
     }
@@ -1449,9 +1437,7 @@ app.post('/candidates/:id/calculate-unmatched', requireLogin, async (req, res) =
 
         // Emit update
         try {
-            if (global.__io && typeof global.__io.emit === 'function') {
-              global.__io.emit('candidate_updated', mapped);
-            }
+            broadcastSSE('candidate_updated', mapped);
         } catch (_) {}
 
         res.json({ lskillset: unmatchedStr, fullUpdate: mapped });
@@ -1648,11 +1634,9 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
 
     // Emit change notification
     try {
-      if (global.__io && typeof global.__io.emit === 'function') {
-        global.__io.emit('candidates_changed', { action: 'bulk_update', count: updatedRows.length });
-        for (const u of updatedRows) {
-          global.__io.emit('candidate_updated', u);
-        }
+      broadcastSSE('candidates_changed', { action: 'bulk_update', count: updatedRows.length });
+      for (const u of updatedRows) {
+        broadcastSSE('candidate_updated', u);
       }
     } catch (e) { /* ignore */ }
 
@@ -2898,29 +2882,46 @@ app.get('/auth/google/callback', requireLogin, async (req, res) => {
 
 // ========================= END DASHBOARD API =========================
 
-// Create HTTP server and attach Socket.IO
-const server = http.createServer(app);
-let io;
-try {
-  const { Server } = require('socket.io');
-  io = new Server(server, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
+// SSE Connection Management
+const sseConnections = new Set();
+
+function broadcastSSE(event, data) {
+  const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  sseConnections.forEach(client => {
+    try {
+      client.write(message);
+    } catch (e) {
+      // Remove failed connections
+      sseConnections.delete(client);
     }
   });
-  // attach to global so handlers above can emit without closure ref
-  global.__io = io;
-
-  io.on('connection', (socket) => {
-    console.log('[SOCKET] client connected', socket.id);
-    socket.on('disconnect', () => {
-      console.log('[SOCKET] client disconnected', socket.id);
-    });
-  });
-} catch (e) {
-  console.warn('[WARN] socket.io not available; real-time notifications disabled.');
 }
+
+// SSE Endpoint for real-time updates
+app.get('/api/events', (req, res) => {
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+
+  // Add this connection to the set
+  sseConnections.add(res);
+  console.log('[SSE] client connected, total:', sseConnections.size);
+
+  // Send initial connection confirmation
+  res.write(`event: connected\ndata: ${JSON.stringify({ message: 'Connected to SSE' })}\n\n`);
+
+  // Clean up on client disconnect
+  req.on('close', () => {
+    sseConnections.delete(res);
+    console.log('[SSE] client disconnected, total:', sseConnections.size);
+  });
+});
+
+// Create HTTP server
+const server = http.createServer(app);
 
 // START SERVER
 server.listen(port, () => {
