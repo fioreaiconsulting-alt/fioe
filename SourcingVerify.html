@@ -1539,7 +1539,7 @@ async function runBulkAssessmentFromSearch() {
     }
     
     const statusEl = document.getElementById('status');
-    const btn = document.getElementById('searchRunBulkBtn');
+    const btn = document.getElementById('bulkAssessmentBtn');  // Updated to new combined button
     const progressContainer = document.getElementById('searchBulkProgressContainer');
     const progressBar = document.getElementById('searchBulkProgressBar');
     const progressPercent = document.getElementById('searchBulkProgressPercent');
@@ -1556,7 +1556,7 @@ async function runBulkAssessmentFromSearch() {
     // Disable all buttons during bulk assessment
     setSearchResultButtonsEnabled(false);
     
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
     const totalProfiles = linkedinurls.length + alreadyAssessedUrls.length;
     const statusMsg = useL2 ? 
         `Starting bulk L2 assessment (${linkedinurls.length}/${totalProfiles} profiles, ${alreadyAssessedUrls.length} already assessed)...` :
@@ -1607,7 +1607,7 @@ async function runBulkAssessmentFromSearch() {
                         
                         // Re-enable all buttons when bulk assessment completes
                         setSearchResultButtonsEnabled(true);
-                        btn.disabled = false;
+                        if (btn) btn.disabled = false;
                         
                         if (pollData.status === 'done') {
                             if(statusEl) setStatus('Bulk assessment complete!', 'success');
@@ -1693,7 +1693,7 @@ async function runBulkAssessmentFromSearch() {
                     
                     // Re-enable all buttons on error
                     setSearchResultButtonsEnabled(true);
-                    btn.disabled = false;
+                    if (btn) btn.disabled = false;
                     if(progressContainer) progressContainer.style.display = 'none';
                 }
             }, 2000);
@@ -1702,7 +1702,7 @@ async function runBulkAssessmentFromSearch() {
             
             // Re-enable all buttons on failure
             setSearchResultButtonsEnabled(true);
-            btn.disabled = false;
+            if (btn) btn.disabled = false;
             if(progressContainer) progressContainer.style.display = 'none';
         }
     } catch(e) {
@@ -1711,7 +1711,7 @@ async function runBulkAssessmentFromSearch() {
         
         // Re-enable all buttons on exception
         setSearchResultButtonsEnabled(true);
-        btn.disabled = false;
+        if (btn) btn.disabled = false;
         if(progressContainer) progressContainer.style.display = 'none';
     }
 }
