@@ -1468,6 +1468,14 @@ async function finalizeBulk(action, specificList = null) {
 
 // New functions for Search Result tab bulk assessment controls
 
+// Helper function to clean unwanted characters from names
+function cleanNameForUpload(name) {
+    if (!name) return '';
+    // Remove unwanted characters like δïÿ and other special Unicode characters
+    // Keep only letters, numbers, spaces, and common punctuation (.,'-/)
+    return name.replace(/[^\p{L}\p{N}\s.,'\-\/]/gu, '').trim();
+}
+
 // Helper function to disable/enable all action buttons during bulk operations
 function setSearchResultButtonsEnabled(enabled) {
     const buttons = [
@@ -3035,7 +3043,11 @@ function buildRow(row) {
                     /* AFFECTED: Pass name for insertion */
                     const nameCell = tr.querySelector('td[data-field="name"]');
                     const candName = nameCell ? nameCell.textContent.trim() : '';
-                    if(candName) fd.append('name', candName);
+                    if(candName) {
+                        // Clean unwanted characters before uploading
+                        const cleanedName = cleanNameForUpload(candName);
+                        fd.append('name', cleanedName);
+                    }
 
                     const uid = window.__SV_ACTIVE_USERID || '';
                     if (uid) fd.append('userid', uid);
@@ -3094,9 +3106,13 @@ function buildRow(row) {
                                 persistCompletedDetailRow(value);
                                 
                                 // Auto-refresh after individual assessment completion
-                                if (typeof refreshData === 'function') {
-                                    refreshData();
-                                }
+                                // Wait 1 second then simulate click on Refresh button
+                                setTimeout(() => {
+                                    const reloadBtn = document.getElementById('reloadBtn');
+                                    if (reloadBtn) {
+                                        reloadBtn.click();
+                                    }
+                                }, 1000);
 
                             } else {
                                 browseBtn.textContent = 'Upload CV';
@@ -3132,6 +3148,11 @@ function buildRow(row) {
           btn.disabled = false;
           btn.classList.add('assessment-complete');
           btn.title = "Assessment Complete - Click to View";
+          btn.onclick = () => { 
+            if (window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
+              window.__sv_namecard.toggleNameCard(tr);
+            }
+          };
           try { persistDisabledDetailRow(row.linkedinurl); } catch(_) {}
           td.appendChild(btn);
           return td;
@@ -4817,9 +4838,13 @@ function renderTable(){
                 if(typeof setStatus === 'function') setStatus(`${assessmentMode} Assessment Complete`, 'success');
                 
                 // Auto-refresh after individual assessment completion
-                if (typeof refreshData === 'function') {
-                    refreshData();
-                }
+                // Wait 1 second then simulate click on Refresh button
+                setTimeout(() => {
+                    const reloadBtn = document.getElementById('reloadBtn');
+                    if (reloadBtn) {
+                        reloadBtn.click();
+                    }
+                }, 1000);
             } else {
                 assessBtn2.textContent = 'Failed';
                 assessBtn2.disabled = false;
@@ -4880,7 +4905,11 @@ function renderTable(){
       if (uid) fd.append('userid', uid);
       
       // AFFECTED: Pass name explicitly for process table insertion
-      if (name && name !== '—') fd.append('name', name);
+      if (name && name !== '—') {
+        // Clean unwanted characters before uploading
+        const cleanedName = cleanNameForUpload(name);
+        fd.append('name', cleanedName);
+      }
 
       try {
         const res = await fetch(API_UPLOAD_CV, {
@@ -4966,9 +4995,13 @@ function renderTable(){
                     await performCombinedAssessment(tr, anchor, analyzeData, useL2);
                     
                     // Auto-refresh after individual assessment completion
-                    if (typeof refreshData === 'function') {
-                        refreshData();
-                    }
+                    // Wait 1 second then simulate click on Refresh button
+                    setTimeout(() => {
+                        const reloadBtn = document.getElementById('reloadBtn');
+                        if (reloadBtn) {
+                            reloadBtn.click();
+                        }
+                    }, 1000);
                 } catch(e) {
                     console.error("Assessment failed after upload", e);
                     if (btn) {
