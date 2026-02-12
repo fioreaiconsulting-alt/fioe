@@ -39,8 +39,9 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use('/image', express.static(path.join(__dirname, 'image')));
 
 // Update CORS to allow credentials (cookies)
+const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'];
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'], // Added 8000 for standard python test server
+  origin: allowedOrigins,
   credentials: true
 }));
 
@@ -2890,8 +2891,8 @@ function broadcastSSE(event, data) {
     try {
       client.write(message);
     } catch (e) {
-      // Log error and remove failed connections
-      console.warn('[SSE] Error broadcasting to client:', e.message);
+      // Log error with full context for debugging
+      console.warn('[SSE] Error broadcasting to client:', e);
       sseConnections.delete(client);
     }
   });
@@ -2905,7 +2906,6 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   // Use the same CORS origins as the rest of the app
   const origin = req.headers.origin;
-  const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'];
   if (allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');

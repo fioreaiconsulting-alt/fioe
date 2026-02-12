@@ -7,6 +7,13 @@ import { Tree, TreeNode } from 'react-organizational-chart';
 import './sourcing_verify.css'; // switched to Sourcing_Verify theme
 // Admin feature removed (AdminUploadButton not imported)
 
+/* ========================= CONSTANTS ========================= */
+// SSE Configuration
+const SSE_RECONNECT_BASE_DELAY_MS = 1000;
+const SSE_RECONNECT_MAX_DELAY_MS = 30000;
+const SSE_MAX_RECONNECT_ATTEMPTS = 5;
+const API_PORT = 4000;
+
 /* ========================= HELPERS ========================= */
 function isHumanName(name) {
   if (!name || typeof name !== 'string') return false;
@@ -2836,7 +2843,6 @@ export default function App() {
     if (!user) return;
     let mounted = true;
     let reconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
 
     const connectSSE = () => {
       if (!mounted) return;
@@ -2844,8 +2850,8 @@ export default function App() {
       try {
         // Use relative URL or environment-based URL
         const sseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-          ? 'http://localhost:4000/api/events'
-          : `${window.location.protocol}//${window.location.hostname}:4000/api/events`;
+          ? `http://localhost:${API_PORT}/api/events`
+          : `${window.location.protocol}//${window.location.hostname}:${API_PORT}/api/events`;
 
         const eventSource = new EventSource(sseUrl);
         eventSourceRef.current = eventSource;
@@ -2888,12 +2894,12 @@ export default function App() {
           eventSource.close();
 
           // Implement exponential backoff reconnection
-          if (mounted && reconnectAttempts < maxReconnectAttempts) {
+          if (mounted && reconnectAttempts < SSE_MAX_RECONNECT_ATTEMPTS) {
             reconnectAttempts++;
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); // Max 30s
-            console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+            const delay = Math.min(SSE_RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts), SSE_RECONNECT_MAX_DELAY_MS);
+            console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${SSE_MAX_RECONNECT_ATTEMPTS})`);
             reconnectTimeoutRef.current = setTimeout(connectSSE, delay);
-          } else if (reconnectAttempts >= maxReconnectAttempts) {
+          } else if (reconnectAttempts >= SSE_MAX_RECONNECT_ATTEMPTS) {
             console.error('[SSE] Max reconnection attempts reached');
           }
         };
