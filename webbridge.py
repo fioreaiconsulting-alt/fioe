@@ -5246,11 +5246,12 @@ def process_upload_multiple_cvs():
         
         def clean_name_for_display(s):
             """Clean special characters and artifacts from names for display.
-            Removes non-printable characters, special Unicode artifacts, and normalizes whitespace."""
+            Removes non-printable characters, special Unicode artifacts, and normalizes whitespace.
+            Preserves valid Unicode letters for international names."""
             if not s:
                 return s
-            # Remove non-printable characters and special artifacts like δïÿ
-            # Keep only ASCII letters, spaces, hyphens, apostrophes, and periods (common in names)
+            # Remove non-printable characters and known problematic sequences
+            # Allow Unicode letters (including international characters) plus common name punctuation
             cleaned = ''.join(char for char in s if char.isprintable() and (char.isalpha() or char in ' -.\','))
             # Normalize multiple spaces to single space
             cleaned = re.sub(r'\s+', ' ', cleaned)

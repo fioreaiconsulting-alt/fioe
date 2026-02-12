@@ -785,6 +785,15 @@ function updateUploadButtonToView(linkedinurl) {
 // Total: 200ms balances reliability vs UI responsiveness
 const CACHE_UPDATE_DELAY_MS = 200;
 
+// BACKEND_PROCESSING_BUFFER_MS: Additional delay to allow backend processing to complete after assessment.
+// Ensures skillset and product data are fully processed and available in database before View Details refresh.
+// Value of 1000ms accounts for:
+// - CV analysis and skillset extraction (typically 300-700ms)
+// - Database write operations (typically 50-200ms)
+// - Network latency for subsequent fetch (typically 100-200ms)
+// Total: 1000ms ensures data availability without excessive delay
+const BACKEND_PROCESSING_BUFFER_MS = 1000;
+
 /* Helper: Auto-refresh View Details tab if currently active and viewing a profile */
 function autoRefreshViewDetailsIfActive() {
     // Capture current profile row reference to prevent race conditions
@@ -809,12 +818,12 @@ function autoRefreshViewDetailsIfActive() {
         }
         
         // Re-render the captured profile to show updated assessment results
-        // Increased delay to allow backend processing to complete
+        // Use combined delay: cache update + backend processing buffer
         setTimeout(() => {
             if (typeof renderNameCardToTab === 'function') {
                 renderNameCardToTab(currentRow);
             }
-        }, CACHE_UPDATE_DELAY_MS + 1000); // Additional 1 second delay to ensure backend processing completes
+        }, CACHE_UPDATE_DELAY_MS + BACKEND_PROCESSING_BUFFER_MS);
     }
 }
 
