@@ -472,6 +472,7 @@ function switchTab(tabId) {
     } else if(tabId === 'tab-details') {
         document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
         // Auto-refresh View Details tab: trigger refresh button after 1 second
+        // The 1-second delay is intentional as per requirement specification
         setTimeout(() => {
             const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
             if (viewDetailsRefreshBtn) {

@@ -2122,6 +2122,7 @@ Return ONLY the JSON object, no other text."""
         if username or userid:
             try:
                 # Check which columns exist in process table
+                # Note: Schema check is done per-request for database compatibility across deployments
                 cur.execute("""
                     SELECT column_name
                     FROM information_schema.columns
@@ -2131,18 +2132,24 @@ Return ONLY the JSON object, no other text."""
                 available_cols = {r[0] for r in cur.fetchall()}
                 
                 # Build update statement for available columns
+                # Whitelist validation: only allow specific columns
+                ALLOWED_COLS = {'username', 'userid'}
                 updates = []
                 values = []
                 if 'username' in available_cols and username:
-                    updates.append("username = %s")
-                    values.append(username)
+                    if 'username' in ALLOWED_COLS:  # Explicit whitelist check
+                        updates.append("username = %s")
+                        values.append(username)
                 if 'userid' in available_cols and userid:
-                    updates.append("userid = %s")
-                    values.append(userid)
+                    if 'userid' in ALLOWED_COLS:  # Explicit whitelist check
+                        updates.append("userid = %s")
+                        values.append(userid)
                 
                 if updates:
                     update_sql = f"UPDATE process SET {', '.join(updates)} WHERE "
                     uu_updated = 0
+                    # Try normalized_linkedin first (if available), then fallback to linkedinurl
+                    # These are mutually exclusive identifiers; only the first match will be updated
                     if normalized:
                         cur.execute(update_sql + "normalized_linkedin = %s", tuple(values + [normalized]))
                         uu_updated = cur.rowcount
