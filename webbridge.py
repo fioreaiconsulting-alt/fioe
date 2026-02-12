@@ -1642,6 +1642,7 @@ def gemini_assess_profile():
     sector = (data.get("sector") or "").strip()
     experience_text = (data.get("experience_text") or "").strip()
     username = (data.get("username") or "").strip()
+    userid = (data.get("userid") or "").strip()  # Extract userid from payload
     custom_weights = data.get("custom_weights") or {}
     assessment_level = (data.get("assessment_level") or "L1").strip().upper()  # L1 or L2
     tenure = data.get("tenure")  # Average tenure value
@@ -2114,6 +2115,63 @@ Return ONLY the JSON object, no other text."""
 
             except Exception as e_js:
                 logger.warning(f"[Assess -> jskill] Sync failed: {e_js}")
+        # -----------------------------------------------------------------
+
+        # --- NEW: Ensure username and userid are persisted into process for this profile (best-effort) ---
+        try:
+            # normalized is already defined earlier in this function (initialized to None, then potentially updated)
+            # Use it directly without locals() check
+            normalized_path = normalized
+
+            # Resolve userid from login if we don't have one in the request
+            user_id_val = userid
+            if not user_id_val and username:
+                try:
+                    cur.execute("SELECT userid FROM login WHERE username=%s LIMIT 1", (username,))
+                    row_uid = cur.fetchone()
+                    if row_uid and row_uid[0]:
+                        user_id_val = str(row_uid[0])
+                except Exception:
+                    pass
+
+            # Only proceed if either username or userid is present
+            if (username or user_id_val):
+                # Check process columns existence
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='process' AND column_name IN ('username','userid')
+                """)
+                proc_cols = {r[0].lower() for r in cur.fetchall()}
+
+                update_parts = []
+                update_values = []
+                if 'username' in proc_cols and username:
+                    update_parts.append("username = %s")
+                    update_values.append(username)
+                if 'userid' in proc_cols and user_id_val:
+                    update_parts.append("userid = %s")
+                    update_values.append(user_id_val)
+
+                if update_parts:
+                    # Build WHERE clause - use both normalized_linkedin and linkedinurl
+                    # If normalized_path is None, only use linkedinurl to avoid matching NULL values
+                    if normalized_path:
+                        params = list(update_values) + [normalized_path, linkedinurl]
+                        # update_parts contains only hardcoded strings ('username = %s', 'userid = %s'), safe for f-string
+                        update_sql = f"UPDATE process SET {', '.join(update_parts)} WHERE normalized_linkedin = %s OR linkedinurl = %s"
+                    else:
+                        params = list(update_values) + [linkedinurl]
+                        update_sql = f"UPDATE process SET {', '.join(update_parts)} WHERE linkedinurl = %s"
+                    
+                    try:
+                        cur.execute(update_sql, tuple(params))
+                        conn.commit()
+                        logger.info(f"[Gemini Assess -> DB] Updated process username/userid for linkedin='{linkedinurl}' rows={cur.rowcount}")
+                    except psycopg2.Error as e_upd_ui:
+                        conn.rollback()
+                        logger.warning(f"[Gemini Assess -> DB] Failed to update username/userid: {e_upd_ui}")
+        except Exception as e_pui:
+            logger.warning(f"[Gemini Assess -> DB] Username/Userid persist attempt failed: {e_pui}")
         # -----------------------------------------------------------------
 
         cur.close(); conn.close()
@@ -5086,36 +5144,46 @@ def process_upload_cv():
             binary_cv = psycopg2.Binary(file_bytes)
             normalized = _normalize_linkedin_to_path(linkedinurl)
             
-            # --- PATCH START: Insert ID from sourcing into process if exists ---
+            # --- PATCH START: Insert ID, username, userid from sourcing into process if exists ---
             sourcing_id = None
+            sourcing_username = None
+            sourcing_userid = None
             try:
                 # Discover if we have 'id' column in process first
                 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='process' AND column_name='id'")
                 has_process_id = bool(cur.fetchone())
                 
-                if has_process_id:
-                    # Try to get id from sourcing table
-                    cur.execute("SELECT id FROM sourcing WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                # Try to get id, username, userid from sourcing table regardless of process id column
+                cur.execute("SELECT id, username, userid FROM sourcing WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                sid_row = cur.fetchone()
+                if not sid_row and normalized:
+                    cur.execute("SELECT id, username, userid FROM sourcing WHERE LOWER(linkedinurl) LIKE %s LIMIT 1", (f"%{normalized}%",))
                     sid_row = cur.fetchone()
-                    if not sid_row and normalized:
-                        cur.execute("SELECT id FROM sourcing WHERE LOWER(linkedinurl) LIKE %s LIMIT 1", (f"%{normalized}%",))
-                        sid_row = cur.fetchone()
-                    
-                    if sid_row:
-                        sourcing_id = sid_row[0]
+                
+                if sid_row:
+                    sourcing_id = sid_row[0] if has_process_id else None  # Set sourcing_id only if process table has id column
+                    sourcing_username = sid_row[1] if len(sid_row) > 1 else None
+                    sourcing_userid = sid_row[2] if len(sid_row) > 2 else None
             except Exception as e_id:
-                logger.warning(f"[Upload CV] Failed to lookup sourcing ID: {e_id}")
+                logger.warning(f"[Upload CV] Failed to lookup sourcing ID/username/userid: {e_id}")
             # --- PATCH END ---
 
             # Try updating by existing ID first if we found one
             updated = False
             
-            # AFFECTED: Prepare update fields including name if present
+            # AFFECTED: Prepare update fields including name, username, userid if present
             update_fields = ["cv = %s"]
             update_values = [binary_cv]
             if candidate_name:
                 update_fields.append("name = %s")
                 update_values.append(candidate_name)
+            # Add username and userid from sourcing to update
+            if sourcing_username:
+                update_fields.append("username = %s")
+                update_values.append(sourcing_username)
+            if sourcing_userid:
+                update_fields.append("userid = %s")
+                update_values.append(sourcing_userid)
             
             update_sql_fragment = ", ".join(update_fields)
 
@@ -5151,6 +5219,17 @@ def process_upload_cv():
                     if candidate_name:
                         cols.append("name")
                         vals.append(candidate_name)
+                        placeholders.append("%s")
+                    
+                    # Include username and userid from sourcing in insert
+                    if sourcing_username:
+                        cols.append("username")
+                        vals.append(sourcing_username)
+                        placeholders.append("%s")
+                    
+                    if sourcing_userid:
+                        cols.append("userid")
+                        vals.append(sourcing_userid)
                         placeholders.append("%s")
                     
                     if sourcing_id:

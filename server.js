@@ -609,17 +609,16 @@ function toISODate(value) {
 function normalizeIncomingRow(c) {
   // Canonical title/date from multiple spreadsheet header variants
   const pTitle = firstVal(c, ['Project_Title', 'Project Title', 'project_title', 'project_name', 'Project Name']) || '';
-  const pDateRaw = firstVal(c, ['Project_Date', 'Project Date', 'project_date', 'employment_date', 'Employment Date']) ?? null;
-  const pDateISO = toISODate(pDateRaw);
+  const dateRaw = firstVal(c, ['Project_Date', 'Project Date', 'employment_date', 'Employment Date']) ?? null;
+  const dateISO = toISODate(dateRaw);
 
   // Legacy aliases preserved for backward compatibility
   const legacyName = firstVal(c, ['project_name', 'Project Name']);
   const legacyDate = firstVal(c, ['employment_date', 'Employment Date']);
-  const employmentISO = toISODate(legacyDate ?? pDateRaw);
+  const employmentISO = toISODate(legacyDate ?? dateRaw);
 
   return {
     project_title: pTitle || '',
-    project_date: pDateISO,                   // DATE
     project_name: legacyName ?? pTitle,       // TEXT
     employment_date: employmentISO,           // DATE
     name: firstVal(c, ['name', 'Name']) || '',
@@ -648,7 +647,6 @@ function normalizeIncomingRow(c) {
 // Mapping from normalized candidate-style keys to process table columns
 const processColumnMap = {
   project_title: 'project_title',
-  project_date: 'project_date',
   project_name: 'project_name',
   employment_date: 'employment_date',
   name: 'name',
@@ -695,7 +693,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
 
   // Canonical + legacy insertion keys (normalized)
   const normKeys = [
-    'project_title', 'project_date',
+    'project_title',
     'project_name', 'employment_date',
     'name', 'role', 'jobtitle', 'organisation', 'sector', 'job_family',
     'role_tag', 'skillset', 'geographic', 'country',
@@ -732,7 +730,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
         const k = normKeys[idx];
         let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
         if (v === '') v = null;
-        if ((k === 'project_date' || k === 'employment_date') && v != null) v = toISODate(v);
+        if (k === 'employment_date' && v != null) v = toISODate(v);
 	if (k === 'seniority' && v != null && String(v).trim() !== '') {
 	 const std = standardizeSeniority(v);
 	 v = std || null;
@@ -826,9 +824,9 @@ app.get('/candidates', requireLogin, async (req, res) => {
         sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
         // type maps to product
         type: r.product ?? null,
-        // keep project_date accessible as both project_date and employment_date for UI compatibility
-        project_date: r.project_date ?? r.employment_date ?? null,
-        employment_date: r.employment_date ?? r.project_date ?? null,
+        // keep project_date accessible as alias to employment_date for UI compatibility
+        project_date: r.employment_date ?? null,
+        employment_date: r.employment_date ?? null,
         // personal: prefer the DB personal if present, otherwise fallback to canonicalized jobtitle
         personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : personalFallback
       };
@@ -1105,7 +1103,6 @@ app.post('/candidates', requireLogin, async (req, res) => {
 
     // same-name fields
     project_title: 'project_title',
-    project_date: 'project_date',
     project_name: 'project_name',
     employment_date: 'employment_date',
     name: 'name',
@@ -1135,7 +1132,7 @@ app.post('/candidates', requireLogin, async (req, res) => {
   let col = createFieldMap[key];
   let val = body[key];
 
-  if ((key === 'project_date' || key === 'employment_date') && val != null && val !== '') {
+  if (key === 'employment_date' && val != null && val !== '') {
     val = toISODate(val) || val;
   }
 
@@ -1215,8 +1212,8 @@ app.post('/candidates', requireLogin, async (req, res) => {
       job_family: fresh.job_family ?? fresh.jobfamily ?? null,
       sourcing_status: fresh.sourcing_status ?? fresh.sourcingstatus ?? null,
       type: fresh.product ?? null,
-      project_date: fresh.project_date ?? fresh.employment_date ?? null,
-      employment_date: fresh.employment_date ?? fresh.project_date ?? null,
+      project_date: fresh.employment_date ?? null,
+      employment_date: fresh.employment_date ?? null,
       personal: (fresh.personal && String(fresh.personal).trim()) ? String(fresh.personal).trim() : (fresh.jobtitle ? canonicalJobTitle(fresh.jobtitle) : null)
     };
 
@@ -1268,7 +1265,6 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     // same-name fields
     name: 'name',
     project_title: 'project_title',
-    project_date: 'project_date',
     project_name: 'project_name',
     employment_date: 'employment_date',
     sector: 'sector',
@@ -1297,7 +1293,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     for (const k of keys) {
       const col = fieldMap[k];
       let v = body[k];
-      if ((k === 'project_date' || k === 'employment_date') && v != null && v !== '') {
+      if (k === 'employment_date' && v != null && v !== '') {
         try { v = toISODate(v) || v; } catch (e) { /* ignore */ }
       }
       if (k === 'seniority' && v != null && String(v).trim() !== '') {
@@ -1353,8 +1349,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       job_family: r.job_family ?? r.jobfamily ?? null,
       sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
       type: r.product ?? null, // return product as type for frontend
-      project_date: r.project_date ?? r.employment_date ?? null,
-      employment_date: r.employment_date ?? r.project_date ?? null,
+      project_date: r.employment_date ?? null,
+      employment_date: r.employment_date ?? null,
       personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null)
     };
 
@@ -1595,7 +1591,6 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
     sourcingstatus: 'sourcingstatus',
     name: 'name',
     project_title: 'project_title',
-    project_date: 'project_date',
     project_name: 'project_name',
     employment_date: 'employment_date',
     sector: 'sector',
@@ -1641,7 +1636,7 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
       for (const k of keys) {
         const col = fieldMap[k];
         let v = item[k];
-        if ((k === 'project_date' || k === 'employment_date') && v != null && v !== '') {
+        if (k === 'employment_date' && v != null && v !== '') {
           try { v = toISODate(v) || v; } catch (e) { /* ignore */ }
         }
         if (k === 'seniority' && v != null && String(v).trim() !== '') {
@@ -1687,8 +1682,8 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
           job_family: r.job_family ?? r.jobfamily ?? null,
           sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
           type: r.product ?? null,
-          project_date: r.project_date ?? r.employment_date ?? null,
-          employment_date: r.employment_date ?? r.project_date ?? null,
+          project_date: r.employment_date ?? null,
+          employment_date: r.employment_date ?? null,
           personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null),
           jskillset: r.jskillset ?? null
         };
