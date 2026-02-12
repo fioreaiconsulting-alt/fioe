@@ -7473,18 +7473,23 @@ def user_upload_jd():
                 import docx
                 doc = docx.Document(io.BytesIO(file_bytes))
                 for para in doc.paragraphs: extracted_text += para.text + "\n"
-            except ImportError: return jsonify({"error": "python-docx not installed, cannot process DOCX"}), 500
-            except Exception as e: return jsonify({"error": f"DOCX parsing error: {e}"}), 500
+            except ImportError: 
+                return jsonify({"error": "python-docx library not installed. Please install it with: pip install python-docx"}), 500
+            except Exception as e: 
+                return jsonify({"error": f"DOCX parsing error: {e}"}), 500
         elif filename.endswith('.doc'):
+            # Note: Legacy .doc format requires the python-docx library (or alternatives like antiword, textract)
+            # python-docx primarily supports .docx but can sometimes read .doc files
             import io
             try:
                 import docx
                 doc = docx.Document(io.BytesIO(file_bytes))
                 for para in doc.paragraphs: extracted_text += para.text + "\n"
-            except ImportError: return jsonify({"error": "python-docx not installed, cannot process DOC"}), 500
+            except ImportError:
+                return jsonify({"error": "python-docx library not installed. Please install it with: pip install python-docx"}), 500
             except Exception as e:
-                # If python-docx fails for .doc, return a helpful error
-                return jsonify({"error": "Legacy .doc format not fully supported. Please save as .docx or .pdf for best results."}), 400
+                # Legacy .doc format may not be fully supported by python-docx
+                return jsonify({"error": "Legacy .doc format could not be processed. Please convert to .docx or .pdf format."}), 400
         else:
             try: extracted_text = file_bytes.decode('utf-8', errors='ignore')
             except Exception as e: return jsonify({"error": f"Text decoding error: {e}"}), 500

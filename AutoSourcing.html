@@ -1300,6 +1300,13 @@ function getHideAdvancedPreference(){
   } catch(e){ return true; }
 }
 
+// Helper function to normalize country names
+function normalizeCountryName(country){
+  if (!country) return country;
+  const trimmed = (country || '').toString().trim();
+  return trimmed.toLowerCase() === 'south korea' ? 'Korea' : country;
+}
+
 async function createStructuredExcelWithDropdown(csvName){
   try{
     const resp=await fetch('/download/'+encodeURIComponent(csvName));
@@ -1421,9 +1428,9 @@ document.getElementById('deactivateTranslationBtn').addEventListener('click',()=
 document.getElementById('country').addEventListener('input',()=>{
   // Normalize "South Korea" to "Korea"
   const countryInput = document.getElementById('country');
-  const countryValue = countryInput.value.trim();
-  if (countryValue.toLowerCase() === 'south korea') {
-    countryInput.value = 'Korea';
+  const normalizedValue = normalizeCountryName(countryInput.value);
+  if (normalizedValue !== countryInput.value) {
+    countryInput.value = normalizedValue;
   }
   if(translationActive){
     const lang=detectTargetLang(val('country'));
@@ -2379,7 +2386,7 @@ function updateSectorEnabledState(){
             if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
             // Normalize "South Korea" to "Korea" for display
             if (analyzeData.country) {
-              const normalizedCountry = analyzeData.country.trim().toLowerCase() === 'south korea' ? 'Korea' : analyzeData.country;
+              const normalizedCountry = normalizeCountryName(analyzeData.country);
               tagHtml += `<div><strong>Country:</strong> ${escapeHtml(normalizedCountry)}</div>`;
             }
             if (tagsEl) tagsEl.innerHTML = tagHtml;
@@ -2428,7 +2435,7 @@ function updateSectorEnabledState(){
               }
               if(analyzeData.country && !val('country')){ 
                 // Normalize "South Korea" to "Korea"
-                const normalizedCountry = analyzeData.country.trim().toLowerCase() === 'south korea' ? 'Korea' : analyzeData.country;
+                const normalizedCountry = normalizeCountryName(analyzeData.country);
                 document.getElementById('country').value = normalizedCountry; 
                 updateSectorEnabledState(); 
                 updateFullCompiledQuery(); 
