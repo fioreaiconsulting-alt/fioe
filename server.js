@@ -609,13 +609,13 @@ function toISODate(value) {
 function normalizeIncomingRow(c) {
   // Canonical title/date from multiple spreadsheet header variants
   const pTitle = firstVal(c, ['Project_Title', 'Project Title', 'project_title', 'project_name', 'Project Name']) || '';
-  const pDateRaw = firstVal(c, ['Project_Date', 'Project Date', 'employment_date', 'Employment Date']) ?? null;
-  const pDateISO = toISODate(pDateRaw);
+  const dateRaw = firstVal(c, ['Project_Date', 'Project Date', 'employment_date', 'Employment Date']) ?? null;
+  const dateISO = toISODate(dateRaw);
 
   // Legacy aliases preserved for backward compatibility
   const legacyName = firstVal(c, ['project_name', 'Project Name']);
   const legacyDate = firstVal(c, ['employment_date', 'Employment Date']);
-  const employmentISO = toISODate(legacyDate ?? pDateRaw);
+  const employmentISO = toISODate(legacyDate ?? dateRaw);
 
   return {
     project_title: pTitle || '',

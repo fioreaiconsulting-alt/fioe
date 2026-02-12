@@ -5103,7 +5103,7 @@ def process_upload_cv():
                     sid_row = cur.fetchone()
                 
                 if sid_row:
-                    sourcing_id = sid_row[0] if has_process_id else None  # Only use sourcing_id if process has id column
+                    sourcing_id = sid_row[0] if has_process_id else None  # Set sourcing_id only if process table has id column
                     sourcing_username = sid_row[1] if len(sid_row) > 1 else None
                     sourcing_userid = sid_row[2] if len(sid_row) > 2 else None
             except Exception as e_id:
