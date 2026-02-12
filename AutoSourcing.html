@@ -627,7 +627,7 @@ pre {
               </svg>
               <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;">Drag & Drop your JD here</div>
               <div style="font-size:12px; color:var(--text-soft); margin-bottom:12px;">or</div>
-              <input type="file" id="jdFileInput" accept=".pdf,.docx,.txt" style="display:none;">
+              <input type="file" id="jdFileInput" accept=".pdf,.doc,.docx,.txt" style="display:none;">
               <button type="button" id="browseJdBtn" class="mini-btn" style="padding:8px 20px; font-size:13px;">Browse Files</button>
               <div id="jdFileName" style="font-size:12px; color:var(--text); margin-top:12px; font-weight:500;"></div>
               <span id="jdUploadSpinner" class="spinner hidden" style="width:16px; height:16px; border-width:2px; margin-top:12px;"></span>
@@ -1415,6 +1415,12 @@ document.getElementById('activateTranslationBtn').addEventListener('click',()=>{
 });
 document.getElementById('deactivateTranslationBtn').addEventListener('click',()=>setTranslationMode(false));
 document.getElementById('country').addEventListener('input',()=>{
+  // Normalize "South Korea" to "Korea"
+  const countryInput = document.getElementById('country');
+  const countryValue = countryInput.value;
+  if (countryValue.toLowerCase() === 'south korea') {
+    countryInput.value = 'Korea';
+  }
   if(translationActive){
     const lang=detectTargetLang(val('country'));
     if(!lang || lang!==translationLang) setTranslationMode(false);
@@ -2323,7 +2329,7 @@ function updateSectorEnabledState(){
           try { chatData = chatResp.ok ? await chatResp.json() : null; } catch(_) { chatData = null; }
 
           // Now call the analyzer endpoint (webbridge will host /gemini/analyze_jd)
-          const analyzePayload = { username: username };
+          const analyzePayload = { username: username, sectors: sectorsData };
           
           // Show loading animation during JD analysis
           const box = document.getElementById('jdAnalysisBox');

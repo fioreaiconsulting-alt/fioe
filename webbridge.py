@@ -685,6 +685,7 @@ def gemini_analyze_jd():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
     text_input = (data.get("text") or "").strip()
+    sectors_data = data.get("sectors") or []
 
     # If no text but username provided, attempt to read JD from login.jd column (best-effort)
     if not text_input and username:
@@ -703,11 +704,18 @@ def gemini_analyze_jd():
     if not text_input:
         return jsonify({"error":"No JD text provided or found for user"}), 400
 
+    # Build sectors reference for prompt
+    sectors_list = ""
+    if sectors_data:
+        import json
+        sectors_list = "\n\nAVAILABLE SECTORS:\n" + json.dumps(sectors_data, indent=2)
+
     # Build strict JSON request to Gemini
     prompt = (
         "You are a recruiting assistant. Analyze the job description and return STRICT JSON with keys:\n"
         "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
-        "JOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
+        + sectors_list +
+        "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
     )
 
     if not genai or not GEMINI_API_KEY:
@@ -7503,6 +7511,7 @@ def gemini_jd_analyze():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
     text_input = (data.get("text") or "").strip()
+    sectors_data = data.get("sectors") or []
     jd_text = text_input
     if not jd_text and username:
         try:
@@ -7520,7 +7529,7 @@ def gemini_jd_analyze():
     if not jd_text: return jsonify({"error": "No JD text provided or found for user"}), 400
     try:
         from chat_gemini_review import analyze_job_description
-        result = analyze_job_description(jd_text)
+        result = analyze_job_description(jd_text, sectors_data)
         parsed = result.get("parsed", {})
         skills = parsed.get("skills", [])
         if username and skills: _persist_jskillset(username, skills)
