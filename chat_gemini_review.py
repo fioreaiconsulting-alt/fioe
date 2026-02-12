@@ -268,7 +268,7 @@ def review_and_flush_session_with_gemini(history_path, reset_func, max_turns=10)
 
 
 # --- Job Description analysis helper using Gemini ---
-def analyze_job_description(jd_text: str):
+def analyze_job_description(jd_text: str, sectors_data=None):
     """
     Analyze a job description text with Gemini and return a dict:
     {
@@ -303,6 +303,11 @@ def analyze_job_description(jd_text: str):
         result["summary"] = "I couldn't analyze an empty job description."
         return result
 
+    # Build sectors reference for prompt
+    sectors_list = ""
+    if sectors_data:
+        sectors_list = "\n\nAVAILABLE SECTORS:\n" + json.dumps(sectors_data, indent=2) + "\n"
+
     # Construct a careful prompt that asks for strict JSON including an "observation" field and "skills"
     prompt = (
         "You are a recruiting assistant that extracts structured sourcing tags from a Job Description and explains the reasoning.\n"
@@ -318,8 +323,9 @@ def analyze_job_description(jd_text: str):
         "Rules:\n"
         "- Output JSON ONLY and nothing else.\n"
         "- If a field is missing, return an empty string or empty list as appropriate.\n"
-        "- For sector prefer hierarchical labels like 'Financial Services > Banking' where applicable.\n\n"
-        f"JOB DESCRIPTION TEXT:\n{jd_text[:15000]}\n\nJSON:"
+        "- For sector prefer hierarchical labels like 'Financial Services > Banking' where applicable.\n"
+        + sectors_list +
+        f"\nJOB DESCRIPTION TEXT:\n{jd_text[:15000]}\n\nJSON:"
     )
 
     # Try using Gemini if available
