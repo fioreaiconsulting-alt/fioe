@@ -1302,8 +1302,6 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       job_family: r.job_family ?? r.jobfamily ?? null,
       sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
       type: r.product ?? null, // return product as type for frontend
-      project_date: r.project_date ?? r.employment_date ?? null,
-      employment_date: r.employment_date ?? r.project_date ?? null,
       personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null)
     };
 
