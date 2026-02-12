@@ -847,11 +847,11 @@ function cacheAssessmentHTML(linkedinurl, result) {
     
     const { fullHtml, tableHtml } = generateAssessmentHTML(result);
     
-    // Extract numeric score from total_score string (e.g., "75%" -> 75)
+    // Extract numeric score from total_score string (e.g., "75%" -> 75, "75.5%" -> 75.5)
     let totalScore = 0;
     if (result.total_score) {
-        const scoreMatch = result.total_score.toString().match(/(\d+)/);
-        totalScore = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+        const scoreMatch = result.total_score.toString().match(/^(\d+(?:\.\d+)?)%?$/);
+        totalScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
     }
     
     if (fullHtml && window.__sv_namecard && window.__sv_namecard.setCardCache) {
@@ -1592,6 +1592,7 @@ async function runBulkAssessmentFromSearch() {
             const BUTTON_TRANSITION_DELAY_MS = 100; // Delay between each button transition for smooth animation
             const FINAL_PROGRESS_DELAY_MS = 500; // Extra delay after transitions before hiding progress bar
             const MAX_PROGRESS_DURING_PROCESSING = 95; // Cap progress at 95% until buttons complete transition
+            const TABLE_RENDER_DELAY_MS = 1000; // Delay to allow table rendering to complete before starting assessment
             
             // Animate all Upload CV buttons to "Analyzing..." state at start
             linkedinurls.forEach(url => animateButtonDuringBulkAssessment(url, 'analyzing'));
@@ -6414,8 +6415,11 @@ if (bulkAssessmentBtn && bulkDirInput) {
             return;
         }
 
-        const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nUpload and run bulk assessment on these candidates?`);
+        const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nThis will upload files and automatically run AI assessment on all candidates. Continue?`);
         if (!confirmUpload) return;
+
+        // Timing constant for table rendering
+        const TABLE_RENDER_DELAY_MS = 1000; // Delay to allow table rendering to complete before starting assessment
 
         const bulkUploadProgressContainer = document.getElementById('bulkUploadProgressContainer');
         const bulkUploadProgressBar = document.getElementById('bulkUploadProgressBar');
@@ -6472,7 +6476,7 @@ if (bulkAssessmentBtn && bulkDirInput) {
                 
                 let msg = `Successfully matched and uploaded ${data.uploaded_count} CVs.`;
                 if (data.errors && data.errors.length > 0) {
-                    msg += `\n\nWarnings: ${data.errors.length} files had issues. Check browser console for details.`;
+                    msg += `\n\nErrors encountered: ${data.errors.length} files had issues. Check browser console for details.`;
                     console.warn("Bulk upload errors:", data.errors);
                 }
                 
@@ -6497,7 +6501,7 @@ if (bulkAssessmentBtn && bulkDirInput) {
                 renderTable();
                 
                 // Wait a moment for the table to render
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, TABLE_RENDER_DELAY_MS));
                 
                 // Hide upload progress bar
                 bulkUploadProgressContainer.style.display = 'none';
