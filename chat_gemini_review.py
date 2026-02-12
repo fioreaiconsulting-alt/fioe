@@ -338,7 +338,9 @@ def analyze_job_description(jd_text: str):
         "Rules:\n"
         "- Output JSON ONLY and nothing else.\n"
         "- If a field is missing, return an empty string or empty list as appropriate.\n"
-        "- For sector prefer hierarchical labels like 'Financial Services > Banking' where applicable.\n"
+        "- For sector: YOU MUST select ONLY from the AVAILABLE SECTORS list provided below. Do NOT create or hallucinate new sector names.\n"
+        "- If the job doesn't clearly fit any available sector, choose the closest match from the list or leave empty.\n"
+        "- For hierarchical sectors, prefer format 'Sector Name' or 'Sector Name > Domain' from the available list.\n"
         f"{sectors_reference}\n"
         f"JOB DESCRIPTION TEXT:\n{jd_text[:15000]}\n\nJSON:"
     )

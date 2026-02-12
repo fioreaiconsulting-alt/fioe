@@ -1414,11 +1414,25 @@ document.getElementById('activateTranslationBtn').addEventListener('click',()=>{
   setTranslationMode(true,lang);
 });
 document.getElementById('deactivateTranslationBtn').addEventListener('click',()=>setTranslationMode(false));
+// Helper function to normalize location input
+function normalizeLocation(value) {
+  if (!value) return value;
+  const trimmed = value.trim();
+  // Normalize "South Korea" to "Korea" (case-insensitive)
+  if (trimmed.toLowerCase() === 'south korea') {
+    return 'Korea';
+  }
+  return trimmed;
+}
+
 document.getElementById('country').addEventListener('input',()=>{
   // Normalize "South Korea" to "Korea"
   const countryInput = document.getElementById('country');
-  if(countryInput && countryInput.value.trim().toLowerCase() === 'south korea') {
-    countryInput.value = 'Korea';
+  if(countryInput) {
+    const normalized = normalizeLocation(countryInput.value);
+    if (normalized !== countryInput.value) {
+      countryInput.value = normalized;
+    }
   }
   if(translationActive){
     const lang=detectTargetLang(val('country'));
@@ -1859,9 +1873,19 @@ function updateSourcingSection() {
     const countryInput = document.getElementById('country');
     if (countryInput) {
       countryInput.addEventListener('input', function() {
+        // Normalize location on input
+        const normalized = normalizeLocation(this.value);
+        if (normalized !== this.value) {
+          this.value = normalized;
+        }
         updateSourcingSection();
       });
       countryInput.addEventListener('change', function() {
+        // Normalize location on change
+        const normalized = normalizeLocation(this.value);
+        if (normalized !== this.value) {
+          this.value = normalized;
+        }
         updateSourcingSection();
       });
     }

@@ -7462,12 +7462,47 @@ def user_upload_jd():
             except Exception as e: return jsonify({"error": f"PDF parsing error: {e}"}), 500
         elif filename.endswith('.docx'):
             import io
+            import tempfile
+            extraction_successful = False
+            
+            # Try python-docx first (preferred for .docx)
             try:
                 import docx
                 doc = docx.Document(io.BytesIO(file_bytes))
-                for para in doc.paragraphs: extracted_text += para.text + "\n"
-            except ImportError: return jsonify({"error": "python-docx not installed, cannot process DOCX"}), 500
-            except Exception as e: return jsonify({"error": f"DOCX parsing error: {e}"}), 500
+                for para in doc.paragraphs: 
+                    extracted_text += para.text + "\n"
+                if extracted_text.strip():
+                    extraction_successful = True
+            except ImportError:
+                pass  # python-docx not available, will try textract
+            except Exception:
+                pass  # python-docx failed, will try textract
+            
+            # If python-docx failed, try textract as fallback
+            if not extraction_successful:
+                try:
+                    # Save to temp file for textract
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
+                        tmp.write(file_bytes)
+                        tmp_path = tmp.name
+                    try:
+                        import textract
+                        extracted_text = textract.process(tmp_path).decode('utf-8', errors='ignore')
+                        if extracted_text.strip():
+                            extraction_successful = True
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+                except Exception:
+                    pass
+            
+            # If both methods failed, return error
+            if not extraction_successful:
+                return jsonify({"error": "Unable to process DOCX file. Please ensure the file is a valid Word document or try saving as PDF"}), 400
         elif filename.endswith('.doc'):
             # Try to handle legacy .doc format using textract or antiword
             import tempfile
