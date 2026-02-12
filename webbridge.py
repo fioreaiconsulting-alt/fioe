@@ -5095,18 +5095,17 @@ def process_upload_cv():
                 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='process' AND column_name='id'")
                 has_process_id = bool(cur.fetchone())
                 
-                if has_process_id:
-                    # Try to get id, username, userid from sourcing table
-                    cur.execute("SELECT id, username, userid FROM sourcing WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                # Try to get id, username, userid from sourcing table regardless of process id column
+                cur.execute("SELECT id, username, userid FROM sourcing WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                sid_row = cur.fetchone()
+                if not sid_row and normalized:
+                    cur.execute("SELECT id, username, userid FROM sourcing WHERE LOWER(linkedinurl) LIKE %s LIMIT 1", (f"%{normalized}%",))
                     sid_row = cur.fetchone()
-                    if not sid_row and normalized:
-                        cur.execute("SELECT id, username, userid FROM sourcing WHERE LOWER(linkedinurl) LIKE %s LIMIT 1", (f"%{normalized}%",))
-                        sid_row = cur.fetchone()
-                    
-                    if sid_row:
-                        sourcing_id = sid_row[0]
-                        sourcing_username = sid_row[1] if len(sid_row) > 1 else None
-                        sourcing_userid = sid_row[2] if len(sid_row) > 2 else None
+                
+                if sid_row:
+                    sourcing_id = sid_row[0] if has_process_id else None  # Only use sourcing_id if process has id column
+                    sourcing_username = sid_row[1] if len(sid_row) > 1 else None
+                    sourcing_userid = sid_row[2] if len(sid_row) > 2 else None
             except Exception as e_id:
                 logger.warning(f"[Upload CV] Failed to lookup sourcing ID/username/userid: {e_id}")
             # --- PATCH END ---
