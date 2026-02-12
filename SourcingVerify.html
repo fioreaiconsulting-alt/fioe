@@ -138,7 +138,7 @@
 
   <div id="rebateNotice">
     <b>Rebate Validation Guidance</b><br>
-    Submission: Upload a PDF/DOC profile or use Bulk Upload (ensure filenames match profile names) and click Run Bulk Assessment.<br>
+    Submission: Upload a PDF/DOC profile or use Bulk Assessment (ensure filenames match profile names).<br>
     Rebate Eligibility: Scores &lt; 50% qualify for a token refund. For scores ≥ 50%, submit a justification in the Appeal section to maintain eligibility.<br>
     <span style="color:#9a5a00;">Deletion Policy: Profiles receiving a rebate are automatically deleted. Manually deleting an entry also triggers a rebate.</span>
     <div style="margin-top:6px;">
@@ -173,9 +173,8 @@
       <!-- Refresh Button - Moved to former checkbox position -->
       <button id="reloadBtn" title="Reset assessment state and refetch data">Refresh</button>
 
-      <!-- Button Order: Bulk Upload -> Run Bulk Assessment -> Download Excel -->
-      <button id="bulkUploadBtn" title="Bulk Upload CVs from Directory">Bulk Upload</button>
-      <button id="searchRunBulkBtn" onclick="runBulkAssessmentFromSearch()" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Run AI Assessment on selected items">Run Bulk Assessment</button>
+      <!-- Combined Bulk Assessment Button (Upload + Assessment) -->
+      <button id="bulkAssessmentBtn" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Verify the directory settings before initiating bulk PDF upload and assessment.">Bulk Assessment</button>
       <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
       
       <!-- Hidden file input for directory upload -->
@@ -786,21 +785,38 @@ function updateUploadButtonToView(linkedinurl) {
 // Total: 200ms balances reliability vs UI responsiveness
 const CACHE_UPDATE_DELAY_MS = 200;
 
-/* Helper: Auto-refresh View Details tab if currently active and viewing a profile */
+// BACKEND_PROCESSING_BUFFER_MS: Additional delay to allow backend processing to complete after assessment.
+// Ensures skillset and product data are fully processed and available in database before View Details refresh.
+// Value of 1000ms accounts for:
+// - CV analysis and skillset extraction (typically 300-700ms)
+// - Database write operations (typically 50-200ms)
+// - Network latency for subsequent fetch (typically 100-200ms)
+// Total: 1000ms ensures data availability without excessive delay
+const BACKEND_PROCESSING_BUFFER_MS = 1000;
+
+/* Helper: Auto-refresh Search Results after bulk assessment completes */
 function autoRefreshViewDetailsIfActive() {
-    // Capture current profile row reference to prevent race conditions
-    const currentRow = __currentProfileRow;
-    const detailsTab = document.getElementById('tab-details');
+    // After bulk assessment completes, trigger auto-refresh to show updated skillset/product
+    console.log('[Bulk Assessment] Triggering auto-refresh after assessment completion');
     
-    if (detailsTab && detailsTab.classList.contains('active') && currentRow) {
-        console.log('[Bulk Assessment] Auto-refreshing View Details tab with updated assessment data');
-        // Re-render the captured profile to show updated assessment results
-        setTimeout(() => {
-            if (typeof renderNameCardToTab === 'function') {
-                renderNameCardToTab(currentRow);
-            }
-        }, CACHE_UPDATE_DELAY_MS); // Delay to ensure cache is updated
-    }
+    setTimeout(() => {
+        // 1. First, refresh the Search Result table data
+        const reloadBtn = document.getElementById('reloadBtn');
+        if (reloadBtn) {
+            console.log('[Bulk Assessment] Clicking Refresh button in Search Result tab');
+            reloadBtn.click();
+        } else {
+            console.warn('[Bulk Assessment] Search Result Refresh button not found');
+        }
+        
+        // 2. Also refresh View Details tab if it's currently active
+        const detailsTab = document.getElementById('tab-details');
+        const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
+        if (detailsTab && detailsTab.classList.contains('active') && viewDetailsRefreshBtn) {
+            console.log('[Bulk Assessment] View Details tab is active - clicking its Refresh button');
+            viewDetailsRefreshBtn.click();
+        }
+    }, BACKEND_PROCESSING_BUFFER_MS); // Pause for backend processing to complete
 }
 
 /* Helper: animate button during bulk assessment processing */
@@ -847,15 +863,24 @@ function cacheAssessmentHTML(linkedinurl, result) {
     if (!linkedinurl || !result || result.error) return;
     
     const { fullHtml, tableHtml } = generateAssessmentHTML(result);
+    
+    // Extract numeric score from total_score string (e.g., "75%" -> 75, "75.5%" -> 75.5)
+    let totalScore = 0;
+    if (result.total_score) {
+        const scoreMatch = result.total_score.toString().match(/^(\d+(?:\.\d+)?)%?$/);
+        totalScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
+    }
+    
     if (fullHtml && window.__sv_namecard && window.__sv_namecard.setCardCache) {
         window.__sv_namecard.setCardCache(linkedinurl, {
             assessmentHTML: fullHtml,
-            assessmentTableHTML: tableHtml
+            assessmentTableHTML: tableHtml,
+            totalScore: totalScore  // Store numeric score for tick/cross display
         });
         // Log cache operation without exposing PII - simple hash for debugging
         // Use length and first few chars for lightweight unique identifier
         const hashId = `${linkedinurl.length}_${(linkedinurl.charCodeAt(0) * 31 + linkedinurl.charCodeAt(linkedinurl.length - 1)) % 10000}`;
-        console.log(`[cacheAssessmentHTML] Cached full assessment HTML for profile: id_${hashId}`);
+        console.log(`[cacheAssessmentHTML] Cached full assessment HTML for profile: id_${hashId}, score: ${totalScore}%`);
     }
 }
 
@@ -1479,8 +1504,7 @@ function cleanNameForUpload(name) {
 // Helper function to disable/enable all action buttons during bulk operations
 function setSearchResultButtonsEnabled(enabled) {
     const buttons = [
-        'bulkUploadBtn',
-        'searchRunBulkBtn',
+        'bulkAssessmentBtn',
         'exportExcelBtn',
         'exportCsvBtn',
         'marketAnalysisBtn'
@@ -1532,7 +1556,7 @@ async function runBulkAssessmentFromSearch() {
     }
     
     const statusEl = document.getElementById('status');
-    const btn = document.getElementById('searchRunBulkBtn');
+    const btn = document.getElementById('bulkAssessmentBtn');  // Updated to new combined button
     const progressContainer = document.getElementById('searchBulkProgressContainer');
     const progressBar = document.getElementById('searchBulkProgressBar');
     const progressPercent = document.getElementById('searchBulkProgressPercent');
@@ -1549,7 +1573,7 @@ async function runBulkAssessmentFromSearch() {
     // Disable all buttons during bulk assessment
     setSearchResultButtonsEnabled(false);
     
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
     const totalProfiles = linkedinurls.length + alreadyAssessedUrls.length;
     const statusMsg = useL2 ? 
         `Starting bulk L2 assessment (${linkedinurls.length}/${totalProfiles} profiles, ${alreadyAssessedUrls.length} already assessed)...` :
@@ -1585,6 +1609,7 @@ async function runBulkAssessmentFromSearch() {
             const BUTTON_TRANSITION_DELAY_MS = 100; // Delay between each button transition for smooth animation
             const FINAL_PROGRESS_DELAY_MS = 500; // Extra delay after transitions before hiding progress bar
             const MAX_PROGRESS_DURING_PROCESSING = 95; // Cap progress at 95% until buttons complete transition
+            const TABLE_RENDER_DELAY_MS = 1000; // Delay to allow table rendering to complete before starting assessment
             
             // Animate all Upload CV buttons to "Analyzing..." state at start
             linkedinurls.forEach(url => animateButtonDuringBulkAssessment(url, 'analyzing'));
@@ -1600,7 +1625,7 @@ async function runBulkAssessmentFromSearch() {
                         
                         // Re-enable all buttons when bulk assessment completes
                         setSearchResultButtonsEnabled(true);
-                        btn.disabled = false;
+                        if (btn) btn.disabled = false;
                         
                         if (pollData.status === 'done') {
                             if(statusEl) setStatus('Bulk assessment complete!', 'success');
@@ -1686,7 +1711,7 @@ async function runBulkAssessmentFromSearch() {
                     
                     // Re-enable all buttons on error
                     setSearchResultButtonsEnabled(true);
-                    btn.disabled = false;
+                    if (btn) btn.disabled = false;
                     if(progressContainer) progressContainer.style.display = 'none';
                 }
             }, 2000);
@@ -1695,7 +1720,7 @@ async function runBulkAssessmentFromSearch() {
             
             // Re-enable all buttons on failure
             setSearchResultButtonsEnabled(true);
-            btn.disabled = false;
+            if (btn) btn.disabled = false;
             if(progressContainer) progressContainer.style.display = 'none';
         }
     } catch(e) {
@@ -1704,7 +1729,7 @@ async function runBulkAssessmentFromSearch() {
         
         // Re-enable all buttons on exception
         setSearchResultButtonsEnabled(true);
-        btn.disabled = false;
+        if (btn) btn.disabled = false;
         if(progressContainer) progressContainer.style.display = 'none';
     }
 }
@@ -2110,7 +2135,7 @@ const statusEl    = document.getElementById('status');
 // const selectAllCb = document.getElementById('selectAll');
 const reloadBtn   = document.getElementById('reloadBtn');
 const marketBtn   = document.getElementById('marketAnalysisBtn');
-const bulkUploadBtn = document.getElementById('bulkUploadBtn');
+const bulkAssessmentBtn = document.getElementById('bulkAssessmentBtn');
 const bulkDirInput = document.getElementById('bulkDirInput');
 
 let rowsData = [];
@@ -6388,14 +6413,14 @@ async function verifyBulkUploadedProfiles(linkedinurls) {
     return false;
 }
 
-if (bulkUploadBtn && bulkDirInput) {
+if (bulkAssessmentBtn && bulkDirInput) {
     // 1. Click button -> Trigger hidden file input
-    bulkUploadBtn.addEventListener('click', () => {
+    bulkAssessmentBtn.addEventListener('click', () => {
         bulkDirInput.value = ''; // Reset selection
         bulkDirInput.click();
     });
 
-    // 2. Handle file selection
+    // 2. Handle file selection - Combined Bulk Upload + Assessment workflow
     bulkDirInput.addEventListener('change', async () => {
         const files = Array.from(bulkDirInput.files);
         
@@ -6407,8 +6432,11 @@ if (bulkUploadBtn && bulkDirInput) {
             return;
         }
 
-        const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nUpload and match these to candidates?`);
+        const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nThis will upload files and automatically run AI assessment on all candidates. Continue?`);
         if (!confirmUpload) return;
+
+        // Timing constant for table rendering
+        const TABLE_RENDER_DELAY_MS = 1000; // Delay to allow table rendering to complete before starting assessment
 
         const bulkUploadProgressContainer = document.getElementById('bulkUploadProgressContainer');
         const bulkUploadProgressBar = document.getElementById('bulkUploadProgressBar');
@@ -6422,13 +6450,13 @@ if (bulkUploadBtn && bulkDirInput) {
 
         setStatus(`Uploading ${validFiles.length} files...`, "info");
         
-        // Disable all buttons during bulk upload
+        // Disable all buttons during bulk upload and assessment
         setSearchResultButtonsEnabled(false);
-        bulkUploadBtn.disabled = true;
+        bulkAssessmentBtn.disabled = true;
         
-        console.log(`[Bulk Upload] Uploading ${validFiles.length} CV files`);
+        console.log(`[Bulk Assessment] Uploading ${validFiles.length} CV files`);
         validFiles.forEach((file, idx) => {
-            console.log(`[Bulk Upload] File ${idx + 1}: ${file.name}, size: ${file.size}, type: ${file.type}`);
+            console.log(`[Bulk Assessment] File ${idx + 1}: ${file.name}, size: ${file.size}, type: ${file.type}`);
         });
 
         // Prepare FormData
@@ -6446,18 +6474,18 @@ if (bulkUploadBtn && bulkDirInput) {
             bulkUploadProgressPercent.textContent = '20%';
             bulkUploadProgressText.textContent = 'Uploading files...';
             
-            // Use the new bulk upload endpoint
-            console.log(`[Bulk Upload] Sending to ${API_UPLOAD_MULTIPLE}`);
+            // PHASE 1: Bulk Upload
+            console.log(`[Bulk Assessment] Phase 1: Sending to ${API_UPLOAD_MULTIPLE}`);
             const res = await fetch(API_UPLOAD_MULTIPLE, {
                 method: 'POST',
                 body: formData,
                 credentials: 'same-origin'
             });
             const data = await res.json();
-            console.log('[Bulk Upload] Response:', data);
+            console.log('[Bulk Assessment] Upload Response:', data);
 
-            bulkUploadProgressBar.style.width = '60%';
-            bulkUploadProgressPercent.textContent = '60%';
+            bulkUploadProgressBar.style.width = '40%';
+            bulkUploadProgressPercent.textContent = '40%';
             bulkUploadProgressText.textContent = 'Processing files...';
 
             if (res.ok) {
@@ -6465,49 +6493,55 @@ if (bulkUploadBtn && bulkDirInput) {
                 
                 let msg = `Successfully matched and uploaded ${data.uploaded_count} CVs.`;
                 if (data.errors && data.errors.length > 0) {
-                    msg += `\n\nErrors encountered: ${data.errors.length}\nCheck browser console for details.`;
+                    msg += `\n\nErrors encountered: ${data.errors.length} files had issues. Check browser console for details.`;
                     console.warn("Bulk upload errors:", data.errors);
                 }
                 
                 // Verify all required fields are populated in Postgres before proceeding
-                // Required fields: Job Title, Company, Sector, Seniority, Skillset, Country, Tenure, Product
                 if (data.uploaded_profiles && Array.isArray(data.uploaded_profiles)) {
                     setStatus(`Verifying ${data.uploaded_profiles.length} profiles in database...`, "info");
                     
-                    bulkUploadProgressBar.style.width = '80%';
-                    bulkUploadProgressPercent.textContent = '80%';
+                    bulkUploadProgressBar.style.width = '60%';
+                    bulkUploadProgressPercent.textContent = '60%';
                     bulkUploadProgressText.textContent = 'Verifying data...';
                     
                     // Poll to verify all fields are populated
                     await verifyBulkUploadedProfiles(data.uploaded_profiles);
                 }
                 
-                bulkUploadProgressBar.style.width = '100%';
-                bulkUploadProgressPercent.textContent = '100%';
-                bulkUploadProgressText.textContent = 'Upload complete!';
-                setTimeout(() => {
-                    bulkUploadProgressContainer.style.display = 'none';
-                }, 2000);
-                
-                alert(msg);
+                bulkUploadProgressBar.style.width = '80%';
+                bulkUploadProgressPercent.textContent = '80%';
+                bulkUploadProgressText.textContent = 'Upload complete! Starting assessment...';
                 
                 // Redirect to Search Result tab and refresh
                 switchTab('tab-search');
                 renderTable();
                 
+                // Wait a moment for the table to render
+                await new Promise(resolve => setTimeout(resolve, TABLE_RENDER_DELAY_MS));
+                
+                // Hide upload progress bar
+                bulkUploadProgressContainer.style.display = 'none';
+                
+                // PHASE 2: Run Bulk Assessment
+                console.log('[Bulk Assessment] Phase 2: Starting bulk assessment');
+                await runBulkAssessmentFromSearch();
+                
             } else {
                 bulkUploadProgressContainer.style.display = 'none';
                 setStatus(`Upload failed: ${data.error || 'Unknown error'}`, "error");
                 alert(`Error: ${data.error}`);
+                // Re-enable buttons on upload failure (assessment not triggered)
+                setSearchResultButtonsEnabled(true);
+                bulkAssessmentBtn.disabled = false;
             }
         } catch (e) {
             bulkUploadProgressContainer.style.display = 'none';
             setStatus(`Upload request failed: ${e.message}`, "error");
             console.error(e);
-        } finally {
-            // Re-enable all buttons when bulk upload completes
+            // Re-enable buttons on error (assessment not triggered)
             setSearchResultButtonsEnabled(true);
-            bulkUploadBtn.disabled = false;
+            bulkAssessmentBtn.disabled = false;
         }
     });
 }

@@ -5243,6 +5243,43 @@ def process_upload_multiple_cvs():
             s = re.sub(r'\s*_\s*linkedin\s*$', '', s)
             # Remove all non-alphanumeric characters
             return re.sub(r'[^a-z0-9]', '', s)
+        
+        def clean_name_for_display(s):
+            """Clean special characters and artifacts from names for display.
+            Removes non-printable characters, special Unicode artifacts, and non-Latin characters.
+            Preserves Latin letters (including accented characters like José, François) and common name punctuation."""
+            if not s:
+                return s
+            
+            # Define Unicode ranges for allowed characters
+            ASCII_MAX = 127  # Standard ASCII (0-127)
+            LATIN_EXTENDED_MAX = 591  # Covers Latin-1 Supplement + Latin Extended A/B
+            
+            # Remove non-printable characters and non-Latin Unicode characters
+            # Keep only Latin letters (ASCII + Latin-1 Supplement + Latin Extended blocks),
+            # spaces, hyphens, periods, apostrophes, commas
+            # This filters out Korean (님), special artifacts (δïÿ), etc.
+            cleaned = []
+            for char in s:
+                if not char.isprintable():
+                    continue  # Skip non-printable characters
+                
+                char_code = ord(char)
+                # Allow common punctuation (works in all ranges)
+                if char in ' -.\',':
+                    cleaned.append(char)
+                # Allow ASCII letters (A-Z, a-z)
+                elif char_code <= ASCII_MAX and char.isalpha():
+                    cleaned.append(char)
+                # Allow Latin-1 Supplement and Latin Extended letters (e.g., À, É, ñ)
+                elif ASCII_MAX < char_code <= LATIN_EXTENDED_MAX and char.isalpha():
+                    cleaned.append(char)
+                # Reject everything else (Korean, Chinese, Arabic, special symbols, etc.)
+            
+            result = ''.join(cleaned)
+            # Normalize multiple spaces to single space
+            result = re.sub(r'\s+', ' ', result)
+            return result.strip()
 
         candidate_map = {}
         # Map: normalized_name -> list of records
@@ -5251,8 +5288,10 @@ def process_upload_multiple_cvs():
             sid, cname, clink, comp, job, ctry, uname, uid = row
             norm = normalize_name(cname)
             if len(norm) < 3: continue
+            # Clean name for display to remove special characters
+            clean_cname = clean_name_for_display(cname)
             entry = {
-                "id": sid, "name": cname, "linkedinurl": clink,
+                "id": sid, "name": clean_cname, "linkedinurl": clink,
                 "company": comp, "jobtitle": job, "country": ctry,
                 "username": uname, "userid": uid
             }
@@ -5310,8 +5349,9 @@ def process_upload_multiple_cvs():
                         if r_link: pid = r_link[0]
 
                     if pid:
-                        # Update existing record
-                        cur.execute("UPDATE process SET cv=%s WHERE id=%s", (binary_cv, pid))
+                        # Update existing record - also update name to clean any special characters
+                        cleaned_name = matched_entry['name']  # Already cleaned from clean_name_for_display
+                        cur.execute("UPDATE process SET cv=%s, name=%s WHERE id=%s", (binary_cv, cleaned_name, pid))
                         conn.commit()
                         uploaded_count += 1
                         threading.Thread(target=analyze_cv_background, args=(m_link, file_bytes)).start()
