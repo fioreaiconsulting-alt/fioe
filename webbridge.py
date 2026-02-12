@@ -707,7 +707,6 @@ def gemini_analyze_jd():
     # Build sectors reference for prompt
     sectors_list = ""
     if sectors_data:
-        import json
         sectors_list = "\n\nAVAILABLE SECTORS:\n" + json.dumps(sectors_data, indent=2)
 
     # Build strict JSON request to Gemini

@@ -1417,7 +1417,7 @@ document.getElementById('deactivateTranslationBtn').addEventListener('click',()=
 document.getElementById('country').addEventListener('input',()=>{
   // Normalize "South Korea" to "Korea"
   const countryInput = document.getElementById('country');
-  const countryValue = countryInput.value;
+  const countryValue = countryInput.value.trim();
   if (countryValue.toLowerCase() === 'south korea') {
     countryInput.value = 'Korea';
   }

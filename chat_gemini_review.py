@@ -306,7 +306,6 @@ def analyze_job_description(jd_text: str, sectors_data=None):
     # Build sectors reference for prompt
     sectors_list = ""
     if sectors_data:
-        import json
         sectors_list = "\n\nAVAILABLE SECTORS:\n" + json.dumps(sectors_data, indent=2) + "\n"
 
     # Construct a careful prompt that asks for strict JSON including an "observation" field and "skills"
