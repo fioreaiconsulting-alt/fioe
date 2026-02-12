@@ -5250,6 +5250,11 @@ def process_upload_multiple_cvs():
             Preserves Latin letters (including accented characters like José, François) and common name punctuation."""
             if not s:
                 return s
+            
+            # Define Unicode ranges for allowed characters
+            ASCII_MAX = 127  # Standard ASCII (0-127)
+            LATIN_EXTENDED_MAX = 591  # Covers Latin-1 Supplement + Latin Extended A/B
+            
             # Remove non-printable characters and non-Latin Unicode characters
             # Keep only Latin letters (ASCII + Latin-1 Supplement + Latin Extended blocks),
             # spaces, hyphens, periods, apostrophes, commas
@@ -5258,10 +5263,19 @@ def process_upload_multiple_cvs():
             for char in s:
                 if not char.isprintable():
                     continue  # Skip non-printable characters
-                # Allow ASCII letters and common punctuation
-                if (ord(char) < 128 and (char.isalpha() or char in ' -.\',')) or \
-                   (128 <= ord(char) <= 591 and char.isalpha()):  # Latin-1 Supplement + Latin Extended A/B
+                
+                char_code = ord(char)
+                # Allow common punctuation (works in all ranges)
+                if char in ' -.\',':
                     cleaned.append(char)
+                # Allow ASCII letters (A-Z, a-z)
+                elif char_code <= ASCII_MAX and char.isalpha():
+                    cleaned.append(char)
+                # Allow Latin-1 Supplement and Latin Extended letters (e.g., À, É, ñ)
+                elif ASCII_MAX < char_code <= LATIN_EXTENDED_MAX and char.isalpha():
+                    cleaned.append(char)
+                # Reject everything else (Korean, Chinese, Arabic, special symbols, etc.)
+            
             result = ''.join(cleaned)
             # Normalize multiple spaces to single space
             result = re.sub(r'\s+', ' ', result)
