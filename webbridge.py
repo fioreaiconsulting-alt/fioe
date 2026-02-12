@@ -2119,8 +2119,9 @@ Return ONLY the JSON object, no other text."""
 
         # --- NEW: Ensure username and userid are persisted into process for this profile (best-effort) ---
         try:
-            # Ensure we have a normalized path (may be None)
-            normalized_path = normalized if 'normalized' in locals() else None
+            # normalized is already defined earlier in this function (initialized to None, then potentially updated)
+            # Use it directly without locals() check
+            normalized_path = normalized
 
             # Resolve userid from login if we don't have one in the request
             user_id_val = userid
@@ -2152,9 +2153,16 @@ Return ONLY the JSON object, no other text."""
                     update_values.append(user_id_val)
 
                 if update_parts:
-                    # use both normalized and linkedinurl as keys (same logic as other updates)
-                    params = list(update_values) + [normalized_path, linkedinurl]
-                    update_sql = f"UPDATE process SET {', '.join(update_parts)} WHERE normalized_linkedin = %s OR linkedinurl = %s"
+                    # Build WHERE clause - use both normalized_linkedin and linkedinurl
+                    # If normalized_path is None, only use linkedinurl to avoid matching NULL values
+                    if normalized_path:
+                        params = list(update_values) + [normalized_path, linkedinurl]
+                        # update_parts contains only hardcoded strings ('username = %s', 'userid = %s'), safe for f-string
+                        update_sql = f"UPDATE process SET {', '.join(update_parts)} WHERE normalized_linkedin = %s OR linkedinurl = %s"
+                    else:
+                        params = list(update_values) + [linkedinurl]
+                        update_sql = f"UPDATE process SET {', '.join(update_parts)} WHERE linkedinurl = %s"
+                    
                     try:
                         cur.execute(update_sql, tuple(params))
                         conn.commit()
