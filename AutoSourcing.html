@@ -2421,7 +2421,10 @@ function updateSectorEnabledState(){
 
             // AUTOMATIC ACCEPT: populate job title, sectors, country, and update UI
             try {
-              if(analyzeData.job_title && !jobTitleIndex.has(canonicalKey(analyzeData.job_title))){
+              // Track if job title was provided in JD
+              const hasJobTitleInJD = analyzeData.job_title && analyzeData.job_title.trim();
+              
+              if(hasJobTitleInJD && !jobTitleIndex.has(canonicalKey(analyzeData.job_title))){
                 jobTitles.push(analyzeData.job_title);
                 jobTitleIndex.add(canonicalKey(analyzeData.job_title));
                 renderJobTitleChips();
@@ -2492,6 +2495,45 @@ function updateSectorEnabledState(){
               // and only lock suggestions if the snapshot contains items.
               try {
                 await fetchSuggestions(true);
+                
+                // NEW: If no job title was provided in JD, auto-select the first suggested job title
+                if (!hasJobTitleInJD) {
+                  try {
+                    // Wait a moment for suggestions to be rendered
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Get the first job title suggestion from lastGeneralSuggestions or the rendered grid
+                    let firstSuggestedJob = null;
+                    
+                    // Try to get from lastGeneralSuggestions data
+                    if (lastGeneralSuggestions && lastGeneralSuggestions.job && lastGeneralSuggestions.job.related && lastGeneralSuggestions.job.related.length > 0) {
+                      firstSuggestedJob = normalizeSpaces(lastGeneralSuggestions.job.related[0]);
+                    }
+                    
+                    // Fallback: try to get from the rendered suggestions grid
+                    if (!firstSuggestedJob) {
+                      const jobGrid = document.getElementById('jobTitleSuggestionsGrid');
+                      if (jobGrid && jobGrid.children.length > 0) {
+                        const firstChip = jobGrid.children[0];
+                        if (firstChip && firstChip.textContent) {
+                          firstSuggestedJob = normalizeSpaces(firstChip.textContent);
+                        }
+                      }
+                    }
+                    
+                    // Add the suggested job title if found
+                    if (firstSuggestedJob && !jobTitleIndex.has(canonicalKey(firstSuggestedJob))) {
+                      jobTitles.push(firstSuggestedJob);
+                      jobTitleIndex.add(canonicalKey(firstSuggestedJob));
+                      renderJobTitleChips();
+                      updateFullCompiledQuery();
+                      console.log('Auto-selected job title from suggestions:', firstSuggestedJob);
+                    }
+                  } catch (autoJobErr) {
+                    console.warn('Auto-select job title from suggestions failed', autoJobErr);
+                  }
+                }
+                
                 captureSuggestionSnapshot();
                 if ((jdJobSnapshot && jdJobSnapshot.length) || (jdCompanySnapshot && jdCompanySnapshot.length)) {
                   jdSuggestionsLocked = true;
