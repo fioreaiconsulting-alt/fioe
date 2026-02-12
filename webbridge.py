@@ -1642,6 +1642,7 @@ def gemini_assess_profile():
     sector = (data.get("sector") or "").strip()
     experience_text = (data.get("experience_text") or "").strip()
     username = (data.get("username") or "").strip()
+    userid = (data.get("userid") or "").strip()
     custom_weights = data.get("custom_weights") or {}
     assessment_level = (data.get("assessment_level") or "L1").strip().upper()  # L1 or L2
     tenure = data.get("tenure")  # Average tenure value
@@ -2114,6 +2115,44 @@ Return ONLY the JSON object, no other text."""
 
             except Exception as e_js:
                 logger.warning(f"[Assess -> jskill] Sync failed: {e_js}")
+        # -----------------------------------------------------------------
+        
+        # --- NEW: Persist username and userid to process table ---
+        # Ensure username and userid are populated in process table after individual assessment
+        if username or userid:
+            try:
+                # Check which columns exist in process table
+                cur.execute("""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='process' 
+                      AND column_name IN ('username', 'userid')
+                """)
+                available_cols = {r[0] for r in cur.fetchall()}
+                
+                # Build update statement for available columns
+                updates = []
+                values = []
+                if 'username' in available_cols and username:
+                    updates.append("username = %s")
+                    values.append(username)
+                if 'userid' in available_cols and userid:
+                    updates.append("userid = %s")
+                    values.append(userid)
+                
+                if updates:
+                    update_sql = f"UPDATE process SET {', '.join(updates)} WHERE "
+                    uu_updated = 0
+                    if normalized:
+                        cur.execute(update_sql + "normalized_linkedin = %s", tuple(values + [normalized]))
+                        uu_updated = cur.rowcount
+                    if uu_updated == 0:
+                        cur.execute(update_sql + "linkedinurl = %s", tuple(values + [linkedinurl]))
+                        uu_updated = cur.rowcount
+                    conn.commit()
+                    logger.info(f"[Assess -> username/userid] Updated {uu_updated} rows with username='{username}', userid='{userid}'")
+            except Exception as e_uu:
+                logger.warning(f"[Assess -> username/userid] Update failed: {e_uu}")
         # -----------------------------------------------------------------
 
         cur.close(); conn.close()
