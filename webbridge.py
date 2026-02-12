@@ -2119,48 +2119,51 @@ Return ONLY the JSON object, no other text."""
 
         # --- NEW: Ensure username and userid are persisted into process for this profile (best-effort) ---
         try:
-            # Discover available columns once
-            cur.execute("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='process'
-                  AND column_name IN ('username','userid')
-            """)
-            proc_cols = {r[0].lower() for r in cur.fetchall()}
+            # Ensure we have a normalized path (may be None)
+            normalized_path = normalized if 'normalized' in locals() else None
 
-            # Only attempt updates if columns exist
-            if ('username' in proc_cols or 'userid' in proc_cols):
-                upd_parts = []
-                upd_vals = []
+            # Resolve userid from login if we don't have one in the request
+            user_id_val = userid
+            if not user_id_val and username:
+                try:
+                    cur.execute("SELECT userid FROM login WHERE username=%s LIMIT 1", (username,))
+                    row_uid = cur.fetchone()
+                    if row_uid and row_uid[0]:
+                        user_id_val = str(row_uid[0])
+                except Exception:
+                    pass
+
+            # Only proceed if either username or userid is present
+            if (username or user_id_val):
+                # Check process columns existence
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='process' AND column_name IN ('username','userid')
+                """)
+                proc_cols = {r[0].lower() for r in cur.fetchall()}
+
+                update_parts = []
+                update_values = []
                 if 'username' in proc_cols and username:
-                    upd_parts.append("username = %s")
-                    upd_vals.append(username)
-                if 'userid' in proc_cols and userid:
-                    upd_parts.append("userid = %s")
-                    upd_vals.append(userid)
-                if upd_parts:
-                    # Try normalized_linkedin first (if available), fallback to linkedinurl
-                    updated = 0
-                    if normalized:
-                        try:
-                            # upd_parts contains only hardcoded strings ('username = %s', 'userid = %s'), safe to use in f-string
-                            cur.execute(f"UPDATE process SET {', '.join(upd_parts)} WHERE normalized_linkedin = %s", tuple(upd_vals + [normalized]))
-                            updated = cur.rowcount
-                            conn.commit()
-                        except psycopg2.Error as e_norm:
-                            logger.warning(f"[Gemini Assess -> DB] Failed to update by normalized_linkedin: {e_norm}")
-                            conn.rollback()
-                    # If no rows updated (or normalized not provided) update by linkedinurl
-                    if updated == 0:
-                        try:
-                            cur.execute(f"UPDATE process SET {', '.join(upd_parts)} WHERE linkedinurl = %s", tuple(upd_vals + [linkedinurl]))
-                            conn.commit()
-                        except psycopg2.Error as e_link:
-                            logger.warning(f"[Gemini Assess -> DB] Failed to update by linkedinurl: {e_link}")
-                            conn.rollback()
-                    logger.info(f"[Gemini Assess -> DB] Persisted username/userid for linkedin='{linkedinurl}'")
-        except Exception as e:
-            logger.warning(f"[Gemini Assess -> DB] Failed to persist username/userid: {e}")
+                    update_parts.append("username = %s")
+                    update_values.append(username)
+                if 'userid' in proc_cols and user_id_val:
+                    update_parts.append("userid = %s")
+                    update_values.append(user_id_val)
+
+                if update_parts:
+                    # use both normalized and linkedinurl as keys (same logic as other updates)
+                    params = list(update_values) + [normalized_path, linkedinurl]
+                    update_sql = f"UPDATE process SET {', '.join(update_parts)} WHERE normalized_linkedin = %s OR linkedinurl = %s"
+                    try:
+                        cur.execute(update_sql, tuple(params))
+                        conn.commit()
+                        logger.info(f"[Gemini Assess -> DB] Updated process username/userid for linkedin='{linkedinurl}' rows={cur.rowcount}")
+                    except psycopg2.Error as e_upd_ui:
+                        conn.rollback()
+                        logger.warning(f"[Gemini Assess -> DB] Failed to update username/userid: {e_upd_ui}")
+        except Exception as e_pui:
+            logger.warning(f"[Gemini Assess -> DB] Username/Userid persist attempt failed: {e_pui}")
         # -----------------------------------------------------------------
 
         cur.close(); conn.close()
