@@ -7468,7 +7468,39 @@ def user_upload_jd():
                 for para in doc.paragraphs: extracted_text += para.text + "\n"
             except ImportError: return jsonify({"error": "python-docx not installed, cannot process DOCX"}), 500
             except Exception as e: return jsonify({"error": f"DOCX parsing error: {e}"}), 500
-        elif filename.endswith('.doc'): return jsonify({"error": "Legacy .doc format not supported. Please save as .docx or .pdf"}), 400
+        elif filename.endswith('.doc'):
+            # Try to handle legacy .doc format using textract or antiword
+            import tempfile
+            import subprocess
+            try:
+                # Save to temp file since .doc requires file-based processing
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.doc') as tmp:
+                    tmp.write(file_bytes)
+                    tmp_path = tmp.name
+                try:
+                    # Try antiword first (commonly available)
+                    result = subprocess.run(['antiword', tmp_path], capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0:
+                        extracted_text = result.stdout
+                    else:
+                        # Fallback: try textract if antiword fails
+                        try:
+                            import textract
+                            extracted_text = textract.process(tmp_path).decode('utf-8', errors='ignore')
+                        except ImportError:
+                            return jsonify({"error": "Legacy .doc format requires antiword or textract. Please install antiword or save as .docx/.pdf"}), 400
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    # antiword not found or timeout, try textract
+                    try:
+                        import textract
+                        extracted_text = textract.process(tmp_path).decode('utf-8', errors='ignore')
+                    except ImportError:
+                        return jsonify({"error": "Legacy .doc format requires antiword or textract. Please install antiword or save as .docx/.pdf"}), 400
+                finally:
+                    import os
+                    try: os.unlink(tmp_path)
+                    except: pass
+            except Exception as e: return jsonify({"error": f"DOC parsing error: {e}"}), 500
         else:
             try: extracted_text = file_bytes.decode('utf-8', errors='ignore')
             except Exception as e: return jsonify({"error": f"Text decoding error: {e}"}), 500
