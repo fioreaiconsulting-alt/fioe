@@ -1623,7 +1623,8 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
           job_family: r.job_family ?? r.jobfamily ?? null,
           sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
           type: r.product ?? null,
-          personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null)
+          personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null),
+          jskillset: r.jskillset ?? null
         };
         updatedRows.push(mapped);
       }
@@ -2889,7 +2890,8 @@ function broadcastSSE(event, data) {
     try {
       client.write(message);
     } catch (e) {
-      // Remove failed connections
+      // Log error and remove failed connections
+      console.warn('[SSE] Error broadcasting to client:', e.message);
       sseConnections.delete(client);
     }
   });
@@ -2901,7 +2903,13 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Use the same CORS origins as the rest of the app
+  const origin = req.headers.origin;
+  const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'];
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.flushHeaders();
 
   // Add this connection to the set

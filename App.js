@@ -2830,57 +2830,85 @@ export default function App() {
   // SSE & Autosave setup (only if logged in)
   const eventSourceRef = useRef(null);
   const pendingSavesRef = useRef(new Map()); // id -> timeout
+  const reconnectTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!user) return;
     let mounted = true;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
 
-    try {
-      // Create EventSource connection for SSE
-      const eventSource = new EventSource('http://localhost:4000/api/events');
-      eventSourceRef.current = eventSource;
+    const connectSSE = () => {
+      if (!mounted) return;
 
-      eventSource.addEventListener('connected', (e) => {
-        console.log('[SSE] connected', e.data);
-      });
+      try {
+        // Use relative URL or environment-based URL
+        const sseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+          ? 'http://localhost:4000/api/events'
+          : `${window.location.protocol}//${window.location.hostname}:4000/api/events`;
 
-      eventSource.addEventListener('candidate_updated', (e) => {
-        try {
-          const updated = JSON.parse(e.data);
-          if (!updated || updated.id == null) return;
-          setCandidates(prev => {
-            const exists = prev.some(c => String(c.id) === String(updated.id));
-            if (!exists) return prev;
-            return prev.map(c => (String(c.id) === String(updated.id) ? { ...c, ...updated } : c));
-          });
-          setEditRows(prev => ({ ...(prev || {}), [updated.id]: { ...(prev[updated.id] || {}), ...updated } }));
-          // Update resume candidate in view if selected
-          setResumeCandidate(prev => (prev && String(prev.id) === String(updated.id) ? { ...prev, ...updated } : prev));
-        } catch (err) {
-          console.warn('[SSE] Error parsing candidate_updated:', err);
-        }
-      });
+        const eventSource = new EventSource(sseUrl);
+        eventSourceRef.current = eventSource;
 
-      eventSource.addEventListener('candidates_changed', (e) => {
-        try {
-          const payload = JSON.parse(e.data);
-          console.log('[SSE] candidates_changed:', payload);
-          // simple reaction: refetch list
-          fetchCandidates();
-        } catch (err) {
-          console.warn('[SSE] Error parsing candidates_changed:', err);
-        }
-      });
+        eventSource.addEventListener('connected', (e) => {
+          console.log('[SSE] connected', e.data);
+          reconnectAttempts = 0; // Reset on successful connection
+        });
 
-      eventSource.onerror = (err) => {
-        console.warn('[SSE] connection error', err);
-      };
-    } catch (e) {
-      console.warn('[SSE] connection failed', e && e.message);
-    }
+        eventSource.addEventListener('candidate_updated', (e) => {
+          try {
+            const updated = JSON.parse(e.data);
+            if (!updated || updated.id == null) return;
+            setCandidates(prev => {
+              const exists = prev.some(c => String(c.id) === String(updated.id));
+              if (!exists) return prev;
+              return prev.map(c => (String(c.id) === String(updated.id) ? { ...c, ...updated } : c));
+            });
+            setEditRows(prev => ({ ...(prev || {}), [updated.id]: { ...(prev[updated.id] || {}), ...updated } }));
+            // Update resume candidate in view if selected
+            setResumeCandidate(prev => (prev && String(prev.id) === String(updated.id) ? { ...prev, ...updated } : prev));
+          } catch (err) {
+            console.warn('[SSE] Error parsing candidate_updated:', err);
+          }
+        });
+
+        eventSource.addEventListener('candidates_changed', (e) => {
+          try {
+            const payload = JSON.parse(e.data);
+            console.log('[SSE] candidates_changed:', payload);
+            // simple reaction: refetch list
+            fetchCandidates();
+          } catch (err) {
+            console.warn('[SSE] Error parsing candidates_changed:', err);
+          }
+        });
+
+        eventSource.onerror = (err) => {
+          console.warn('[SSE] connection error', err);
+          eventSource.close();
+
+          // Implement exponential backoff reconnection
+          if (mounted && reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); // Max 30s
+            console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+            reconnectTimeoutRef.current = setTimeout(connectSSE, delay);
+          } else if (reconnectAttempts >= maxReconnectAttempts) {
+            console.error('[SSE] Max reconnection attempts reached');
+          }
+        };
+      } catch (e) {
+        console.warn('[SSE] connection failed', e && e.message);
+      }
+    };
+
+    connectSSE();
 
     return () => {
       mounted = false;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       try {
         eventSourceRef.current?.close();
       } catch {}
