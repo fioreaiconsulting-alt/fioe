@@ -5243,6 +5243,18 @@ def process_upload_multiple_cvs():
             s = re.sub(r'\s*_\s*linkedin\s*$', '', s)
             # Remove all non-alphanumeric characters
             return re.sub(r'[^a-z0-9]', '', s)
+        
+        def clean_name_for_display(s):
+            """Clean special characters and artifacts from names for display.
+            Removes non-printable characters, special Unicode artifacts, and normalizes whitespace."""
+            if not s:
+                return s
+            # Remove non-printable characters and special artifacts like δïÿ
+            # Keep only ASCII letters, spaces, hyphens, apostrophes, and periods (common in names)
+            cleaned = ''.join(char for char in s if char.isprintable() and (char.isalpha() or char in ' -.\','))
+            # Normalize multiple spaces to single space
+            cleaned = re.sub(r'\s+', ' ', cleaned)
+            return cleaned.strip()
 
         candidate_map = {}
         # Map: normalized_name -> list of records
@@ -5251,8 +5263,10 @@ def process_upload_multiple_cvs():
             sid, cname, clink, comp, job, ctry, uname, uid = row
             norm = normalize_name(cname)
             if len(norm) < 3: continue
+            # Clean name for display to remove special characters
+            clean_cname = clean_name_for_display(cname)
             entry = {
-                "id": sid, "name": cname, "linkedinurl": clink,
+                "id": sid, "name": clean_cname, "linkedinurl": clink,
                 "company": comp, "jobtitle": job, "country": ctry,
                 "username": uname, "userid": uid
             }
