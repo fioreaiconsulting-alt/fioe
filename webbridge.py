@@ -7472,42 +7472,45 @@ def user_upload_jd():
             # Try to handle legacy .doc format using textract or antiword
             import tempfile
             import subprocess
-            import os
-            
-            def try_textract_extraction(file_path):
-                """Helper to try textract extraction"""
-                try:
-                    import textract
-                    return textract.process(file_path).decode('utf-8', errors='ignore')
-                except ImportError:
-                    return None
-            
             try:
                 # Save to temp file since .doc requires file-based processing
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.doc') as tmp:
                     tmp.write(file_bytes)
                     tmp_path = tmp.name
+                
+                extraction_successful = False
+                
+                # Try antiword first (commonly available on Linux)
                 try:
-                    # Try antiword first (commonly available)
                     result = subprocess.run(['antiword', tmp_path], capture_output=True, text=True, timeout=30)
-                    if result.returncode == 0:
+                    if result.returncode == 0 and result.stdout.strip():
                         extracted_text = result.stdout
-                    else:
-                        # Fallback: try textract if antiword fails
-                        extracted_text = try_textract_extraction(tmp_path)
-                        if not extracted_text:
-                            return jsonify({"error": "Legacy .doc format requires antiword or textract. Please install antiword or save as .docx/.pdf"}), 400
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    # antiword not found or timeout, try textract
-                    extracted_text = try_textract_extraction(tmp_path)
-                    if not extracted_text:
-                        return jsonify({"error": "Legacy .doc format requires antiword or textract. Please install antiword or save as .docx/.pdf"}), 400
-                finally:
+                        extraction_successful = True
+                except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                    pass  # antiword not available or failed, will try textract
+                
+                # If antiword failed, try textract
+                if not extraction_successful:
                     try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-            except Exception as e: return jsonify({"error": f"DOC parsing error: {e}"}), 500
+                        import textract
+                        extracted_text = textract.process(tmp_path).decode('utf-8', errors='ignore')
+                        if extracted_text.strip():
+                            extraction_successful = True
+                    except Exception:
+                        pass  # textract not available or failed
+                
+                # Clean up temp file
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                
+                # If neither method worked, return error
+                if not extraction_successful:
+                    return jsonify({"error": "Legacy .doc format requires antiword or textract. Please install antiword or save as .docx/.pdf"}), 400
+                    
+            except Exception as e:
+                return jsonify({"error": f"DOC parsing error: {e}"}), 500
         else:
             try: extracted_text = file_bytes.decode('utf-8', errors='ignore')
             except Exception as e: return jsonify({"error": f"Text decoding error: {e}"}), 500
