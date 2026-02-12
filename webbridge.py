@@ -2133,25 +2133,30 @@ Return ONLY the JSON object, no other text."""
                 upd_parts = []
                 upd_vals = []
                 if 'username' in proc_cols and username:
-                    upd_parts.append("username = %s"); upd_vals.append(username)
+                    upd_parts.append("username = %s")
+                    upd_vals.append(username)
                 if 'userid' in proc_cols and userid:
-                    upd_parts.append("userid = %s"); upd_vals.append(userid)
+                    upd_parts.append("userid = %s")
+                    upd_vals.append(userid)
                 if upd_parts:
                     # Try normalized_linkedin first (if available), fallback to linkedinurl
                     updated = 0
                     if normalized:
                         try:
+                            # upd_parts contains only hardcoded strings ('username = %s', 'userid = %s'), safe to use in f-string
                             cur.execute(f"UPDATE process SET {', '.join(upd_parts)} WHERE normalized_linkedin = %s", tuple(upd_vals + [normalized]))
                             updated = cur.rowcount
                             conn.commit()
-                        except Exception:
+                        except psycopg2.Error as e_norm:
+                            logger.warning(f"[Gemini Assess -> DB] Failed to update by normalized_linkedin: {e_norm}")
                             conn.rollback()
                     # If no rows updated (or normalized not provided) update by linkedinurl
                     if updated == 0:
                         try:
                             cur.execute(f"UPDATE process SET {', '.join(upd_parts)} WHERE linkedinurl = %s", tuple(upd_vals + [linkedinurl]))
                             conn.commit()
-                        except Exception:
+                        except psycopg2.Error as e_link:
+                            logger.warning(f"[Gemini Assess -> DB] Failed to update by linkedinurl: {e_link}")
                             conn.rollback()
                     logger.info(f"[Gemini Assess -> DB] Persisted username/userid for linkedin='{linkedinurl}'")
         except Exception as e:
