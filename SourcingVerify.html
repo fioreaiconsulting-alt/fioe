@@ -1468,6 +1468,24 @@ async function finalizeBulk(action, specificList = null) {
 
 // New functions for Search Result tab bulk assessment controls
 
+// Helper function to disable/enable all action buttons during bulk operations
+function setSearchResultButtonsEnabled(enabled) {
+    const buttons = [
+        'bulkUploadBtn',
+        'searchRunBulkBtn',
+        'exportExcelBtn',
+        'exportCsvBtn',
+        'marketAnalysisBtn'
+    ];
+    
+    buttons.forEach(btnId => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            btn.disabled = !enabled;
+        }
+    });
+}
+
 async function runBulkAssessmentFromSearch() {
     const uid = window.__SV_ACTIVE_USERID || '';
     if(!uid) return;
@@ -1520,6 +1538,9 @@ async function runBulkAssessmentFromSearch() {
     console.log(`[Bulk Assessment] Toggle state: ${l2Toggle?.checked}, Assessment Level: ${useL2 ? 'L2' : 'L1'}`);
     console.log(`[Bulk Assessment] Profiles to assess: ${linkedinurls.length}, Already assessed: ${alreadyAssessedUrls.length}`);
     
+    // Disable all buttons during bulk assessment
+    setSearchResultButtonsEnabled(false);
+    
     btn.disabled = true;
     const totalProfiles = linkedinurls.length + alreadyAssessedUrls.length;
     const statusMsg = useL2 ? 
@@ -1568,6 +1589,9 @@ async function runBulkAssessmentFromSearch() {
                     
                     if (pollData.status === 'done' || pollData.status === 'failed') {
                         clearInterval(pollInterval);
+                        
+                        // Re-enable all buttons when bulk assessment completes
+                        setSearchResultButtonsEnabled(true);
                         btn.disabled = false;
                         
                         if (pollData.status === 'done') {
@@ -1651,18 +1675,27 @@ async function runBulkAssessmentFromSearch() {
                 } catch(e) {
                     console.error('Poll failed', e);
                     clearInterval(pollInterval);
+                    
+                    // Re-enable all buttons on error
+                    setSearchResultButtonsEnabled(true);
                     btn.disabled = false;
                     if(progressContainer) progressContainer.style.display = 'none';
                 }
             }, 2000);
         } else {
             if(statusEl) setStatus('Failed to start bulk job.', 'error');
+            
+            // Re-enable all buttons on failure
+            setSearchResultButtonsEnabled(true);
             btn.disabled = false;
             if(progressContainer) progressContainer.style.display = 'none';
         }
     } catch(e) {
         console.error("Bulk start failed", e);
         if(statusEl) setStatus('Error starting bulk job.', 'error');
+        
+        // Re-enable all buttons on exception
+        setSearchResultButtonsEnabled(true);
         btn.disabled = false;
         if(progressContainer) progressContainer.style.display = 'none';
     }
@@ -3059,6 +3092,11 @@ function buildRow(row) {
                                 // Icons are now handled by buildRow() based on assessment score
                                 // Row is already updated in place, no full table re-render needed
                                 persistCompletedDetailRow(value);
+                                
+                                // Auto-refresh after individual assessment completion
+                                if (typeof refreshData === 'function') {
+                                    refreshData();
+                                }
 
                             } else {
                                 browseBtn.textContent = 'Upload CV';
@@ -4777,6 +4815,11 @@ function renderTable(){
                 }
                 
                 if(typeof setStatus === 'function') setStatus(`${assessmentMode} Assessment Complete`, 'success');
+                
+                // Auto-refresh after individual assessment completion
+                if (typeof refreshData === 'function') {
+                    refreshData();
+                }
             } else {
                 assessBtn2.textContent = 'Failed';
                 assessBtn2.disabled = false;
@@ -4921,6 +4964,11 @@ function renderTable(){
                 // Trigger Assessment immediately after parsing with toggle state
                 try {
                     await performCombinedAssessment(tr, anchor, analyzeData, useL2);
+                    
+                    // Auto-refresh after individual assessment completion
+                    if (typeof refreshData === 'function') {
+                        refreshData();
+                    }
                 } catch(e) {
                     console.error("Assessment failed after upload", e);
                     if (btn) {
@@ -6340,6 +6388,9 @@ if (bulkUploadBtn && bulkDirInput) {
         bulkUploadProgressText.textContent = 'Starting upload...';
 
         setStatus(`Uploading ${validFiles.length} files...`, "info");
+        
+        // Disable all buttons during bulk upload
+        setSearchResultButtonsEnabled(false);
         bulkUploadBtn.disabled = true;
         
         console.log(`[Bulk Upload] Uploading ${validFiles.length} CV files`);
@@ -6421,6 +6472,8 @@ if (bulkUploadBtn && bulkDirInput) {
             setStatus(`Upload request failed: ${e.message}`, "error");
             console.error(e);
         } finally {
+            // Re-enable all buttons when bulk upload completes
+            setSearchResultButtonsEnabled(true);
             bulkUploadBtn.disabled = false;
         }
     });

@@ -1824,6 +1824,16 @@ function updateSourcingSection() {
           highlightWrapper.classList.add('hidden');
         }
         
+        // Show/hide Skill Section when AI-Assisted Search is toggled
+        const skillAggregator = document.getElementById('skillAggregator');
+        if (skillAggregator) {
+          if (this.checked) {
+            skillAggregator.classList.remove('hidden');
+          } else {
+            skillAggregator.classList.add('hidden');
+          }
+        }
+        
         updateSourcingSection();
       });
     }
