@@ -1293,7 +1293,11 @@ function toggleAdvancedVisibility(hide){
 function persistHideAdvancedPreference(val){
   try { localStorage.setItem('hide_advanced', val ? '1' : '0'); } catch(e){}}
 function getHideAdvancedPreference(){
-  try { return localStorage.getItem('hide_advanced') === '1'; } catch(e){ return false; }
+  try { 
+    const stored = localStorage.getItem('hide_advanced');
+    // Default to true (hidden) if not set
+    return stored === null ? true : stored === '1';
+  } catch(e){ return true; }
 }
 
 async function createStructuredExcelWithDropdown(csvName){
@@ -2373,7 +2377,11 @@ function updateSectorEnabledState(){
             if (analyzeData.job_title) tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
             if (analyzeData.seniority) tagHtml += `<div><strong>Seniority:</strong> ${escapeHtml(analyzeData.seniority)}</div>`;
             if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
-            if (analyzeData.country) tagHtml += `<div><strong>Country:</strong> ${escapeHtml(analyzeData.country)}</div>`;
+            // Normalize "South Korea" to "Korea" for display
+            if (analyzeData.country) {
+              const normalizedCountry = analyzeData.country.trim().toLowerCase() === 'south korea' ? 'Korea' : analyzeData.country;
+              tagHtml += `<div><strong>Country:</strong> ${escapeHtml(normalizedCountry)}</div>`;
+            }
             if (tagsEl) tagsEl.innerHTML = tagHtml;
 
             // DO NOT DISPLAY skillset in JD analysis — persist internally (filter visualization skills)
@@ -2418,7 +2426,14 @@ function updateSectorEnabledState(){
                 });
                 renderSectorChips();
               }
-              if(analyzeData.country && !val('country')){ document.getElementById('country').value = analyzeData.country; updateSectorEnabledState(); updateFullCompiledQuery(); scheduleEstimateUpdate(); }
+              if(analyzeData.country && !val('country')){ 
+                // Normalize "South Korea" to "Korea"
+                const normalizedCountry = analyzeData.country.trim().toLowerCase() === 'south korea' ? 'Korea' : analyzeData.country;
+                document.getElementById('country').value = normalizedCountry; 
+                updateSectorEnabledState(); 
+                updateFullCompiledQuery(); 
+                scheduleEstimateUpdate(); 
+              }
 
               // NEW: Auto-select seniority dropdown based on analyzeData.seniority (map to dropdown options)
               try {

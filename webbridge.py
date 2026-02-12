@@ -7475,7 +7475,16 @@ def user_upload_jd():
                 for para in doc.paragraphs: extracted_text += para.text + "\n"
             except ImportError: return jsonify({"error": "python-docx not installed, cannot process DOCX"}), 500
             except Exception as e: return jsonify({"error": f"DOCX parsing error: {e}"}), 500
-        elif filename.endswith('.doc'): return jsonify({"error": "Legacy .doc format not supported. Please save as .docx or .pdf"}), 400
+        elif filename.endswith('.doc'):
+            import io
+            try:
+                import docx
+                doc = docx.Document(io.BytesIO(file_bytes))
+                for para in doc.paragraphs: extracted_text += para.text + "\n"
+            except ImportError: return jsonify({"error": "python-docx not installed, cannot process DOC"}), 500
+            except Exception as e:
+                # If python-docx fails for .doc, return a helpful error
+                return jsonify({"error": "Legacy .doc format not fully supported. Please save as .docx or .pdf for best results."}), 400
         else:
             try: extracted_text = file_bytes.decode('utf-8', errors='ignore')
             except Exception as e: return jsonify({"error": f"Text decoding error: {e}"}), 500
