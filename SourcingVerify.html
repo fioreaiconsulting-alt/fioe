@@ -174,7 +174,7 @@
       <button id="reloadBtn" title="Reset assessment state and refetch data">Refresh</button>
 
       <!-- Combined Bulk Assessment Button (Upload + Assessment) -->
-      <button id="bulkAssessmentBtn" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Verify the directory settings before initiating the PDF upload to the LinkedIn profile.">Bulk Assessment</button>
+      <button id="bulkAssessmentBtn" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Verify the directory settings before initiating bulk PDF upload and assessment.">Bulk Assessment</button>
       <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
       
       <!-- Hidden file input for directory upload -->
@@ -6510,13 +6510,16 @@ if (bulkAssessmentBtn && bulkDirInput) {
                 bulkUploadProgressContainer.style.display = 'none';
                 setStatus(`Upload failed: ${data.error || 'Unknown error'}`, "error");
                 alert(`Error: ${data.error}`);
+                // Re-enable buttons on upload failure (assessment not triggered)
+                setSearchResultButtonsEnabled(true);
+                bulkAssessmentBtn.disabled = false;
             }
         } catch (e) {
             bulkUploadProgressContainer.style.display = 'none';
             setStatus(`Upload request failed: ${e.message}`, "error");
             console.error(e);
-        } finally {
-            // Re-enable button (assessment function handles its own button state)
+            // Re-enable buttons on error (assessment not triggered)
+            setSearchResultButtonsEnabled(true);
             bulkAssessmentBtn.disabled = false;
         }
     });
