@@ -5086,36 +5086,47 @@ def process_upload_cv():
             binary_cv = psycopg2.Binary(file_bytes)
             normalized = _normalize_linkedin_to_path(linkedinurl)
             
-            # --- PATCH START: Insert ID from sourcing into process if exists ---
+            # --- PATCH START: Insert ID, username, userid from sourcing into process if exists ---
             sourcing_id = None
+            sourcing_username = None
+            sourcing_userid = None
             try:
                 # Discover if we have 'id' column in process first
                 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='process' AND column_name='id'")
                 has_process_id = bool(cur.fetchone())
                 
                 if has_process_id:
-                    # Try to get id from sourcing table
-                    cur.execute("SELECT id FROM sourcing WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                    # Try to get id, username, userid from sourcing table
+                    cur.execute("SELECT id, username, userid FROM sourcing WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
                     sid_row = cur.fetchone()
                     if not sid_row and normalized:
-                        cur.execute("SELECT id FROM sourcing WHERE LOWER(linkedinurl) LIKE %s LIMIT 1", (f"%{normalized}%",))
+                        cur.execute("SELECT id, username, userid FROM sourcing WHERE LOWER(linkedinurl) LIKE %s LIMIT 1", (f"%{normalized}%",))
                         sid_row = cur.fetchone()
                     
                     if sid_row:
                         sourcing_id = sid_row[0]
+                        sourcing_username = sid_row[1] if len(sid_row) > 1 else None
+                        sourcing_userid = sid_row[2] if len(sid_row) > 2 else None
             except Exception as e_id:
-                logger.warning(f"[Upload CV] Failed to lookup sourcing ID: {e_id}")
+                logger.warning(f"[Upload CV] Failed to lookup sourcing ID/username/userid: {e_id}")
             # --- PATCH END ---
 
             # Try updating by existing ID first if we found one
             updated = False
             
-            # AFFECTED: Prepare update fields including name if present
+            # AFFECTED: Prepare update fields including name, username, userid if present
             update_fields = ["cv = %s"]
             update_values = [binary_cv]
             if candidate_name:
                 update_fields.append("name = %s")
                 update_values.append(candidate_name)
+            # Add username and userid from sourcing to update
+            if sourcing_username:
+                update_fields.append("username = %s")
+                update_values.append(sourcing_username)
+            if sourcing_userid:
+                update_fields.append("userid = %s")
+                update_values.append(sourcing_userid)
             
             update_sql_fragment = ", ".join(update_fields)
 
@@ -5151,6 +5162,17 @@ def process_upload_cv():
                     if candidate_name:
                         cols.append("name")
                         vals.append(candidate_name)
+                        placeholders.append("%s")
+                    
+                    # Include username and userid from sourcing in insert
+                    if sourcing_username:
+                        cols.append("username")
+                        vals.append(sourcing_username)
+                        placeholders.append("%s")
+                    
+                    if sourcing_userid:
+                        cols.append("userid")
+                        vals.append(sourcing_userid)
                         placeholders.append("%s")
                     
                     if sourcing_id:
