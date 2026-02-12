@@ -303,6 +303,26 @@ def analyze_job_description(jd_text: str):
         result["summary"] = "I couldn't analyze an empty job description."
         return result
 
+    # Load sectors from sectors.json to provide sector reference
+    sectors_reference = ""
+    try:
+        sectors_file_path = os.path.join(os.path.dirname(__file__), "sectors.json")
+        if os.path.exists(sectors_file_path):
+            with open(sectors_file_path, 'r', encoding='utf-8') as f:
+                sectors_data = json.load(f)
+                # Format sectors for the prompt
+                sector_list = []
+                for sector_entry in sectors_data:
+                    sector_name = sector_entry.get("sector", "")
+                    domains = sector_entry.get("domains", [])
+                    if sector_name:
+                        sector_list.append(f"{sector_name}: {', '.join(domains)}")
+                if sector_list:
+                    sectors_reference = "\nAVAILABLE SECTORS (use these when identifying sector):\n" + "\n".join(sector_list) + "\n"
+    except (json.JSONDecodeError, IOError, KeyError) as e:
+        # Log or handle expected errors during sector loading
+        pass  # If sectors.json not available or invalid, continue without it
+
     # Construct a careful prompt that asks for strict JSON including an "observation" field and "skills"
     prompt = (
         "You are a recruiting assistant that extracts structured sourcing tags from a Job Description and explains the reasoning.\n"
@@ -318,7 +338,10 @@ def analyze_job_description(jd_text: str):
         "Rules:\n"
         "- Output JSON ONLY and nothing else.\n"
         "- If a field is missing, return an empty string or empty list as appropriate.\n"
-        "- For sector prefer hierarchical labels like 'Financial Services > Banking' where applicable.\n\n"
+        "- For sector: YOU MUST select ONLY from the AVAILABLE SECTORS list provided below. Do NOT create or hallucinate new sector names.\n"
+        "- If the job doesn't clearly fit any available sector, choose the closest match from the list or leave empty.\n"
+        "- For hierarchical sectors, prefer format 'Sector Name' or 'Sector Name > Domain' from the available list.\n"
+        f"{sectors_reference}\n"
         f"JOB DESCRIPTION TEXT:\n{jd_text[:15000]}\n\nJSON:"
     )
 

@@ -627,7 +627,7 @@ pre {
               </svg>
               <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;">Drag & Drop your JD here</div>
               <div style="font-size:12px; color:var(--text-soft); margin-bottom:12px;">or</div>
-              <input type="file" id="jdFileInput" accept=".pdf,.docx,.txt" style="display:none;">
+              <input type="file" id="jdFileInput" accept=".pdf,.doc,.docx,.txt" style="display:none;">
               <button type="button" id="browseJdBtn" class="mini-btn" style="padding:8px 20px; font-size:13px;">Browse Files</button>
               <div id="jdFileName" style="font-size:12px; color:var(--text); margin-top:12px; font-weight:500;"></div>
               <span id="jdUploadSpinner" class="spinner hidden" style="width:16px; height:16px; border-width:2px; margin-top:12px;"></span>
@@ -1414,7 +1414,26 @@ document.getElementById('activateTranslationBtn').addEventListener('click',()=>{
   setTranslationMode(true,lang);
 });
 document.getElementById('deactivateTranslationBtn').addEventListener('click',()=>setTranslationMode(false));
+// Helper function to normalize location input
+function normalizeLocation(value) {
+  if (!value) return value;
+  const trimmed = value.trim();
+  // Normalize "South Korea" to "Korea" (case-insensitive)
+  if (trimmed.toLowerCase() === 'south korea') {
+    return 'Korea';
+  }
+  return trimmed;
+}
+
 document.getElementById('country').addEventListener('input',()=>{
+  // Normalize "South Korea" to "Korea"
+  const countryInput = document.getElementById('country');
+  if(countryInput) {
+    const normalized = normalizeLocation(countryInput.value);
+    if (normalized !== countryInput.value) {
+      countryInput.value = normalized;
+    }
+  }
   if(translationActive){
     const lang=detectTargetLang(val('country'));
     if(!lang || lang!==translationLang) setTranslationMode(false);
@@ -1854,9 +1873,19 @@ function updateSourcingSection() {
     const countryInput = document.getElementById('country');
     if (countryInput) {
       countryInput.addEventListener('input', function() {
+        // Normalize location on input
+        const normalized = normalizeLocation(this.value);
+        if (normalized !== this.value) {
+          this.value = normalized;
+        }
         updateSourcingSection();
       });
       countryInput.addEventListener('change', function() {
+        // Normalize location on change
+        const normalized = normalizeLocation(this.value);
+        if (normalized !== this.value) {
+          this.value = normalized;
+        }
         updateSourcingSection();
       });
     }
