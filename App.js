@@ -3684,6 +3684,73 @@ export default function App() {
     saveCandidateDebounced(id, { skillset: newSkillset, lskillset: newLSkillset });
   };
 
+  // Helper to normalize vskillset array
+  function normalizeVskillArray(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.filter(Boolean);
+    if (typeof raw === 'object') {
+      // If it's an object with numeric keys, convert to array
+      const keys = Object.keys(raw).filter(k => !isNaN(k)).sort((a, b) => Number(a) - Number(b));
+      return keys.map(k => raw[k]).filter(Boolean);
+    }
+    return [];
+  }
+
+  // Handler to accept a verified skill (move to main skillset)
+  const handleAcceptVskill = (vskillItem) => {
+    if (!resumeCandidate) return;
+    
+    const skillName = vskillItem.skill || (typeof vskillItem === 'string' ? vskillItem : '');
+    if (!skillName) return;
+    
+    // Add to main skillset
+    const currentSkills = resumeCandidate.skillset ? String(resumeCandidate.skillset).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+    if (!currentSkills.some(s => s.toLowerCase() === skillName.toLowerCase())) {
+      currentSkills.push(skillName);
+    }
+    const newSkillset = currentSkills.join(', ');
+    
+    // Remove from vskillset
+    const currentVskills = normalizeVskillArray(resumeCandidate.vskillset);
+    const updatedVskills = currentVskills.filter(v => {
+      const vName = v.skill || (typeof v === 'string' ? v : '');
+      return vName.toLowerCase() !== skillName.toLowerCase();
+    });
+    
+    const id = resumeCandidate.id;
+    
+    // Update state
+    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, skillset: newSkillset, vskillset: updatedVskills } : c));
+    setResumeCandidate(prev => ({ ...prev, skillset: newSkillset, vskillset: updatedVskills }));
+    
+    // Save to backend
+    saveCandidateDebounced(id, { skillset: newSkillset, vskillset: JSON.stringify(updatedVskills) });
+  };
+
+  // Handler to dismiss a verified skill (remove from vskillset)
+  const handleDismissVskill = (vskillItem) => {
+    if (!resumeCandidate) return;
+    
+    const skillName = vskillItem.skill || (typeof vskillItem === 'string' ? vskillItem : '');
+    if (!skillName) return;
+    
+    // Remove from vskillset
+    const currentVskills = normalizeVskillArray(resumeCandidate.vskillset);
+    const updatedVskills = currentVskills.filter(v => {
+      const vName = v.skill || (typeof v === 'string' ? v : '');
+      return vName.toLowerCase() !== skillName.toLowerCase();
+    });
+    
+    const id = resumeCandidate.id;
+    
+    // Update state
+    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, vskillset: updatedVskills } : c));
+    setResumeCandidate(prev => ({ ...prev, vskillset: updatedVskills }));
+    
+    // Save to backend
+    saveCandidateDebounced(id, { vskillset: JSON.stringify(updatedVskills) });
+  };
+
   const handleResumeEmailCheck = (idx) => {
     setResumeEmailList(prev => prev.map((item, i) => i === idx ? { ...item, checked: !item.checked } : item));
   };
@@ -4285,6 +4352,7 @@ export default function App() {
                                                 <th>Probability</th>
                                                 <th>Category</th>
                                                 <th>Reason</th>
+                                                <th style={{ width: 140, textAlign: 'center' }}>Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -4316,6 +4384,41 @@ export default function App() {
                                                             </span>
                                                         </td>
                                                         <td style={{ color: '#6b7280', fontSize: 11 }}>{item.reason || ''}</td>
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            <button
+                                                                onClick={() => handleAcceptVskill(item)}
+                                                                style={{
+                                                                    padding: '4px 8px',
+                                                                    marginRight: 4,
+                                                                    background: '#10b981',
+                                                                    color: 'white',
+                                                                    border: 'none',
+                                                                    borderRadius: 4,
+                                                                    fontSize: 11,
+                                                                    fontWeight: 600,
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                                title="Accept skill and add to main skillset"
+                                                            >
+                                                                ✓ Accept
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDismissVskill(item)}
+                                                                style={{
+                                                                    padding: '4px 8px',
+                                                                    background: '#ef4444',
+                                                                    color: 'white',
+                                                                    border: 'none',
+                                                                    borderRadius: 4,
+                                                                    fontSize: 11,
+                                                                    fontWeight: 600,
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                                title="Dismiss skill from verified list"
+                                                            >
+                                                                ✕ Dismiss
+                                                            </button>
+                                                        </td>
                                                     </tr>
                                                 );
                                             })}
