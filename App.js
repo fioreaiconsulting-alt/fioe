@@ -2953,7 +2953,7 @@ export default function App() {
       // defensive: don't crash UI if something unexpected is present
       console.warn('[vskillset] auto-expand check failed', e);
     }
-  }, [resumeCandidate?.id]); // Only trigger on candidate change, not on vskillset updates
+  }, [resumeCandidate?.id, vskillsetExpanded]); // Include vskillsetExpanded to avoid stale closure
 
   // Category colors for verified skillset
   const VSKILLSET_CATEGORY_COLORS = {
