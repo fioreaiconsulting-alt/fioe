@@ -2964,6 +2964,47 @@ export default function App() {
     'Unknown': '#9ca3af'
   };
 
+  // Helper function to render star rating from text or number
+  const renderStarRating = (starsValue) => {
+    if (!starsValue) return null;
+    
+    // If it's a string with star characters, count them
+    let starCount = 0;
+    if (typeof starsValue === 'string') {
+      // Count ★ or ⭐ characters
+      const fullStars = (starsValue.match(/[★⭐]/g) || []).length;
+      // Also try to parse as number if it's like "4.5" or "5"
+      const numMatch = starsValue.match(/(\d+\.?\d*)/);
+      if (numMatch) {
+        starCount = parseFloat(numMatch[1]);
+      } else {
+        starCount = fullStars;
+      }
+    } else if (typeof starsValue === 'number') {
+      starCount = starsValue;
+    }
+    
+    // Cap at 5 stars
+    starCount = Math.min(starCount, 5);
+    
+    // Generate star display
+    const stars = [];
+    for (let i = 1; i <= 5; i++) {
+      if (i <= Math.floor(starCount)) {
+        // Full star
+        stars.push(<span key={i} style={{ color: '#fbbf24', fontSize: 20 }}>★</span>);
+      } else if (i === Math.ceil(starCount) && starCount % 1 !== 0) {
+        // Half star (for decimals)
+        stars.push(<span key={i} style={{ color: '#fbbf24', fontSize: 20 }}>⯨</span>);
+      } else {
+        // Empty star
+        stars.push(<span key={i} style={{ color: '#d1d5db', fontSize: 20 }}>★</span>);
+      }
+    }
+    
+    return <div style={{ display: 'flex', gap: 2 }}>{stars}</div>;
+  };
+
   // Token state - only Account Token and Tokens Left
   const [accountTokens, setAccountTokens] = useState(0);
   const [tokensLeft, setTokensLeft] = useState(0);
@@ -4363,18 +4404,18 @@ export default function App() {
                         </div>
                     </div>
 
-                    {/* Verified Skillset Details Section */}
-                    {resumeCandidate.vskillset && Array.isArray(resumeCandidate.vskillset) && resumeCandidate.vskillset.length > 0 && (
-                        <div className="vskillset-section">
-                            <div 
-                                className="vskillset-header"
-                                onClick={() => setVskillsetExpanded(!vskillsetExpanded)}
-                            >
-                                <span className="vskillset-title">Verified Skillset Details</span>
-                                <span className="vskillset-arrow">{vskillsetExpanded ? '▼' : '▶'}</span>
-                            </div>
-                            {vskillsetExpanded && (
-                                <div style={{ overflowX: 'auto' }}>
+                    {/* Verified Skillset Details Section - Always visible */}
+                    <div className="vskillset-section">
+                        <div 
+                            className="vskillset-header"
+                            onClick={() => setVskillsetExpanded(!vskillsetExpanded)}
+                        >
+                            <span className="vskillset-title">Verified Skillset Details</span>
+                            <span className="vskillset-arrow">{vskillsetExpanded ? '▼' : '▶'}</span>
+                        </div>
+                        {vskillsetExpanded && (
+                            <div style={{ overflowX: 'auto' }}>
+                                {resumeCandidate.vskillset && Array.isArray(resumeCandidate.vskillset) && resumeCandidate.vskillset.length > 0 ? (
                                     <table className="vskillset-table">
                                         <thead>
                                             <tr>
@@ -4382,7 +4423,6 @@ export default function App() {
                                                 <th>Probability</th>
                                                 <th>Category</th>
                                                 <th>Reason</th>
-                                                <th style={{ width: 140, textAlign: 'center' }}>Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -4414,50 +4454,24 @@ export default function App() {
                                                             </span>
                                                         </td>
                                                         <td style={{ color: '#6b7280', fontSize: 11 }}>{item.reason || ''}</td>
-                                                        <td style={{ textAlign: 'center' }}>
-                                                            <button
-                                                                onClick={() => handleAcceptVskill(item)}
-                                                                style={{
-                                                                    padding: '4px 8px',
-                                                                    marginRight: 4,
-                                                                    background: '#10b981',
-                                                                    color: 'white',
-                                                                    border: 'none',
-                                                                    borderRadius: 4,
-                                                                    fontSize: 11,
-                                                                    fontWeight: 600,
-                                                                    cursor: 'pointer'
-                                                                }}
-                                                                title="Accept skill and add to main skillset"
-                                                            >
-                                                                ✓ Accept
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDismissVskill(item)}
-                                                                style={{
-                                                                    padding: '4px 8px',
-                                                                    background: '#ef4444',
-                                                                    color: 'white',
-                                                                    border: 'none',
-                                                                    borderRadius: 4,
-                                                                    fontSize: 11,
-                                                                    fontWeight: 600,
-                                                                    cursor: 'pointer'
-                                                                }}
-                                                                title="Dismiss skill from verified list"
-                                                            >
-                                                                ✕ Dismiss
-                                                            </button>
-                                                        </td>
                                                     </tr>
                                                 );
                                             })}
                                         </tbody>
                                     </table>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                                ) : (
+                                    <div style={{ 
+                                        padding: '20px', 
+                                        textAlign: 'center', 
+                                        color: '#6b7280',
+                                        fontSize: 14
+                                    }}>
+                                        No verified skills available for this candidate.
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
 
                     <div style={{ marginBottom: 24 }}>
                         <h3 style={{ fontSize: 16, fontWeight: 700, borderBottom: '2px solid var(--neutral-border)', paddingBottom: 8, marginBottom: 12, color: 'var(--black-beauty)' }}>Experience</h3>
@@ -4527,8 +4541,8 @@ export default function App() {
                                                 {r.stars && (
                                                     <tr>
                                                         <td style={{ fontWeight: 600, color: '#374151' }}>Rating</td>
-                                                        <td style={{ fontSize: 20 }}>
-                                                            {r.stars}
+                                                        <td>
+                                                            {renderStarRating(r.stars)}
                                                         </td>
                                                     </tr>
                                                 )}
