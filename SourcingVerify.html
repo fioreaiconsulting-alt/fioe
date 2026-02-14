@@ -1030,25 +1030,25 @@ function generateAssessmentHTML(data) {
     if (data.category_appraisals && typeof data.category_appraisals === 'object' && !Array.isArray(data.category_appraisals)) {
         const categories = Object.entries(data.category_appraisals);
         if (categories.length > 0) {
-            categoryAppraisalsHtml = '<div class="category-appraisals" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">';
-            categoryAppraisalsHtml += '<div style="font-weight: 600; font-size: 13px; color: #374151; margin-bottom: 8px;">Category Breakdown</div>';
-            categoryAppraisalsHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">';
+            categoryAppraisalsHtml = '<div class="category-appraisals">';
+            categoryAppraisalsHtml += '<div class="category-appraisals-title">Category Breakdown</div>';
+            categoryAppraisalsHtml += '<table class="category-appraisals-table">';
+            categoryAppraisalsHtml += '<thead><tr><th>Category</th><th>Weight</th><th>Rating</th></tr></thead>';
+            categoryAppraisalsHtml += '<tbody>';
             
             categories.forEach(([category, details]) => {
                 const weightPercent = details.weight_percent || 0;
                 const starString = details.star_string || '';
                 categoryAppraisalsHtml += `
-                    <div style="display: flex; flex-direction: column; padding: 6px 8px; background: #f9fafb; border-radius: 4px;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                            <span style="color: #6b7280; font-weight: 500;">${escapeHtml(category)}</span>
-                            <span style="color: #9ca3af; font-size: 11px;">(${weightPercent}%)</span>
-                        </div>
-                        <div style="color: #f59e0b; font-size: 14px; letter-spacing: 1px;">${starString}</div>
-                    </div>
+                    <tr>
+                        <td class="category-name">${escapeHtml(category)}</td>
+                        <td class="category-weight">${weightPercent}%</td>
+                        <td class="category-rating">${starString}</td>
+                    </tr>
                 `;
             });
             
-            categoryAppraisalsHtml += '</div></div>';
+            categoryAppraisalsHtml += '</tbody></table></div>';
         }
     }
     
@@ -3723,25 +3723,25 @@ async function triggerLevel1Assessment(tr, anchor) {
             const categories = Object.entries(data.category_appraisals);
             console.log('[Assessment L1] category_appraisals entries:', categories.length, categories);
             if (categories.length > 0) {
-                categoryAppraisalsHtml = '<div class="category-appraisals" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">';
-                categoryAppraisalsHtml += '<div style="font-weight: 600; font-size: 13px; color: #374151; margin-bottom: 8px;">Category Breakdown</div>';
-                categoryAppraisalsHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">';
+                categoryAppraisalsHtml = '<div class="category-appraisals">';
+                categoryAppraisalsHtml += '<div class="category-appraisals-title">Category Breakdown</div>';
+                categoryAppraisalsHtml += '<table class="category-appraisals-table">';
+                categoryAppraisalsHtml += '<thead><tr><th>Category</th><th>Weight</th><th>Rating</th></tr></thead>';
+                categoryAppraisalsHtml += '<tbody>';
                 
                 categories.forEach(([category, details]) => {
                     const weightPercent = details.weight_percent || 0;
                     const starString = details.star_string || '';
                     categoryAppraisalsHtml += `
-                        <div style="display: flex; flex-direction: column; padding: 6px 8px; background: #f9fafb; border-radius: 4px;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span style="color: #6b7280; font-weight: 500;">${escapeHtml(category)}</span>
-                                <span style="color: #9ca3af; font-size: 11px;">(${weightPercent}%)</span>
-                            </div>
-                            <div style="color: #f59e0b; font-size: 14px; letter-spacing: 1px;">${starString}</div>
-                        </div>
+                        <tr>
+                            <td class="category-name">${escapeHtml(category)}</td>
+                            <td class="category-weight">${weightPercent}%</td>
+                            <td class="category-rating">${starString}</td>
+                        </tr>
                     `;
                 });
                 
-                categoryAppraisalsHtml += '</div></div>';
+                categoryAppraisalsHtml += '</tbody></table></div>';
             }
         } else {
             console.log('[Assessment L1] No category_appraisals in data:', data);
@@ -4025,25 +4025,25 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
             const categories = Object.entries(data.category_appraisals);
             console.log('[Assessment L2] category_appraisals entries:', categories.length, categories);
             if (categories.length > 0) {
-                categoryAppraisalsHtml = '<div class="category-appraisals" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">';
-                categoryAppraisalsHtml += '<div style="font-weight: 600; font-size: 13px; color: #374151; margin-bottom: 8px;">Category Breakdown</div>';
-                categoryAppraisalsHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">';
+                categoryAppraisalsHtml = '<div class="category-appraisals">';
+                categoryAppraisalsHtml += '<div class="category-appraisals-title">Category Breakdown</div>';
+                categoryAppraisalsHtml += '<table class="category-appraisals-table">';
+                categoryAppraisalsHtml += '<thead><tr><th>Category</th><th>Weight</th><th>Rating</th></tr></thead>';
+                categoryAppraisalsHtml += '<tbody>';
                 
                 categories.forEach(([category, details]) => {
                     const weightPercent = details.weight_percent || 0;
                     const starString = details.star_string || '';
                     categoryAppraisalsHtml += `
-                        <div style="display: flex; flex-direction: column; padding: 6px 8px; background: #f9fafb; border-radius: 4px;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span style="color: #6b7280; font-weight: 500;">${escapeHtml(category)}</span>
-                                <span style="color: #9ca3af; font-size: 11px;">(${weightPercent}%)</span>
-                            </div>
-                            <div style="color: #f59e0b; font-size: 14px; letter-spacing: 1px;">${starString}</div>
-                        </div>
+                        <tr>
+                            <td class="category-name">${escapeHtml(category)}</td>
+                            <td class="category-weight">${weightPercent}%</td>
+                            <td class="category-rating">${starString}</td>
+                        </tr>
                     `;
                 });
                 
-                categoryAppraisalsHtml += '</div></div>';
+                categoryAppraisalsHtml += '</tbody></table></div>';
             }
         } else {
             console.log('[Assessment L2] No category_appraisals in data:', data);
