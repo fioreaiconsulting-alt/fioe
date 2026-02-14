@@ -876,7 +876,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
         try {
           parsedVskillset = JSON.parse(r.vskillset);
         } catch (e) {
-          console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e);
+          console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e.message);
           parsedVskillset = null;
         }
       }
@@ -887,7 +887,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
         try {
           parsedRating = JSON.parse(r.rating);
         } catch (e) {
-          console.warn('[/candidates] Failed to parse rating for candidate:', r.id, e);
+          console.warn('[/candidates] Failed to parse rating for candidate:', r.id, e.message);
           parsedRating = r.rating; // Keep as string if parse fails
         }
       }
