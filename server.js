@@ -324,16 +324,72 @@ function safeParseJSONField(raw) {
   const s = raw.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
   if (!s) return null;
 
-  // only attempt parse if it looks like JSON (starts with { or [)
-  if (!/^[\{\[]/.test(s)) return raw;
-
-  try {
-    return JSON.parse(s);
-  } catch (e) {
-    // parsing failed — return original string so we don't lose data
-    console.debug('[safeParseJSONField] parse failed:', e.message);
-    return raw;
+  // Case A: Starts with normal JSON object/array -> parse directly
+  if (/^[\{\[]/.test(s)) {
+    try {
+      return JSON.parse(s);
+    } catch (e) {
+      console.debug('[safeParseJSONField] direct JSON.parse failed:', e.message);
+      // fallthrough to try other heuristics
+    }
   }
+
+  // Case B: PostgreSQL array literal of JSON strings:
+  // Example: {"{\"skill\":\"Site Activation\",\"probability\":95}", "{\"skill\":\"...\"}", ...}
+  if (/^\{\s*\"/.test(s) && s.endsWith('}')) {
+    try {
+      // Remove outer braces
+      const inner = s.slice(1, -1);
+
+      // Split on '","' boundaries — this is safe for typical pg array string output
+      // but we'll be defensive about escaped quotes.
+      // First replace '","' that are delimiting elements (not \" inside elements).
+      // A simple (and typically sufficient) approach is to split on "," and then
+      // recombine parts that contain unbalanced quotes. We'll do a robust scan:
+      const parts = [];
+      let cur = '';
+      let inQuotes = false;
+      for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i];
+        cur += ch;
+        if (ch === '"' && inner[i-1] !== '\\') inQuotes = !inQuotes;
+        // when not in quotes and we see a comma that is the separator
+        if (!inQuotes && ch === ',') {
+          // remove trailing comma from current part
+          parts.push(cur.slice(0, -1));
+          cur = '';
+        }
+      }
+      if (cur.length) parts.push(cur);
+
+      // Now normalize each element: strip surrounding quotes if present and unescape backslashes
+      const parsedElems = parts.map(el => {
+        let sEl = el.trim();
+        // If element is wrapped in double quotes, remove them
+        if (sEl.startsWith('"') && sEl.endsWith('"')) {
+          sEl = sEl.slice(1, -1);
+        }
+        // Unescape Postgres-style escaping for double quotes and backslashes
+        sEl = sEl.replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+        // Try parse the element (it should be a JSON object string)
+        try {
+          return JSON.parse(sEl);
+        } catch (e) {
+          // If parse fails, return the cleaned string so caller can inspect
+          console.debug('[safeParseJSONField] element JSON.parse failed, returning raw element:', e.message);
+          return sEl;
+        }
+      });
+
+      return parsedElems;
+    } catch (e) {
+      console.debug('[safeParseJSONField] pg-array heuristic failed:', e.message);
+      return raw;
+    }
+  }
+
+  // Fallback: return original string (not JSON)
+  return raw;
 }
 
 // Try to parse vskillset and persist normalized JSON (stringified) when parse succeeds.
@@ -341,12 +397,9 @@ function safeParseJSONField(raw) {
 async function parseAndPersistVskillset(id, raw) {
   const parsed = safeParseJSONField(raw);
 
-  // If parsed is an object (successful parse) and original was a string,
-  // persist the normalized JSON string back to the DB so future reads are consistent.
-  // Use a defensive update (only when original is string and parsed is object)
-  if (parsed && typeof parsed === 'object' && typeof raw === 'string') {
+  // If parsed is an object/array and original was a string, persist the normalized JSON string back to the DB
+  if (parsed && (typeof parsed === 'object') && typeof raw === 'string') {
     try {
-      // store the normalized JSON string (keeps column type unchanged if TEXT)
       await pool.query('UPDATE "process" SET vskillset = $1 WHERE id = $2', [JSON.stringify(parsed), id]);
     } catch (err) {
       console.warn('[parseAndPersistVskillset] failed to persist normalized vskillset for id', id, err && err.message);
