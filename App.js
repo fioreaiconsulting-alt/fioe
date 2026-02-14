@@ -4243,12 +4243,7 @@ export default function App() {
                                     <button 
                                         onClick={handleCalculateUnmatched}
                                         disabled={calculatingUnmatched}
-                                        className="btn-primary"
-                                        style={{
-                                            marginLeft: 12,
-                                            padding: '4px 12px',
-                                            fontSize: 12
-                                        }}
+                                        className="btn-primary btn-calculate"
                                     >
                                         {calculatingUnmatched ? 'Calculating...' : 'Calculate Unmatched'}
                                     </button>

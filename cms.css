@@ -957,6 +957,12 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 }
 .btn-primary:disabled { opacity: .6; cursor: not-allowed; transform: none; box-shadow: none; }
 
+.btn-calculate {
+  margin-left: 12px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
 .btn-secondary {
   background: #fff;
   border: 1px solid var(--neutral-border);
@@ -1004,7 +1010,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 /* Small utility classes */
 .skill-bubble {
   display: inline-block;
-  padding: 6px 32px 6px 14px;
+  padding: 6px 14px;
   margin: 0;
   border-radius: 20px;
   background: #dcfce7;
@@ -1016,8 +1022,13 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
   position: relative;
 }
 
+/* Only add extra padding when remove button is present (via parent selector) */
+.skillset-container .skill-bubble {
+  padding-right: 32px; /* Extra space for remove button */
+}
+
 .skill-bubble.unmatched {
-  padding: 6px 14px;
+  padding: 6px 14px; /* No remove button on unmatched skills */
   background: #fee2e2;
   border-color: #fca5a5;
   color: #991b1b;
