@@ -4154,21 +4154,9 @@ export default function App() {
                     </div>
 
                     <div style={{ marginBottom: 24 }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 12, color: '#1f2937' }}>Skillset (Drag skills here or from here)</h3>
+                        <h3 className="skillset-header">Skillset (Drag skills here or from here)</h3>
                         <div 
-                            style={{ 
-                                padding: 16, 
-                                background: '#ffffff', 
-                                borderRadius: 8, 
-                                border: '2px dashed #d1d5db', 
-                                minHeight: 80, 
-                                lineHeight: '1.6',
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                gap: 8,
-                                alignItems: 'flex-start',
-                                alignContent: 'flex-start'
-                            }}
+                            className="skillset-container"
                             title="Drag Skills here or from here"
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => {
@@ -4187,18 +4175,7 @@ export default function App() {
                                     return (
                                         <span 
                                             key={i} 
-                                            style={{ 
-                                                display: 'inline-block',
-                                                padding: '6px 32px 6px 14px',
-                                                background: '#dcfce7',
-                                                border: '1px solid #86efac',
-                                                borderRadius: 20,
-                                                fontSize: 13,
-                                                fontWeight: 500,
-                                                color: '#166534',
-                                                cursor: 'grab',
-                                                position: 'relative'
-                                            }}
+                                            className="skill-bubble"
                                             draggable="true"
                                             onDragStart={(e) => {
                                                 e.dataTransfer.setData('skill', s);
@@ -4208,25 +4185,7 @@ export default function App() {
                                             {s}
                                             <button
                                                 onClick={() => handleRemoveSkill(s)}
-                                                style={{
-                                                    position: 'absolute',
-                                                    right: 8,
-                                                    top: '50%',
-                                                    transform: 'translateY(-50%)',
-                                                    background: 'transparent',
-                                                    border: 'none',
-                                                    color: '#166534',
-                                                    cursor: 'pointer',
-                                                    fontSize: 16,
-                                                    fontWeight: 'bold',
-                                                    padding: 0,
-                                                    width: 18,
-                                                    height: 18,
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    lineHeight: 1
-                                                }}
+                                                className="remove-btn"
                                                 title="Remove skill"
                                             >
                                                 ×
@@ -4239,21 +4198,9 @@ export default function App() {
                     </div>
 
                     <div style={{ marginBottom: 24 }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 12, color: '#1f2937' }}>Unmatched Skillset (Drag skills here or from here)</h3>
+                        <h3 className="skillset-header">Unmatched Skillset (Drag skills here or from here)</h3>
                         <div 
-                            style={{ 
-                                padding: 16, 
-                                background: '#ffffff', 
-                                borderRadius: 8, 
-                                border: '2px dashed #d1d5db', 
-                                minHeight: 80, 
-                                lineHeight: '1.6',
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                gap: 8,
-                                alignItems: 'flex-start',
-                                alignContent: 'flex-start'
-                            }}
+                            className="skillset-container"
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => {
                                 e.preventDefault();
@@ -4279,17 +4226,7 @@ export default function App() {
                                         return (
                                             <span 
                                                 key={i} 
-                                                style={{
-                                                    display: 'inline-block',
-                                                    padding: '6px 14px',
-                                                    background: '#fee2e2',
-                                                    border: '1px solid #fca5a5',
-                                                    borderRadius: 20,
-                                                    fontSize: 13,
-                                                    fontWeight: 500,
-                                                    color: '#991b1b',
-                                                    cursor: 'grab'
-                                                }}
+                                                className="skill-bubble unmatched"
                                                 draggable="true"
                                                 onDragStart={(e) => {
                                                     e.dataTransfer.setData('skill', s);
@@ -4306,16 +4243,11 @@ export default function App() {
                                     <button 
                                         onClick={handleCalculateUnmatched}
                                         disabled={calculatingUnmatched}
+                                        className="btn-primary"
                                         style={{
                                             marginLeft: 12,
                                             padding: '4px 12px',
-                                            background: 'linear-gradient(180deg, #3b82f6, #2563eb)',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: 6,
-                                            fontSize: 12,
-                                            fontWeight: 600,
-                                            cursor: 'pointer'
+                                            fontSize: 12
                                         }}
                                     >
                                         {calculatingUnmatched ? 'Calculating...' : 'Calculate Unmatched'}
@@ -4327,64 +4259,23 @@ export default function App() {
 
                     {/* Verified Skillset Details Section */}
                     {resumeCandidate.vskillset && Array.isArray(resumeCandidate.vskillset) && resumeCandidate.vskillset.length > 0 && (
-                        <div style={{ marginBottom: 24 }}>
+                        <div className="vskillset-section">
                             <div 
+                                className="vskillset-header"
                                 onClick={() => setVskillsetExpanded(!vskillsetExpanded)}
-                                style={{ 
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    padding: '8px 12px',
-                                    background: '#f9fafb',
-                                    border: '1px solid #e5e7eb',
-                                    borderRadius: 6,
-                                    marginBottom: 8
-                                }}
                             >
-                                <span style={{ fontWeight: 600, fontSize: 13, color: '#374151' }}>Verified Skillset Details</span>
-                                <span style={{ color: '#6b7280', fontSize: 12 }}>{vskillsetExpanded ? '▼' : '▶'}</span>
+                                <span className="vskillset-title">Verified Skillset Details</span>
+                                <span className="vskillset-arrow">{vskillsetExpanded ? '▼' : '▶'}</span>
                             </div>
                             {vskillsetExpanded && (
                                 <div style={{ overflowX: 'auto' }}>
-                                    <table style={{ 
-                                        width: '100%', 
-                                        borderCollapse: 'collapse', 
-                                        fontSize: 12,
-                                        background: '#ffffff',
-                                        border: '1px solid #e5e7eb',
-                                        borderRadius: 6
-                                    }}>
+                                    <table className="vskillset-table">
                                         <thead>
-                                            <tr style={{ background: '#f9fafb' }}>
-                                                <th style={{ 
-                                                    textAlign: 'left', 
-                                                    padding: 8, 
-                                                    borderBottom: '2px solid #e5e7eb', 
-                                                    fontWeight: 600,
-                                                    color: '#374151'
-                                                }}>Skill</th>
-                                                <th style={{ 
-                                                    textAlign: 'left', 
-                                                    padding: 8, 
-                                                    borderBottom: '2px solid #e5e7eb', 
-                                                    fontWeight: 600,
-                                                    color: '#374151'
-                                                }}>Probability</th>
-                                                <th style={{ 
-                                                    textAlign: 'left', 
-                                                    padding: 8, 
-                                                    borderBottom: '2px solid #e5e7eb', 
-                                                    fontWeight: 600,
-                                                    color: '#374151'
-                                                }}>Category</th>
-                                                <th style={{ 
-                                                    textAlign: 'left', 
-                                                    padding: 8, 
-                                                    borderBottom: '2px solid #e5e7eb', 
-                                                    fontWeight: 600,
-                                                    color: '#374151'
-                                                }}>Reason</th>
+                                            <tr>
+                                                <th>Skill</th>
+                                                <th>Probability</th>
+                                                <th>Category</th>
+                                                <th>Reason</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -4403,10 +4294,10 @@ export default function App() {
                                                 const categoryColor = VSKILLSET_CATEGORY_COLORS[category] || VSKILLSET_CATEGORY_COLORS['Unknown'];
                                                 
                                                 return (
-                                                    <tr key={idx} style={{ borderBottom: idx < resumeCandidate.vskillset.length - 1 ? '1px solid #e5e7eb' : 'none' }}>
-                                                        <td style={{ padding: 8, color: '#1f2937' }}>{item.skill || ''}</td>
-                                                        <td style={{ padding: 8, color: '#1f2937' }}>{probabilityValue}</td>
-                                                        <td style={{ padding: 8 }}>
+                                                    <tr key={idx}>
+                                                        <td style={{ color: '#1f2937' }}>{item.skill || ''}</td>
+                                                        <td style={{ color: '#1f2937' }}>{probabilityValue}</td>
+                                                        <td>
                                                             <span style={{ 
                                                                 color: categoryColor, 
                                                                 fontWeight: 600,
@@ -4415,7 +4306,7 @@ export default function App() {
                                                                 {category}
                                                             </span>
                                                         </td>
-                                                        <td style={{ padding: 8, color: '#6b7280', fontSize: 11 }}>{item.reason || ''}</td>
+                                                        <td style={{ color: '#6b7280', fontSize: 11 }}>{item.reason || ''}</td>
                                                     </tr>
                                                 );
                                             })}
@@ -4446,104 +4337,44 @@ export default function App() {
                     {/* Professional Assessment Table Display */}
                     {resumeCandidate.rating && (
                         <div style={{ marginBottom: 24 }}>
-                            <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 12, color: '#1f2937' }}>Candidate Assessment</h3>
+                            <h3 className="skillset-header">Candidate Assessment</h3>
                             <div style={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                                 {resumeCandidate.rating && typeof resumeCandidate.rating === 'object' && resumeCandidate.rating.assessment_level ? (
                                     // Professional table format for structured assessment
-                                    <table style={{ 
-                                        width: '100%', 
-                                        borderCollapse: 'collapse',
-                                        fontSize: 14
-                                    }}>
+                                    <table className="assessment-table">
                                         <thead>
-                                            <tr style={{ background: '#5b8def', color: 'white' }}>
-                                                <th style={{ 
-                                                    padding: '14px 16px', 
-                                                    textAlign: 'left', 
-                                                    fontWeight: 700,
-                                                    fontSize: 13,
-                                                    textTransform: 'uppercase',
-                                                    letterSpacing: '0.5px'
-                                                }}>CATEGORY</th>
-                                                <th style={{ 
-                                                    padding: '14px 16px', 
-                                                    textAlign: 'left', 
-                                                    fontWeight: 700,
-                                                    fontSize: 13,
-                                                    textTransform: 'uppercase',
-                                                    letterSpacing: '0.5px'
-                                                }}>DETAILS</th>
+                                            <tr>
+                                                <th>CATEGORY</th>
+                                                <th>DETAILS</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                                <td style={{ 
-                                                    padding: '12px 16px', 
-                                                    fontWeight: 600,
-                                                    color: '#374151',
-                                                    width: '35%'
-                                                }}>Assessment Level</td>
-                                                <td style={{ 
-                                                    padding: '12px 16px',
-                                                    color: '#1f2937',
-                                                    fontWeight: 600
-                                                }}>
-                                                    <span style={{
-                                                        background: '#5b8def',
-                                                        color: 'white',
-                                                        padding: '6px 16px',
-                                                        borderRadius: 6,
-                                                        fontSize: 13,
-                                                        fontWeight: 700,
-                                                        display: 'inline-block'
-                                                    }}>
+                                            <tr>
+                                                <td style={{ fontWeight: 600, color: '#374151', width: '35%' }}>Assessment Level</td>
+                                                <td style={{ fontWeight: 600 }}>
+                                                    <span className="assessment-badge">
                                                         {resumeCandidate.rating.assessment_level}
                                                     </span>
                                                 </td>
                                             </tr>
-                                            <tr style={{ background: '#ffffff', borderBottom: '1px solid #e5e7eb' }}>
-                                                <td style={{ 
-                                                    padding: '12px 16px', 
-                                                    fontWeight: 600,
-                                                    color: '#374151'
-                                                }}>Overall Score</td>
-                                                <td style={{ 
-                                                    padding: '12px 16px',
-                                                    color: '#5b8def',
-                                                    fontWeight: 700,
-                                                    fontSize: 18
-                                                }}>
+                                            <tr>
+                                                <td style={{ fontWeight: 600, color: '#374151' }}>Overall Score</td>
+                                                <td style={{ color: '#5b8def', fontWeight: 700, fontSize: 18 }}>
                                                     {resumeCandidate.rating.total_score || 'N/A'}
                                                 </td>
                                             </tr>
                                             {resumeCandidate.rating.stars && (
-                                                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                                    <td style={{ 
-                                                        padding: '12px 16px', 
-                                                        fontWeight: 600,
-                                                        color: '#374151'
-                                                    }}>Rating</td>
-                                                    <td style={{ 
-                                                        padding: '12px 16px',
-                                                        fontSize: 18
-                                                    }}>
+                                                <tr>
+                                                    <td style={{ fontWeight: 600, color: '#374151' }}>Rating</td>
+                                                    <td style={{ fontSize: 18 }}>
                                                         {resumeCandidate.rating.stars}
                                                     </td>
                                                 </tr>
                                             )}
                                             {resumeCandidate.rating.overall_comment && (
-                                                <tr style={{ background: '#ffffff', borderBottom: '1px solid #e5e7eb' }}>
-                                                    <td style={{ 
-                                                        padding: '12px 16px', 
-                                                        fontWeight: 600,
-                                                        color: '#374151',
-                                                        verticalAlign: 'top'
-                                                    }}>Executive Summary</td>
-                                                    <td style={{ 
-                                                        padding: '12px 16px',
-                                                        color: '#1e40af',
-                                                        lineHeight: 1.6
-                                                    }}>
+                                                <tr>
+                                                    <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Executive Summary</td>
+                                                    <td style={{ color: '#1e40af', lineHeight: 1.6 }}>
                                                         <div style={{ 
                                                             padding: 12, 
                                                             background: '#eff6ff', 
@@ -4557,18 +4388,9 @@ export default function App() {
                                                 </tr>
                                             )}
                                             {resumeCandidate.rating.comments && (
-                                                <tr style={{ background: '#f9fafb' }}>
-                                                    <td style={{ 
-                                                        padding: '12px 16px', 
-                                                        fontWeight: 600,
-                                                        color: '#374151',
-                                                        verticalAlign: 'top'
-                                                    }}>Recruiter Notes</td>
-                                                    <td style={{ 
-                                                        padding: '12px 16px',
-                                                        color: '#374151',
-                                                        lineHeight: 1.6
-                                                    }}>
+                                                <tr>
+                                                    <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Recruiter Notes</td>
+                                                    <td style={{ color: '#374151', lineHeight: 1.6 }}>
                                                         <div style={{ 
                                                             padding: 12, 
                                                             background: '#ffffff', 
