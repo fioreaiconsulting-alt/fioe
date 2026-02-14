@@ -3685,7 +3685,7 @@ export default function App() {
   };
 
   // Helper to normalize vskillset array
-  function normalizeVskillArray(raw) {
+  const normalizeVskillArray = (raw) => {
     if (!raw) return [];
     if (Array.isArray(raw)) return raw.filter(Boolean);
     if (typeof raw === 'object') {
@@ -3694,7 +3694,18 @@ export default function App() {
       return keys.map(k => raw[k]).filter(Boolean);
     }
     return [];
-  }
+  };
+
+  // Helper to parse skillset string into array
+  const parseSkillsetString = (skillsetStr) => {
+    return skillsetStr ? String(skillsetStr).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+  };
+
+  // Helper to update candidate in both state locations
+  const updateCandidateState = (id, updates) => {
+    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, ...updates } : c));
+    setResumeCandidate(prev => ({ ...prev, ...updates }));
+  };
 
   // Handler to accept a verified skill (move to main skillset)
   const handleAcceptVskill = (vskillItem) => {
@@ -3704,7 +3715,7 @@ export default function App() {
     if (!skillName) return;
     
     // Add to main skillset
-    const currentSkills = resumeCandidate.skillset ? String(resumeCandidate.skillset).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+    const currentSkills = parseSkillsetString(resumeCandidate.skillset);
     if (!currentSkills.some(s => s.toLowerCase() === skillName.toLowerCase())) {
       currentSkills.push(skillName);
     }
@@ -3718,10 +3729,10 @@ export default function App() {
     });
     
     const id = resumeCandidate.id;
+    const updates = { skillset: newSkillset, vskillset: updatedVskills };
     
     // Update state
-    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, skillset: newSkillset, vskillset: updatedVskills } : c));
-    setResumeCandidate(prev => ({ ...prev, skillset: newSkillset, vskillset: updatedVskills }));
+    updateCandidateState(id, updates);
     
     // Save to backend
     saveCandidateDebounced(id, { skillset: newSkillset, vskillset: JSON.stringify(updatedVskills) });
@@ -3742,10 +3753,10 @@ export default function App() {
     });
     
     const id = resumeCandidate.id;
+    const updates = { vskillset: updatedVskills };
     
     // Update state
-    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, vskillset: updatedVskills } : c));
-    setResumeCandidate(prev => ({ ...prev, vskillset: updatedVskills }));
+    updateCandidateState(id, updates);
     
     // Save to backend
     saveCandidateDebounced(id, { vskillset: JSON.stringify(updatedVskills) });
