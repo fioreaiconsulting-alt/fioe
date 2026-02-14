@@ -785,6 +785,7 @@ document.addEventListener('DOMContentLoaded', loadWeights);
 let pendingReviewRows = [];
 let bulkJobId = null;
 let bulkPollInterval = null;
+let bulkPollEventSource = null;  // NEW: SSE connection for bulk assessment
 
 /* Helper: safely find element by id */
 function $id(id) { return document.getElementById(id); }
@@ -1030,25 +1031,25 @@ function generateAssessmentHTML(data) {
     if (data.category_appraisals && typeof data.category_appraisals === 'object' && !Array.isArray(data.category_appraisals)) {
         const categories = Object.entries(data.category_appraisals);
         if (categories.length > 0) {
-            categoryAppraisalsHtml = '<div class="category-appraisals" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">';
-            categoryAppraisalsHtml += '<div style="font-weight: 600; font-size: 13px; color: #374151; margin-bottom: 8px;">Category Breakdown</div>';
-            categoryAppraisalsHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">';
+            categoryAppraisalsHtml = '<div class="category-appraisals">';
+            categoryAppraisalsHtml += '<div class="category-appraisals-title">Category Breakdown</div>';
+            categoryAppraisalsHtml += '<table class="category-appraisals-table">';
+            categoryAppraisalsHtml += '<thead><tr><th>Category</th><th>Weightage Score</th><th>Rating</th></tr></thead>';
+            categoryAppraisalsHtml += '<tbody>';
             
             categories.forEach(([category, details]) => {
                 const weightPercent = details.weight_percent || 0;
                 const starString = details.star_string || '';
                 categoryAppraisalsHtml += `
-                    <div style="display: flex; flex-direction: column; padding: 6px 8px; background: #f9fafb; border-radius: 4px;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                            <span style="color: #6b7280; font-weight: 500;">${escapeHtml(category)}</span>
-                            <span style="color: #9ca3af; font-size: 11px;">(${weightPercent}%)</span>
-                        </div>
-                        <div style="color: #f59e0b; font-size: 14px; letter-spacing: 1px;">${starString}</div>
-                    </div>
+                    <tr>
+                        <td class="category-name">${escapeHtml(category)}</td>
+                        <td class="category-weight">${weightPercent}%</td>
+                        <td class="category-rating">${starString}</td>
+                    </tr>
                 `;
             });
             
-            categoryAppraisalsHtml += '</div></div>';
+            categoryAppraisalsHtml += '</tbody></table></div>';
         }
     }
     
@@ -1445,61 +1446,73 @@ async function runBulkAssessment() {
 function pollBulkJob() {
     if(!bulkJobId) return;
     
-    if(bulkPollInterval) clearInterval(bulkPollInterval);
-    bulkPollInterval = setInterval(async () => {
+    // NEW: Use EventSource for Server-Sent Events (SSE) - FASTER sync mechanism
+    if(bulkPollEventSource) {
+        bulkPollEventSource.close();
+    }
+    
+    bulkPollEventSource = new EventSource(`/process/bulk_assess_stream/${bulkJobId}`);
+    
+    bulkPollEventSource.onmessage = (event) => {
         try {
-            const res = await fetch(`/process/bulk_assess_status/${bulkJobId}`);
-            const data = await res.json();
+            const data = JSON.parse(event.data);
             
-            if(res.ok) {
-                // Update UI
-                const processed = data.processed || 0;
-                const total = data.total || 1;
-                const pct = Math.round((processed / total) * 100);
+            // Update UI
+            const processed = data.processed || 0;
+            const total = data.total || 1;
+            const pct = Math.round((processed / total) * 100);
+            
+            document.getElementById('bulkProgressBar').style.width = pct + '%';
+            document.getElementById('bulkProgressPercent').textContent = pct + '%';
+            document.getElementById('reviewStatus').textContent = `Processing: ${processed}/${total}`;
+            
+            // Refresh list periodically to show completed items
+            // Note: Assessment Review removed - refresh handled in Search Result tab
+            
+            if (data.status === 'done' || data.status === 'error') {
+                bulkPollEventSource.close();
+                bulkJobId = null;
+                document.getElementById('runBulkBtn').disabled = false;
+                document.getElementById('reviewStatus').textContent = data.status === 'done' ? 'Bulk Assessment Complete.' : 'Job finished with errors.';
                 
-                document.getElementById('bulkProgressBar').style.width = pct + '%';
-                document.getElementById('bulkProgressPercent').textContent = pct + '%';
-                document.getElementById('reviewStatus').textContent = `Processing: ${processed}/${total}`;
-                
-                // Refresh list periodically to show completed items
-                // Note: Assessment Review removed - refresh handled in Search Result tab
-                
-                if (data.status === 'done' || data.status === 'error') {
-                    clearInterval(bulkPollInterval);
-                    bulkJobId = null;
-                    document.getElementById('runBulkBtn').disabled = false;
-                    document.getElementById('reviewStatus').textContent = data.status === 'done' ? 'Bulk Assessment Complete.' : 'Job finished with errors.';
-                    
-                    // Apply results from JSON file to the table
-                    if (data.status === 'done' && data.results && Array.isArray(data.results)) {
-                        applyBulkAssessmentResults(data.results);
-                        // Refresh the assessment review table to show updated scores
-                        renderAssessmentReviewTable(pendingReviewRows);
-                    }
-                    
-                    // Set all assessed profiles to "view" state in Assessment Review tab
-                    if (data.status === 'done') {
-                        setAllAssessedToViewState();
-                    }
-                    
-                    // Refresh removed - Assessment Review tab no longer exists
-                    
-                    // Auto-refresh Search Result tab while keeping user on current tab
-                    if (data.status === 'done') {
-                        refreshSearchResultsInBackground();
-                        
-                        // *** FIX: Auto-refresh View Details tab if currently viewing a profile ***
-                        autoRefreshViewDetailsIfActive();
-                    }
-                    
-                    // Show completion alert?
-                    // if(data.status === 'done') alert('Bulk Assessment Complete');
+                // Apply results from JSON file to the table
+                if (data.status === 'done' && data.results && Array.isArray(data.results)) {
+                    applyBulkAssessmentResults(data.results);
+                    // Refresh the assessment review table to show updated scores
+                    renderAssessmentReviewTable(pendingReviewRows);
                 }
+                
+                // Set all assessed profiles to "view" state in Assessment Review tab
+                if (data.status === 'done') {
+                    setAllAssessedToViewState();
+                }
+                
+                // Refresh removed - Assessment Review tab no longer exists
+                
+                // Auto-refresh Search Result tab while keeping user on current tab
+                if (data.status === 'done') {
+                    refreshSearchResultsInBackground();
+                    
+                    // *** FIX: Auto-refresh View Details tab if currently viewing a profile ***
+                    autoRefreshViewDetailsIfActive();
+                }
+                
+                // Show completion alert?
+                // if(data.status === 'done') alert('Bulk Assessment Complete');
             }
         } catch(e) {
-            console.warn("Poll failed", e);
+            console.warn("SSE message parse failed", e);
+            bulkPollEventSource.close();
         }
-    }, 2000);
+    };
+    
+    bulkPollEventSource.onerror = (error) => {
+        console.error("SSE connection error in pollBulkJob", error);
+        bulkPollEventSource.close();
+        bulkJobId = null;
+        document.getElementById('runBulkBtn').disabled = false;
+        document.getElementById('reviewStatus').textContent = 'Connection error during bulk assessment';
+    };
 }
 
 function refreshSearchResultsInBackground() {
@@ -1716,7 +1729,7 @@ async function runBulkAssessmentFromSearch() {
         const data = await res.json();
         
         if (res.ok && data.job_id) {
-            // Poll for progress
+            // Use Server-Sent Events (SSE) for real-time progress updates (FASTER than polling)
             const jobId = data.job_id;
             
             // Animation timing constants
@@ -1729,13 +1742,16 @@ async function runBulkAssessmentFromSearch() {
             linkedinurls.forEach(url => animateButtonDuringBulkAssessment(url, 'analyzing'));
             
             let processedCount = 0;
-            const pollInterval = setInterval(async () => {
+            
+            // NEW: Use EventSource for Server-Sent Events (SSE) - FASTER sync mechanism
+            const eventSource = new EventSource(`/process/bulk_assess_stream/${jobId}`);
+            
+            eventSource.onmessage = (event) => {
                 try {
-                    const pollRes = await fetch(`/process/bulk_assess_status/${jobId}`, {credentials: 'same-origin'});
-                    const pollData = await pollRes.json();
+                    const pollData = JSON.parse(event.data);
                     
                     if (pollData.status === 'done' || pollData.status === 'failed') {
-                        clearInterval(pollInterval);
+                        eventSource.close();
                         
                         // Re-enable all buttons when bulk assessment completes
                         setSearchResultButtonsEnabled(true);
@@ -1820,15 +1836,26 @@ async function runBulkAssessmentFromSearch() {
                         }
                     }
                 } catch(e) {
-                    console.error('Poll failed', e);
-                    clearInterval(pollInterval);
+                    console.error('SSE message parse failed', e);
+                    eventSource.close();
                     
                     // Re-enable all buttons on error
                     setSearchResultButtonsEnabled(true);
                     if (btn) btn.disabled = false;
                     if(progressContainer) progressContainer.style.display = 'none';
                 }
-            }, 2000);
+            };
+            
+            eventSource.onerror = (error) => {
+                console.error('SSE connection error', error);
+                eventSource.close();
+                
+                // Re-enable all buttons on error
+                setSearchResultButtonsEnabled(true);
+                if (btn) btn.disabled = false;
+                if(progressContainer) progressContainer.style.display = 'none';
+                if(statusEl) setStatus('Connection error during bulk assessment', 'error');
+            };
         } else {
             if(statusEl) setStatus('Failed to start bulk job.', 'error');
             
@@ -3723,25 +3750,25 @@ async function triggerLevel1Assessment(tr, anchor) {
             const categories = Object.entries(data.category_appraisals);
             console.log('[Assessment L1] category_appraisals entries:', categories.length, categories);
             if (categories.length > 0) {
-                categoryAppraisalsHtml = '<div class="category-appraisals" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">';
-                categoryAppraisalsHtml += '<div style="font-weight: 600; font-size: 13px; color: #374151; margin-bottom: 8px;">Category Breakdown</div>';
-                categoryAppraisalsHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">';
+                categoryAppraisalsHtml = '<div class="category-appraisals">';
+                categoryAppraisalsHtml += '<div class="category-appraisals-title">Category Breakdown</div>';
+                categoryAppraisalsHtml += '<table class="category-appraisals-table">';
+                categoryAppraisalsHtml += '<thead><tr><th>Category</th><th>Weightage Score</th><th>Rating</th></tr></thead>';
+                categoryAppraisalsHtml += '<tbody>';
                 
                 categories.forEach(([category, details]) => {
                     const weightPercent = details.weight_percent || 0;
                     const starString = details.star_string || '';
                     categoryAppraisalsHtml += `
-                        <div style="display: flex; flex-direction: column; padding: 6px 8px; background: #f9fafb; border-radius: 4px;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span style="color: #6b7280; font-weight: 500;">${escapeHtml(category)}</span>
-                                <span style="color: #9ca3af; font-size: 11px;">(${weightPercent}%)</span>
-                            </div>
-                            <div style="color: #f59e0b; font-size: 14px; letter-spacing: 1px;">${starString}</div>
-                        </div>
+                        <tr>
+                            <td class="category-name">${escapeHtml(category)}</td>
+                            <td class="category-weight">${weightPercent}%</td>
+                            <td class="category-rating">${starString}</td>
+                        </tr>
                     `;
                 });
                 
-                categoryAppraisalsHtml += '</div></div>';
+                categoryAppraisalsHtml += '</tbody></table></div>';
             }
         } else {
             console.log('[Assessment L1] No category_appraisals in data:', data);
@@ -4025,25 +4052,25 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
             const categories = Object.entries(data.category_appraisals);
             console.log('[Assessment L2] category_appraisals entries:', categories.length, categories);
             if (categories.length > 0) {
-                categoryAppraisalsHtml = '<div class="category-appraisals" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">';
-                categoryAppraisalsHtml += '<div style="font-weight: 600; font-size: 13px; color: #374151; margin-bottom: 8px;">Category Breakdown</div>';
-                categoryAppraisalsHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">';
+                categoryAppraisalsHtml = '<div class="category-appraisals">';
+                categoryAppraisalsHtml += '<div class="category-appraisals-title">Category Breakdown</div>';
+                categoryAppraisalsHtml += '<table class="category-appraisals-table">';
+                categoryAppraisalsHtml += '<thead><tr><th>Category</th><th>Weightage Score</th><th>Rating</th></tr></thead>';
+                categoryAppraisalsHtml += '<tbody>';
                 
                 categories.forEach(([category, details]) => {
                     const weightPercent = details.weight_percent || 0;
                     const starString = details.star_string || '';
                     categoryAppraisalsHtml += `
-                        <div style="display: flex; flex-direction: column; padding: 6px 8px; background: #f9fafb; border-radius: 4px;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span style="color: #6b7280; font-weight: 500;">${escapeHtml(category)}</span>
-                                <span style="color: #9ca3af; font-size: 11px;">(${weightPercent}%)</span>
-                            </div>
-                            <div style="color: #f59e0b; font-size: 14px; letter-spacing: 1px;">${starString}</div>
-                        </div>
+                        <tr>
+                            <td class="category-name">${escapeHtml(category)}</td>
+                            <td class="category-weight">${weightPercent}%</td>
+                            <td class="category-rating">${starString}</td>
+                        </tr>
                     `;
                 });
                 
-                categoryAppraisalsHtml += '</div></div>';
+                categoryAppraisalsHtml += '</tbody></table></div>';
             }
         } else {
             console.log('[Assessment L2] No category_appraisals in data:', data);

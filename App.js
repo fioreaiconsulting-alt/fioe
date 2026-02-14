@@ -4,7 +4,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { Tree, TreeNode } from 'react-organizational-chart';
-import './sourcing_verify.css'; // switched to Sourcing_Verify theme
+import './cms.css'; // Using cms.css for styling
 // Admin feature removed (AdminUploadButton not imported)
 
 /* ========================= CONSTANTS ========================= */
@@ -1723,7 +1723,7 @@ function CandidatesTable({
                           </span>
                           : f.key === 'sourcing_status' ? (
                             <select
-                              value={displayValue || 'Reviewing'}
+                              value={displayValue || 'Bank'}
                               onChange={e => handleEditChange(c.id, f.key, e.target.value)}
                               style={{
                                 width: '100%',
@@ -2744,7 +2744,7 @@ export default function App() {
   const [tokensLeft, setTokensLeft] = useState(0);
 
   // Status Management State
-  const DEFAULT_STATUSES = ['Reviewing', 'Contacted', 'Unresponsive', 'Declined', 'Unavailable', 'Screened', 'Not Proceeding', 'Prospected'];
+  const DEFAULT_STATUSES = ['Bank', 'Reviewing', 'Contacted', 'Unresponsive', 'Declined', 'Unavailable', 'Screened', 'Not Proceeding', 'Prospected'];
   const [statusOptions, setStatusOptions] = useState(DEFAULT_STATUSES);
   const [statusModalOpen, setStatusModalOpen] = useState(false);
 
@@ -3892,7 +3892,10 @@ export default function App() {
 
                     <div style={{ marginBottom: 24 }}>
                         <h3 style={{ fontSize: 16, fontWeight: 700, borderBottom: '2px solid var(--neutral-border)', paddingBottom: 8, marginBottom: 12, color: 'var(--black-beauty)' }}>Skillset</h3>
-                        <div style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)', minHeight: 60, lineHeight: '1.6' }}>
+                        <div 
+                            style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)', minHeight: 60, lineHeight: '1.6' }}
+                            title="Drag Skills here or from here"
+                        >
                             {resumeCandidate.skillset ? (
                                 String(resumeCandidate.skillset).split(/[;,|]+/).map((skill, i) => {
                                     const s = skill.trim();
