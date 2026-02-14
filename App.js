@@ -4329,100 +4329,147 @@ export default function App() {
                         </div>
                     )}
 
-                    {/* Professional Assessment Table Display */}
-                    {resumeCandidate.rating && (
-                        <div style={{ marginBottom: 24 }}>
-                            <h3 className="skillset-header">Candidate Assessment</h3>
-                            <div style={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                                {resumeCandidate.rating && typeof resumeCandidate.rating === 'object' && resumeCandidate.rating.assessment_level ? (
-                                    // Professional table format for structured assessment
-                                    <table className="assessment-table">
-                                        <thead>
-                                            <tr>
-                                                <th>CATEGORY</th>
-                                                <th>DETAILS</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr>
-                                                <td style={{ fontWeight: 600, color: '#374151', width: '25%' }}>Assessment Level</td>
-                                                <td style={{ fontWeight: 600 }}>
-                                                    <span className="assessment-badge">
-                                                        {resumeCandidate.rating.assessment_level}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td style={{ fontWeight: 600, color: '#374151' }}>Overall Score</td>
-                                                <td style={{ color: '#5b8def', fontWeight: 700, fontSize: 24 }}>
-                                                    {resumeCandidate.rating.total_score || 'N/A'}
-                                                </td>
-                                            </tr>
-                                            {resumeCandidate.rating.stars && (
+                    {/* Professional Assessment Table Display - Robust version with JSON parsing */}
+                    {(() => {
+                        if (!resumeCandidate || !resumeCandidate.rating) return null;
+
+                        // Normalize rating to an object if possible
+                        let ratingRaw = resumeCandidate.rating;
+                        let ratingObj = null;
+                        if (typeof ratingRaw === 'string') {
+                            // attempt to parse JSON safely
+                            try {
+                                const parsed = JSON.parse(ratingRaw);
+                                if (parsed && typeof parsed === 'object') ratingObj = parsed;
+                            } catch (e) {
+                                // not JSON — leave ratingRaw as-is (string)
+                                ratingObj = null;
+                            }
+                        } else if (typeof ratingRaw === 'object') {
+                            ratingObj = ratingRaw;
+                        }
+
+                        // If we have a structured rating object with assessment_level, render the professional table
+                        if (ratingObj && ratingObj.assessment_level) {
+                            const r = ratingObj;
+                            return (
+                                <div style={{ marginBottom: 24 }}>
+                                    <h3 className="skillset-header">Candidate Assessment</h3>
+                                    <div style={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                                        <table className="assessment-table">
+                                            <thead>
                                                 <tr>
-                                                    <td style={{ fontWeight: 600, color: '#374151' }}>Rating</td>
-                                                    <td style={{ fontSize: 20 }}>
-                                                        {resumeCandidate.rating.stars}
+                                                    <th>CATEGORY</th>
+                                                    <th>DETAILS</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td style={{ fontWeight: 600, color: '#374151', width: '25%' }}>Assessment Level</td>
+                                                    <td style={{ fontWeight: 600 }}>
+                                                        <span className="assessment-badge">
+                                                            {r.assessment_level}
+                                                        </span>
                                                     </td>
                                                 </tr>
-                                            )}
-                                            {resumeCandidate.rating.overall_comment && (
                                                 <tr>
-                                                    <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Executive Summary</td>
-                                                    <td>
-                                                        <div style={{ 
-                                                            padding: 16, 
-                                                            background: '#dbeafe', 
-                                                            borderLeft: '4px solid #5b8def', 
-                                                            borderRadius: 4,
-                                                            fontSize: 14,
-                                                            color: '#1e40af',
-                                                            lineHeight: 1.6
-                                                        }}>
-                                                            {resumeCandidate.rating.overall_comment}
-                                                        </div>
+                                                    <td style={{ fontWeight: 600, color: '#374151' }}>Overall Score</td>
+                                                    <td style={{ color: '#5b8def', fontWeight: 700, fontSize: 24 }}>
+                                                        {r.total_score || 'N/A'}
                                                     </td>
                                                 </tr>
-                                            )}
-                                            {resumeCandidate.rating.comments && (
-                                                <tr>
-                                                    <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Recruiter Notes</td>
-                                                    <td>
-                                                        <div style={{ 
-                                                            padding: 16, 
-                                                            background: '#f9fafb', 
-                                                            borderRadius: 4,
-                                                            border: '1px solid #e5e7eb',
-                                                            whiteSpace: 'pre-wrap',
-                                                            fontSize: 14,
-                                                            color: '#374151',
-                                                            lineHeight: 1.6
-                                                        }}>
-                                                            {resumeCandidate.rating.comments}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                                ) : resumeCandidate.rating ? (
-                                    // Simple text rating with improved formatting
-                                    <div>
-                                        <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
-                                            Assessment Notes
-                                        </div>
-                                        <div style={{ fontSize: 14, lineHeight: 1.8, color: '#374151' }}>
-                                            {String(resumeCandidate.rating).split('\n').map((para, idx) => (
-                                                <p key={idx} style={{ marginBottom: 12, marginTop: 0, paddingLeft: 12, borderLeft: '3px solid #e5e7eb' }}>
-                                                    {para}
-                                                </p>
-                                            ))}
-                                        </div>
+                                                {r.stars && (
+                                                    <tr>
+                                                        <td style={{ fontWeight: 600, color: '#374151' }}>Rating</td>
+                                                        <td style={{ fontSize: 20 }}>
+                                                            {r.stars}
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {r.overall_comment && (
+                                                    <tr>
+                                                        <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Executive Summary</td>
+                                                        <td>
+                                                            <div style={{ 
+                                                                padding: 16, 
+                                                                background: '#dbeafe', 
+                                                                borderLeft: '4px solid #5b8def', 
+                                                                borderRadius: 4,
+                                                                fontSize: 14,
+                                                                color: '#1e40af',
+                                                                lineHeight: 1.6
+                                                            }}>
+                                                                {r.overall_comment}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {r.comments && (
+                                                    <tr>
+                                                        <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Recruiter Notes</td>
+                                                        <td>
+                                                            <div style={{ 
+                                                                padding: 16, 
+                                                                background: '#f9fafb', 
+                                                                borderRadius: 4,
+                                                                border: '1px solid #e5e7eb',
+                                                                whiteSpace: 'pre-wrap',
+                                                                fontSize: 14,
+                                                                color: '#374151',
+                                                                lineHeight: 1.6
+                                                            }}>
+                                                                {r.comments}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
                                     </div>
-                                ) : null}
+                                </div>
+                            );
+                        }
+
+                        // If we have an object but no assessment_level, pretty-print the object for readability
+                        if (ratingObj && typeof ratingObj === 'object') {
+                            return (
+                                <div style={{ marginBottom: 24 }}>
+                                    <h3 className="skillset-header">Candidate Assessment</h3>
+                                    <div style={{ 
+                                        padding: 12, 
+                                        background: '#fff', 
+                                        border: '1px solid var(--neutral-border)', 
+                                        borderRadius: 8, 
+                                        fontFamily: 'monospace', 
+                                        whiteSpace: 'pre-wrap', 
+                                        fontSize: 12, 
+                                        color: '#334155'
+                                    }}>
+                                        {JSON.stringify(ratingObj, null, 2)}
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        // Fallback: rating is a string (non-JSON) — preserve previous behavior but render with paragraph styling
+                        return (
+                            <div style={{ marginBottom: 24 }}>
+                                <h3 className="skillset-header">Candidate Assessment</h3>
+                                <div style={{ padding: 12, background: '#fff', border: '1px solid var(--neutral-border)', borderRadius: 8 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
+                                        Assessment Notes
+                                    </div>
+                                    <div style={{ fontSize: 14, lineHeight: 1.8, color: '#374151' }}>
+                                        {String(ratingRaw).split('\n').map((para, idx) => (
+                                            <p key={idx} style={{ marginBottom: 12, marginTop: 0, paddingLeft: 12, borderLeft: '3px solid #e5e7eb' }}>
+                                                {para}
+                                            </p>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                 </div>
             )}
