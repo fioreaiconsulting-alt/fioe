@@ -1345,6 +1345,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     personal: 'personal',
     seniority: 'seniority',
     lskillset: 'lskillset',
+    vskillset: 'vskillset',
     linkedinurl: 'linkedinurl',
     comment: 'comment'
   };
