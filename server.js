@@ -380,8 +380,12 @@ function safeParseJSONField(raw) {
         if (sEl.startsWith('"') && sEl.endsWith('"')) {
           sEl = sEl.slice(1, -1);
         }
-        // Unescape Postgres-style escaping - do \\\\ first, then \"
-        sEl = sEl.replace(/\\\\/g, '\\').replace(/\\"/g, '"');
+        // Unescape Postgres-style escaping in one pass to avoid double-unescaping
+        sEl = sEl.replace(/\\(.)/g, (match, char) => {
+          if (char === '\\') return '\\';
+          if (char === '"') return '"';
+          return match; // keep other escaped characters as-is
+        });
         // Try parse the element (it should be a JSON object string)
         try {
           return JSON.parse(sEl);
