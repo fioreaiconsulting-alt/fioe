@@ -2945,7 +2945,7 @@ export default function App() {
   // Auto-expand Verified Skillset panel when resumeCandidate has vskillset entries
   useEffect(() => {
     try {
-      if (resumeCandidate && Array.isArray(resumeCandidate.vskillset) && resumeCandidate.vskillset.length > 0) {
+      if (resumeCandidate?.vskillset?.length > 0) {
         setVskillsetExpanded(true);
       } else {
         setVskillsetExpanded(false);
