@@ -11,7 +11,7 @@ import requests
 import io
 import hashlib
 import difflib
-from flask import Flask, request, send_from_directory, jsonify, abort
+from flask import Flask, request, send_from_directory, jsonify, abort, Response, stream_with_context
 
 # Import DispatcherMiddleware to mount the second app
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
@@ -7497,6 +7497,140 @@ def process_bulk_status(job_id):
             logger.warning(f"[BulkAssessStatus] Failed to load results for {job_id}: {e}")
     
     return jsonify(job_response)
+
+@app.get("/process/bulk_assess_stream/<job_id>")
+def process_bulk_assess_stream(job_id):
+    """
+    Server-Sent Events (SSE) endpoint for real-time bulk assessment progress.
+    Streams progress updates to the client instead of requiring polling.
+    """
+    def generate_events():
+        """Generator function that yields SSE-formatted messages."""
+        last_status = None
+        last_progress = -1
+        
+        while True:
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+            
+            if not job:
+                yield f"event: error\ndata: {json.dumps({'error': 'Job not found'})}\n\n"
+                break
+            
+            # Calculate current progress
+            current_progress = 0
+            if 'processed' in job and 'total' in job and job['total'] > 0:
+                current_progress = int((job['processed'] / job['total']) * 100)
+            
+            current_status = job.get('status', 'pending')
+            
+            # Only send update if something changed
+            if current_status != last_status or current_progress != last_progress:
+                event_data = {
+                    'status': current_status,
+                    'progress': current_progress,
+                    'processed': job.get('processed', 0),
+                    'total': job.get('total', 0)
+                }
+                
+                # If job is done, include results
+                if current_status == 'done':
+                    try:
+                        fname = f"{job_id}_results.json"
+                        path = os.path.join(OUTPUT_DIR, fname)
+                        if os.path.exists(path):
+                            with open(path, "r", encoding="utf-8") as fh:
+                                results = json.load(fh)
+                            event_data['results'] = results
+                            logger.info(f"[SSE] Loaded {len(results)} results for {job_id}")
+                    except Exception as e:
+                        logger.warning(f"[SSE] Failed to load results for {job_id}: {e}")
+                
+                yield f"data: {json.dumps(event_data)}\n\n"
+                
+                last_status = current_status
+                last_progress = current_progress
+                
+                # If job is done or failed, close the stream
+                if current_status in ('done', 'failed'):
+                    break
+            
+            # Wait before checking again (reduce CPU usage)
+            time.sleep(0.5)
+    
+    return Response(
+        stream_with_context(generate_events()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',  # Disable nginx buffering
+            'Connection': 'keep-alive'
+        }
+    )
+
+@app.patch("/process/profile_assessment/<path:linkedinurl>")
+def patch_profile_assessment(linkedinurl):
+    """
+    HTTP PATCH endpoint for updating individual profile assessments.
+    Faster than full POST as it only updates specific fields.
+    """
+    try:
+        import psycopg2
+        from psycopg2 import sql
+        
+        data = request.get_json(force=True, silent=True) or {}
+        if 'rating' not in data:
+            return jsonify({"error": "rating field required"}), 400
+        
+        rating = data.get('rating')
+        
+        # Normalize LinkedIn URL
+        normalized = _normalize_linkedin_to_path(linkedinurl)
+        
+        # Update only the rating field in database
+        pg_host = os.getenv("PGHOST", "localhost")
+        pg_port = int(os.getenv("PGPORT", "5432"))
+        pg_user = os.getenv("PGUSER", "postgres")
+        pg_password = os.getenv("PGPASSWORD", "") or "orlha"
+        pg_db = os.getenv("PGDATABASE", "candidate_db")
+        
+        conn = psycopg2.connect(
+            host=pg_host, port=pg_port, user=pg_user, 
+            password=pg_password, dbname=pg_db
+        )
+        cur = conn.cursor()
+        
+        # Check if rating column exists
+        cur.execute("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_schema='public' AND table_name='process' AND column_name='rating'
+        """)
+        
+        if cur.fetchone():
+            rating_json = json.dumps(rating) if isinstance(rating, dict) else rating
+            cur.execute(
+                sql.SQL("UPDATE process SET rating = %s WHERE linkedinurl = %s"),
+                (rating_json, normalized)
+            )
+            conn.commit()
+            
+            updated = cur.rowcount
+            cur.close()
+            conn.close()
+            
+            if updated > 0:
+                logger.info(f"[PATCH] Updated assessment for {normalized}")
+                return jsonify({"success": True, "updated": updated})
+            else:
+                return jsonify({"error": "Profile not found"}), 404
+        else:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "rating column does not exist"}), 500
+            
+    except Exception as e:
+        logger.error(f"[PATCH] Error updating assessment: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.post("/user/upload_jd")
 def user_upload_jd():
