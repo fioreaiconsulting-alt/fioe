@@ -2942,6 +2942,20 @@ export default function App() {
   const [newSkillInput, setNewSkillInput] = useState('');
   const [vskillsetExpanded, setVskillsetExpanded] = useState(false);
 
+  // Auto-expand Verified Skillset panel when resumeCandidate has vskillset entries
+  useEffect(() => {
+    try {
+      if (resumeCandidate && Array.isArray(resumeCandidate.vskillset) && resumeCandidate.vskillset.length > 0) {
+        setVskillsetExpanded(true);
+      } else {
+        setVskillsetExpanded(false);
+      }
+    } catch (e) {
+      // defensive: don't crash UI if something unexpected is present
+      console.warn('[vskillset] auto-expand check failed', e);
+    }
+  }, [resumeCandidate]);
+
   // Category colors for verified skillset
   const VSKILLSET_CATEGORY_COLORS = {
     'High': '#10b981',
