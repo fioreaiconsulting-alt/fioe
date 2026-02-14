@@ -352,7 +352,18 @@ function safeParseJSONField(raw) {
       for (let i = 0; i < inner.length; i++) {
         const ch = inner[i];
         cur += ch;
-        if (ch === '"' && inner[i-1] !== '\\') inQuotes = !inQuotes;
+        // Check if this is an unescaped quote (not preceded by backslash)
+        if (ch === '"') {
+          // Count preceding backslashes
+          let backslashCount = 0;
+          for (let j = i - 1; j >= 0 && inner[j] === '\\'; j--) {
+            backslashCount++;
+          }
+          // If even number of backslashes (including 0), the quote is not escaped
+          if (backslashCount % 2 === 0) {
+            inQuotes = !inQuotes;
+          }
+        }
         // when not in quotes and we see a comma that is the separator
         if (!inQuotes && ch === ',') {
           // remove trailing comma from current part
@@ -369,8 +380,8 @@ function safeParseJSONField(raw) {
         if (sEl.startsWith('"') && sEl.endsWith('"')) {
           sEl = sEl.slice(1, -1);
         }
-        // Unescape Postgres-style escaping for double quotes and backslashes
-        sEl = sEl.replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+        // Unescape Postgres-style escaping - do \\\\ first, then \"
+        sEl = sEl.replace(/\\\\/g, '\\').replace(/\\"/g, '"');
         // Try parse the element (it should be a JSON object string)
         try {
           return JSON.parse(sEl);
