@@ -870,6 +870,28 @@ app.get('/candidates', requireLogin, async (req, res) => {
         picBase64 = r.pic.toString('base64');
       }
       
+      // Parse vskillset if it's a JSON string
+      let parsedVskillset = r.vskillset;
+      if (r.vskillset && typeof r.vskillset === 'string') {
+        try {
+          parsedVskillset = JSON.parse(r.vskillset);
+        } catch (e) {
+          console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e);
+          parsedVskillset = null;
+        }
+      }
+      
+      // Parse rating if it's a JSON string
+      let parsedRating = r.rating;
+      if (r.rating && typeof r.rating === 'string') {
+        try {
+          parsedRating = JSON.parse(r.rating);
+        } catch (e) {
+          console.warn('[/candidates] Failed to parse rating for candidate:', r.id, e);
+          parsedRating = r.rating; // Keep as string if parse fails
+        }
+      }
+      
       return {
         ...r,
         // process-style keys explicit (helpful for debugging)
@@ -879,8 +901,8 @@ app.get('/candidates', requireLogin, async (req, res) => {
         sourcingstatus: r.sourcingstatus ?? null,
         product: r.product ?? null,
         lskillset: r.lskillset ?? null, // ensure lskillset is available
-        vskillset: r.vskillset ?? null, // ensure vskillset is available
-        rating: r.rating ?? null, // ensure rating is available
+        vskillset: parsedVskillset ?? null, // ensure vskillset is available and parsed
+        rating: parsedRating ?? null, // ensure rating is available and parsed
         linkedinurl: r.linkedinurl ?? null,
         jskillset: r.jskillset ?? null, // return jskillset for frontend if needed
         pic: picBase64, // Convert bytea to base64 for frontend

@@ -3223,6 +3223,16 @@ export default function App() {
       const res=await fetch('http://localhost:4000/candidates', { credentials: 'include' });
       const raw=await res.json();
       const candidatesList = Array.isArray(raw)?raw:[];
+      
+      // Log vskillset data for debugging
+      const withVskillset = candidatesList.filter(c => c.vskillset);
+      if (withVskillset.length > 0) {
+        console.log(`[fetchCandidates] Found ${withVskillset.length} candidates with vskillset data`);
+        console.log('[fetchCandidates] Sample vskillset:', withVskillset[0].vskillset);
+      } else {
+        console.log('[fetchCandidates] No candidates with vskillset data found');
+      }
+      
       setCandidates(candidatesList);
       setPage(1);
     }catch{
@@ -3410,6 +3420,15 @@ export default function App() {
 
   // Handler for viewing profile
   const handleViewProfile = (candidate) => {
+    console.log('[handleViewProfile] Candidate data:', {
+      id: candidate.id,
+      name: candidate.name,
+      hasVskillset: !!candidate.vskillset,
+      vskillsetType: typeof candidate.vskillset,
+      vskillsetLength: Array.isArray(candidate.vskillset) ? candidate.vskillset.length : 'N/A',
+      vskillsetSample: candidate.vskillset ? (Array.isArray(candidate.vskillset) ? candidate.vskillset[0] : candidate.vskillset) : null
+    });
+    
     const rawEmails = (candidate.email || '').split(/[;,]+/).map(s => s.trim()).filter(Boolean);
     // Initialize emails list with check state, and default confidence for existing emails (N/A)
     setResumeEmailList(rawEmails.map(e => ({ value: e, checked: false, confidence: 'Stored (N/A)' })));
