@@ -2804,7 +2804,12 @@ function CandidateUpload({ onUpload }) {
         const val = first(row, 'vskillset', 'Verified Skillset');
         if (!val) return null;
         if (typeof val === 'string') {
-          try { return JSON.parse(val); } catch { return null; }
+          try { 
+            return JSON.parse(val); 
+          } catch (e) { 
+            console.warn('[parseRow] Failed to parse vskillset:', val, e);
+            return null; 
+          }
         }
         return Array.isArray(val) ? val : null;
       })(),
@@ -2936,6 +2941,14 @@ export default function App() {
   // State for skillset management
   const [newSkillInput, setNewSkillInput] = useState('');
   const [vskillsetExpanded, setVskillsetExpanded] = useState(false);
+
+  // Category colors for verified skillset
+  const VSKILLSET_CATEGORY_COLORS = {
+    'High': '#10b981',
+    'Medium': '#f59e0b',
+    'Low': '#6b7280',
+    'Unknown': '#9ca3af'
+  };
 
   // Token state - only Account Token and Tokens Left
   const [accountTokens, setAccountTokens] = useState(0);
@@ -4377,13 +4390,22 @@ export default function App() {
                                         <tbody>
                                             {resumeCandidate.vskillset.map((item, idx) => {
                                                 const category = item.category || 'Unknown';
-                                                const probability = typeof item.probability !== 'undefined' ? `${Math.round(item.probability)}%` : 'N/A';
-                                                const categoryColor = category === 'High' ? '#10b981' : category === 'Medium' ? '#f59e0b' : '#6b7280';
+                                                // Handle probability: if value is 0-1 (decimal), convert to percentage
+                                                let probabilityValue = typeof item.probability !== 'undefined' ? item.probability : null;
+                                                if (probabilityValue !== null) {
+                                                    if (probabilityValue >= 0 && probabilityValue <= 1) {
+                                                        probabilityValue = probabilityValue * 100;
+                                                    }
+                                                    probabilityValue = `${Math.round(probabilityValue)}%`;
+                                                } else {
+                                                    probabilityValue = 'N/A';
+                                                }
+                                                const categoryColor = VSKILLSET_CATEGORY_COLORS[category] || VSKILLSET_CATEGORY_COLORS['Unknown'];
                                                 
                                                 return (
                                                     <tr key={idx} style={{ borderBottom: idx < resumeCandidate.vskillset.length - 1 ? '1px solid #e5e7eb' : 'none' }}>
                                                         <td style={{ padding: 8, color: '#1f2937' }}>{item.skill || ''}</td>
-                                                        <td style={{ padding: 8, color: '#1f2937' }}>{probability}</td>
+                                                        <td style={{ padding: 8, color: '#1f2937' }}>{probabilityValue}</td>
                                                         <td style={{ padding: 8 }}>
                                                             <span style={{ 
                                                                 color: categoryColor, 
