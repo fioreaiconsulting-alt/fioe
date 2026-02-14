@@ -4,7 +4,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { Tree, TreeNode } from 'react-organizational-chart';
-import './sourcing_verify.css'; // switched to Sourcing_Verify theme
+import './cms.css'; // Using cms.css for styling
 // Admin feature removed (AdminUploadButton not imported)
 
 /* ========================= CONSTANTS ========================= */
