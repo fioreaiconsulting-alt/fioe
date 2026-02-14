@@ -1345,6 +1345,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     personal: 'personal',
     seniority: 'seniority',
     lskillset: 'lskillset',
+    vskillset: 'vskillset',
     linkedinurl: 'linkedinurl',
     comment: 'comment'
   };
@@ -1394,6 +1395,23 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     // Reload to reflect any canonical updates
     r = (await pool.query('SELECT * FROM "process" WHERE id = $1', [r.id])).rows[0];
 
+    // Parse vskillset if it's a JSON string
+    let parsedVskillset = r.vskillset;
+    if (r.vskillset && typeof r.vskillset === 'string') {
+      try {
+        parsedVskillset = JSON.parse(r.vskillset);
+      } catch (e) {
+        console.warn('[PUT /candidates/:id] Failed to parse vskillset:', e.message);
+        parsedVskillset = null;
+      }
+    }
+
+    // Convert bytea pic to base64 string for frontend
+    let picBase64 = null;
+    if (r.pic && Buffer.isBuffer(r.pic)) {
+      picBase64 = r.pic.toString('base64');
+    }
+
     // Return row with both process-style and candidate-style fallback keys for frontend convenience
     const mapped = {
       ...r,
@@ -1404,6 +1422,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       sourcingstatus: r.sourcingstatus ?? null,
       product: r.product ?? null,
       lskillset: r.lskillset ?? null,
+      vskillset: parsedVskillset ?? null, // ensure vskillset is available and parsed
+      pic: picBase64, // Convert bytea to base64 for frontend
       linkedinurl: r.linkedinurl ?? null,
       jskillset: r.jskillset ?? null,
 
@@ -1807,7 +1827,14 @@ app.post('/verify-data', requireLogin, async (req, res) => {
       Your task:
       1. Standardize "org" to the canonical company name (e.g. "Tencent Gaming" -> "Tencent", "Tencent Cloud" -> "Tencent", "Mihoyo Co Ltd" -> "Mihoyo").
       2. Standardize "title" to a standard job title (e.g. "Cloud Specialist" -> "Cloud Engineer", "Cloud Developer" -> "Cloud Engineer", but "Cloud Architect" remains "Cloud Architect").
-      3. Infer or standardize "sen" (seniority) to one of: Junior, Mid, Senior, Lead, Manager, Director, Expert, Executive.
+      3. IMPORTANT: Validate and standardize "sen" (seniority) against the "title" (job title) field. Ensure the seniority is consistent with the job title. For example:
+         - If title contains "Senior", seniority should be "Senior"
+         - If title contains "Lead", seniority should be "Lead"
+         - If title contains "Manager", seniority should be "Manager"
+         - If title contains "Director", seniority should be "Director"
+         - If title contains "Junior" or "Jr", seniority should be "Junior"
+         - If no seniority indicators in title, infer from context or keep existing seniority
+         - Standardize to one of: Junior, Mid, Senior, Lead, Manager, Director, Expert, Executive
       4. Standardize "country" to canonical country names (e.g. "South Korea" -> "Korea", "USA" -> "United States").
       5. Return a JSON list of objects with keys: "id", "organisation" (standardized), "jobtitle" (standardized), "seniority" (standardized), "country" (standardized).
       6. IMPORTANT: Return ONLY the JSON. No markdown formatting.
