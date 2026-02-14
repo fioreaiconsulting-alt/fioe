@@ -313,6 +313,49 @@ async function ensureCanonicalFieldsForId(id, currentCompany, currentJobTitle, c
   return { company: canonicalCompany, personal: canonicalPersonal };
 }
 
+// Safe JSON parsing helper and persistence for vskillset
+
+function safeParseJSONField(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'object') return raw;           // already parsed (json/jsonb from pg)
+  if (typeof raw !== 'string') return raw;
+
+  // strip control chars and trim
+  const s = raw.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
+  if (!s) return null;
+
+  // only attempt parse if it looks like JSON (starts with { or [)
+  if (!/^[\{\[]/.test(s)) return raw;
+
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    // parsing failed — return original string so we don't lose data
+    console.debug('[safeParseJSONField] parse failed:', e.message);
+    return raw;
+  }
+}
+
+// Try to parse vskillset and persist normalized JSON (stringified) when parse succeeds.
+// Returns the parsed object (or the original string/null).
+async function parseAndPersistVskillset(id, raw) {
+  const parsed = safeParseJSONField(raw);
+
+  // If parsed is an object (successful parse) and original was a string,
+  // persist the normalized JSON string back to the DB so future reads are consistent.
+  // Use a defensive update (only when original is string and parsed is object)
+  if (parsed && typeof parsed === 'object' && typeof raw === 'string') {
+    try {
+      // store the normalized JSON string (keeps column type unchanged if TEXT)
+      await pool.query('UPDATE "process" SET vskillset = $1 WHERE id = $2', [JSON.stringify(parsed), id]);
+    } catch (err) {
+      console.warn('[parseAndPersistVskillset] failed to persist normalized vskillset for id', id, err && err.message);
+    }
+  }
+
+  return parsed;
+}
+
 // Helper to determine region from country name for validation
 function getRegionFromCountry(country) {
   if (!country) return null;
@@ -858,38 +901,21 @@ app.get('/candidates', requireLogin, async (req, res) => {
   try {
     // Always restrict to the authenticated user's records
     const result = await pool.query('SELECT * FROM "process" WHERE userid = $1 ORDER BY id DESC', [String(req.user.id)]);
-    const rows = result.rows.map(r => {
-      // ensure both process-style and candidate-style keys are present for frontend compatibility
-      const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
-      // if personal empty, generate from jobtitle
-      const personalFallback = (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null);
-      
-      // Convert bytea pic to base64 string for frontend
+    const processedRows = [];
+
+    for (const r of result.rows) {
+      // Parse/normalize vskillset (and persist normalized JSON back to DB when parse succeeds)
+      const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
+
+      // Convert pic buffer -> base64 as before
       let picBase64 = null;
-      if (r.pic && Buffer.isBuffer(r.pic)) {
-        picBase64 = r.pic.toString('base64');
-      }
-      
-      // Parse vskillset if it's a JSON string
-      let parsedVskillset = r.vskillset;
-      if (r.vskillset && typeof r.vskillset === 'string') {
-        try {
-          // Clean the string before parsing - remove control characters and fix common issues
-          const cleanedVskillset = r.vskillset
-            .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
-            .trim();
-          
-          if (cleanedVskillset) {
-            parsedVskillset = JSON.parse(cleanedVskillset);
-          } else {
-            parsedVskillset = null;
-          }
-        } catch (e) {
-          // Silently handle parse failures - set to null on parse failure
-          parsedVskillset = null;
-        }
-      }
-      
+      if (r.pic && Buffer.isBuffer(r.pic)) picBase64 = r.pic.toString('base64');
+
+      // personal fallback as before
+      const personalFallback = (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null);
+
+      const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
+
       // Parse rating if it's a JSON string
       let parsedRating = r.rating;
       if (r.rating && typeof r.rating === 'string') {
@@ -911,34 +937,33 @@ app.get('/candidates', requireLogin, async (req, res) => {
           parsedRating = r.rating;
         }
       }
-      
-      return {
+
+      const mapped = {
         ...r,
-        // process-style keys explicit (helpful for debugging)
         jobtitle: r.jobtitle ?? null,
         company: companyCanonical ?? (r.company ?? null),
         jobfamily: r.jobfamily ?? null,
         sourcingstatus: r.sourcingstatus ?? null,
         product: r.product ?? null,
-        lskillset: r.lskillset ?? null, // ensure lskillset is available
-        vskillset: parsedVskillset ?? null, // ensure vskillset is available and parsed
-        rating: parsedRating ?? null, // ensure rating is available and parsed
+        lskillset: r.lskillset ?? null,
+        vskillset: parsedVskillset ?? null, // use parsed object (or null)
+        rating: parsedRating ?? null,
         linkedinurl: r.linkedinurl ?? null,
-        jskillset: r.jskillset ?? null, // return jskillset for frontend if needed
-        pic: picBase64, // Convert bytea to base64 for frontend
+        jskillset: r.jskillset ?? null,
+        pic: picBase64,
 
-        // candidate-style fields mapped from process columns if missing
         role: r.role ?? r.jobtitle ?? null,
         organisation: companyCanonical ?? (r.organisation ?? r.company ?? null),
         job_family: r.job_family ?? r.jobfamily ?? null,
         sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
-        // type maps to product
         type: r.product ?? null,
-        // personal: prefer the DB personal if present, otherwise fallback to canonicalized jobtitle
         personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : personalFallback
       };
-    });
-    res.json(rows);
+
+      processedRows.push(mapped);
+    }
+
+    res.json(processedRows);
   } catch (err) {
     console.error('Fetch process rows error:', err);
     res.status(500).json({ error: 'Failed to fetch candidates/process rows.' });
@@ -1415,25 +1440,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     // Reload to reflect any canonical updates
     r = (await pool.query('SELECT * FROM "process" WHERE id = $1', [r.id])).rows[0];
 
-    // Parse vskillset if it's a JSON string
-    let parsedVskillset = r.vskillset;
-    if (r.vskillset && typeof r.vskillset === 'string') {
-      try {
-        // Clean the string before parsing - remove control characters and fix common issues
-        const cleanedVskillset = r.vskillset
-          .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
-          .trim();
-        
-        if (cleanedVskillset) {
-          parsedVskillset = JSON.parse(cleanedVskillset);
-        } else {
-          parsedVskillset = null;
-        }
-      } catch (e) {
-        // Silently handle parse failures - set to null on parse failure
-        parsedVskillset = null;
-      }
-    }
+    // After reloading r from DB:
+    const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
     // Convert bytea pic to base64 string for frontend
     let picBase64 = null;
@@ -1451,7 +1459,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       sourcingstatus: r.sourcingstatus ?? null,
       product: r.product ?? null,
       lskillset: r.lskillset ?? null,
-      vskillset: parsedVskillset ?? null, // ensure vskillset is available and parsed
+      vskillset: parsedVskillset ?? null, // use parsed object (or null)
       pic: picBase64, // Convert bytea to base64 for frontend
       linkedinurl: r.linkedinurl ?? null,
       jskillset: r.jskillset ?? null,
