@@ -7574,10 +7574,10 @@ def patch_profile_assessment(linkedinurl):
     HTTP PATCH endpoint for updating individual profile assessments.
     Faster than full POST as it only updates specific fields.
     """
+    import psycopg2
+    from psycopg2 import sql
+    
     try:
-        import psycopg2
-        from psycopg2 import sql
-        
         data = request.get_json(force=True, silent=True) or {}
         if 'rating' not in data:
             return jsonify({"error": "rating field required"}), 400
@@ -7594,40 +7594,41 @@ def patch_profile_assessment(linkedinurl):
         pg_password = os.getenv("PGPASSWORD", "") or "orlha"
         pg_db = os.getenv("PGDATABASE", "candidate_db")
         
-        conn = psycopg2.connect(
-            host=pg_host, port=pg_port, user=pg_user, 
-            password=pg_password, dbname=pg_db
-        )
-        cur = conn.cursor()
-        
-        # Check if rating column exists
-        cur.execute("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_schema='public' AND table_name='process' AND column_name='rating'
-        """)
-        
-        if cur.fetchone():
-            rating_json = json.dumps(rating) if isinstance(rating, dict) else rating
-            cur.execute(
-                sql.SQL("UPDATE process SET rating = %s WHERE linkedinurl = %s"),
-                (rating_json, normalized)
+        conn = None
+        cur = None
+        try:
+            conn = psycopg2.connect(
+                host=pg_host, port=pg_port, user=pg_user, 
+                password=pg_password, dbname=pg_db
             )
-            conn.commit()
+            cur = conn.cursor()
             
-            updated = cur.rowcount
-            cur.close()
-            conn.close()
+            # Check if rating column exists
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_schema='public' AND table_name='process' AND column_name='rating'
+            """)
             
-            if updated > 0:
+            if cur.fetchone():
+                rating_json = json.dumps(rating) if isinstance(rating, dict) else rating
+                cur.execute(
+                    sql.SQL("UPDATE process SET rating = %s WHERE linkedinurl = %s"),
+                    (rating_json, normalized)
+                )
+                conn.commit()
+                
+                updated = cur.rowcount
+                
                 logger.info(f"[PATCH] Updated assessment for {normalized}")
-                return jsonify({"success": True, "updated": updated})
+                return jsonify({"success": True, "updated": updated}) if updated > 0 else (jsonify({"error": "Profile not found"}), 404)
             else:
-                return jsonify({"error": "Profile not found"}), 404
-        else:
-            cur.close()
-            conn.close()
-            return jsonify({"error": "rating column does not exist"}), 500
-            
+                return jsonify({"error": "rating column does not exist"}), 500
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+                
     except Exception as e:
         logger.error(f"[PATCH] Error updating assessment: {e}")
         return jsonify({"error": str(e)}), 500
