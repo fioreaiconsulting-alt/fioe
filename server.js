@@ -329,8 +329,8 @@ function safeParseJSONField(raw) {
     try {
       return JSON.parse(s);
     } catch (e) {
-      console.debug('[safeParseJSONField] direct JSON.parse failed:', e.message);
-      // fallthrough to try other heuristics
+      // parsing failed — continue to heuristics
+      // console.debug('[safeParseJSONField] direct JSON.parse failed:', e.message);
     }
   }
 
@@ -338,72 +338,75 @@ function safeParseJSONField(raw) {
   // Example: {"{\"skill\":\"Site Activation\",\"probability\":95}", "{\"skill\":\"...\"}", ...}
   if (/^\{\s*\"/.test(s) && s.endsWith('}')) {
     try {
-      // Remove outer braces
       const inner = s.slice(1, -1);
-
-      // Split on '","' boundaries — this is safe for typical pg array string output
-      // but we'll be defensive about escaped quotes.
-      // First replace '","' that are delimiting elements (not \" inside elements).
-      // A simple (and typically sufficient) approach is to split on "," and then
-      // recombine parts that contain unbalanced quotes. We'll do a robust scan:
       const parts = [];
       let cur = '';
       let inQuotes = false;
       for (let i = 0; i < inner.length; i++) {
         const ch = inner[i];
         cur += ch;
-        // Check if this is an unescaped quote (not preceded by backslash)
         if (ch === '"') {
-          // Count preceding backslashes
+          // check if escaped
           let backslashCount = 0;
-          for (let j = i - 1; j >= 0 && inner[j] === '\\'; j--) {
-            backslashCount++;
-          }
-          // If even number of backslashes (including 0), the quote is not escaped
-          if (backslashCount % 2 === 0) {
-            inQuotes = !inQuotes;
-          }
+          for (let j = i - 1; j >= 0 && inner[j] === '\\'; j--) backslashCount++;
+          if (backslashCount % 2 === 0) inQuotes = !inQuotes;
         }
-        // when not in quotes and we see a comma that is the separator
         if (!inQuotes && ch === ',') {
-          // remove trailing comma from current part
           parts.push(cur.slice(0, -1));
           cur = '';
         }
       }
       if (cur.length) parts.push(cur);
 
-      // Now normalize each element: strip surrounding quotes if present and unescape backslashes
       const parsedElems = parts.map(el => {
         let sEl = el.trim();
-        // If element is wrapped in double quotes, remove them
-        if (sEl.startsWith('"') && sEl.endsWith('"')) {
-          sEl = sEl.slice(1, -1);
-        }
-        // Unescape Postgres-style escaping in one pass to avoid double-unescaping
-        sEl = sEl.replace(/\\(.)/g, (match, char) => {
-          if (char === '\\') return '\\';
-          if (char === '"') return '"';
-          return match; // keep other escaped characters as-is
-        });
-        // Try parse the element (it should be a JSON object string)
+        if (sEl.startsWith('"') && sEl.endsWith('"')) sEl = sEl.slice(1, -1);
+        // unescape common sequences
+        sEl = sEl.replace(/\\(["\\])/g, '$1');
         try {
           return JSON.parse(sEl);
         } catch (e) {
-          // If parse fails, return the cleaned string so caller can inspect
-          console.debug('[safeParseJSONField] element JSON.parse failed, returning raw element:', e.message);
+          // return cleaned string if element is not JSON
           return sEl;
         }
       });
 
       return parsedElems;
     } catch (e) {
-      console.debug('[safeParseJSONField] pg-array heuristic failed:', e.message);
-      return raw;
+      // fallthrough to tokenization fallback
+      // console.debug('[safeParseJSONField] pg-array heuristic failed:', e.message);
     }
   }
 
-  // Fallback: return original string (not JSON)
+  // Case C: tokenization fallback — split on common delimiters and return array if multi-token
+  try {
+    // Replace a few special separators with a common delimiter, then split.
+    const normalized = s
+      .replace(/\r\n/g, '\n')
+      .replace(/[••·]/g, '\n')
+      .replace(/[;|\/]/g, ',')
+      .replace(/\band\b/gi, ',')
+      .replace(/\s*→\s*/g, ',')
+      .trim();
+
+    // Try splitting on commas/newlines and trim tokens
+    const tokens = normalized.split(/[\n,]+/)
+      .map(t => t.trim())
+      .filter(Boolean);
+
+    // If we got multiple sensible tokens, return them as an array
+    if (tokens.length > 1) return tokens;
+
+    // If single token that looks like "Skill: X" or "Skill - X", try to extract right-hand part
+    const kvMatch = tokens[0] && tokens[0].match(/^[^:\-–—]+[:\-–—]\s*(.+)$/);
+    if (kvMatch && kvMatch[1]) {
+      return [kvMatch[1].trim()];
+    }
+  } catch (e) {
+    // ignore tokenization errors
+  }
+
+  // Final fallback: return original string (no parse)
   return raw;
 }
 

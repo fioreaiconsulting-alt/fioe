@@ -2942,18 +2942,18 @@ export default function App() {
   const [newSkillInput, setNewSkillInput] = useState('');
   const [vskillsetExpanded, setVskillsetExpanded] = useState(false);
 
-  // Auto-expand Verified Skillset panel when resumeCandidate has vskillset entries
-  // Only expand on initial load, don't collapse when vskillset changes
+  // Auto-expand Verified Skillset panel when resumeCandidate changes and has vskillset entries
+  // Only expand on initial load or when candidate changes, don't force re-expansion after manual collapse
   useEffect(() => {
     try {
-      if (resumeCandidate?.vskillset?.length > 0 && !vskillsetExpanded) {
+      if (resumeCandidate?.vskillset?.length > 0) {
         setVskillsetExpanded(true);
       }
     } catch (e) {
       // defensive: don't crash UI if something unexpected is present
       console.warn('[vskillset] auto-expand check failed', e);
     }
-  }, [resumeCandidate?.id, vskillsetExpanded]); // Include vskillsetExpanded to avoid stale closure
+  }, [resumeCandidate?.id]); // Only depend on candidate ID to allow manual collapse
 
   // Category colors for verified skillset
   const VSKILLSET_CATEGORY_COLORS = {
