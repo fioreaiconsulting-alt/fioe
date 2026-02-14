@@ -1,0 +1,389 @@
+/* CMS.css - Candidate Management System Styles */
+/* Includes formatting for Resume Tab enhancements: Candidate Assessment and Skillset sections */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&family=Orbitron:wght@400;700;900&family=Inter:wght@400;500;600;700&display=swap');
+
+:root{
+  /* Palette mapped from provided reference */
+  --bg:#ffffff;
+  --card:#ffffff;
+  --muted:#222529;
+
+  --desired-dawn: #d8d8d8;
+  --robins-egg:  #6deaf9;
+  --argent:      #87888a;
+  --cool-blue:   #4c82b8;
+  --azure-dragon:#073679;
+  --black-beauty:#222529;
+
+  /* Map legacy tokens to the new palette where appropriate */
+  --accent: var(--azure-dragon);
+  --accent-border: var(--cool-blue);
+  --accent-alt: var(--robins-egg);
+
+  --danger:#ea4335;
+  --danger-border:#d93025;
+  --neutral-border:#e0e0e0;
+  --radius:8px;
+  --shadow:0 6px 18px rgba(34,34,34,0.08);
+  --gradient-toolbar:linear-gradient(180deg,#ffffff,#fbfbfc);
+  --primary-700:#143d8c;
+  --primary-500:var(--azure-dragon);
+  --success-600:#188038;
+  --success:#10b981;
+  --muted-600:#5f6368;
+  --card-elev: rgba(7,54,121,0.06);
+  --metric-bg:#f5f7ff;
+  --metric-border:#e6eff9;
+  --metric-pill:#f1f5ff;
+  
+  /* Data Sorter Specific Tokens */
+  --panel:#ffffff;
+  --panel-alt:#fbfcfd;
+  --border:#d8dde2;
+  --border-strong:#b7c6d6;
+  --accent-2: var(--cool-blue);
+  --accent-glow: rgba(109,234,249,0.08);
+  --text: var(--black-beauty);
+  --text-soft:#5f6368;
+  --chip-bg:#eef6ff;
+  --chip-border:#d3e8f4;
+  --badge: var(--azure-dragon);
+  --radius-sm:6px;
+  --elevation:0 12px 32px -12px rgba(7,54,121,0.12);
+  --theme-font: "Roboto Condensed", "Orbitron", 'Inter', sans-serif;
+
+  /* weightage specific */
+  --weight-card-bg: #fff;
+  --weight-card-border: #e6eef8;
+  --weight-slider-track: linear-gradient(90deg, var(--robins-egg), var(--cool-blue));
+}
+
+/* Use the requested condensed font globally (Roboto Condensed) while keeping Orbitron for display headings */
+body { 
+  font-family: "Roboto Condensed", "Orbitron", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif; 
+  margin:24px; 
+  background:var(--bg); 
+  color:var(--muted); 
+  -webkit-font-smoothing:antialiased; 
+  -moz-osx-font-smoothing:grayscale; 
+}
+
+/* ========== Resume Tab: Skillset Drag-and-Drop Styles ========== */
+
+.skill-bubble {
+  display: inline-block;
+  padding: 6px 12px;
+  margin: 4px;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: "Roboto Condensed", sans-serif;
+  cursor: grab;
+  user-select: none;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+.skill-bubble:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+}
+
+.skill-bubble:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+/* Unmatched skillset styles (red) */
+.skill-bubble.unmatched {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.2);
+}
+
+.skill-bubble.unmatched:hover {
+  box-shadow: 0 4px 8px rgba(239, 68, 68, 0.3);
+}
+
+/* ========== Resume Tab: Candidate Assessment Table Styles ========== */
+
+.assessment-result-container { 
+  font-size: 12px; 
+  line-height: 1.4; 
+  color: #1f2328; 
+}
+
+.assessment-stars { 
+  color: #fbbf24; 
+  letter-spacing: 1px; 
+  font-size: 18px; 
+}
+
+.assessment-stars .filled { 
+  color: #f59e0b; 
+}
+
+.assessment-header { 
+  font-weight: 700; 
+  margin-bottom: 4px; 
+  color: var(--azure-dragon); 
+  font-size: 12px; 
+}
+
+.assessment-comments { 
+  color: #6b7280; 
+  font-size: 11px; 
+  margin: 4px 0; 
+  font-style: italic; 
+}
+
+/* Professional assessment table styling */
+.assessment-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.assessment-table thead {
+  background: linear-gradient(to right, #3b82f6, #2563eb);
+  color: white;
+}
+
+.assessment-table th {
+  padding: 12px 16px;
+  text-align: left;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: "Orbitron", "Roboto Condensed", sans-serif;
+}
+
+.assessment-table th:first-child {
+  border-top-left-radius: 6px;
+}
+
+.assessment-table th:last-child {
+  border-top-right-radius: 6px;
+}
+
+.assessment-table tbody tr {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.assessment-table tbody tr:nth-child(odd) {
+  background: #f9fafb;
+}
+
+.assessment-table tbody tr:nth-child(even) {
+  background: #ffffff;
+}
+
+.assessment-table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: 6px;
+}
+
+.assessment-table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: 6px;
+}
+
+.assessment-table td {
+  padding: 12px 16px;
+  color: #374151;
+  line-height: 1.6;
+}
+
+.assessment-table td:first-child {
+  font-weight: 600;
+  width: 30%;
+}
+
+.assessment-badge {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-block;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.assessment-score {
+  color: #0ea5e9;
+  font-weight: 900;
+  font-size: 20px;
+}
+
+.assessment-summary-box {
+  padding: 12px;
+  background: #eff6ff;
+  border-left: 4px solid #3b82f6;
+  border-radius: 4px;
+  color: #1e40af;
+  line-height: 1.6;
+}
+
+.assessment-notes-box {
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+/* Header Layout Update */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--neutral-border);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.panel-header h1 { 
+  margin: 0; 
+  font-size: 1.8rem; 
+  font-weight: 700; 
+  letter-spacing: .5px; 
+  color: #1f2328; 
+  font-family: "Orbitron", "Roboto Condensed", sans-serif;
+}
+
+/* Tabs Styling */
+.tabs-nav { 
+  display: flex; 
+  gap: 12px; 
+  margin-bottom: 0; 
+  border-bottom: none; 
+}
+
+.tab-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 0;
+  font-family: "Roboto Condensed", "Orbitron", sans-serif;
+  font-size: 13px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  transition: all .2s ease;
+}
+
+.tab-btn:hover {
+  background: var(--panel-alt);
+  border-color: var(--accent-border);
+}
+
+.tab-active {
+  background: linear-gradient(135deg, var(--azure-dragon), var(--cool-blue));
+  color: #fff !important;
+  border-color: var(--azure-dragon);
+  box-shadow: 0 2px 8px rgba(7, 54, 121, 0.15);
+}
+
+.tab-inactive {
+  background: #fff;
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+}
+
+/* Button Styles */
+.btn-primary {
+  background: linear-gradient(135deg, var(--azure-dragon), var(--cool-blue));
+  color: #fff;
+  border: 1px solid var(--azure-dragon);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: "Roboto Condensed", sans-serif;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(7, 54, 121, 0.2);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--argent);
+  color: #fff;
+  border: 1px solid var(--argent);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: "Roboto Condensed", sans-serif;
+}
+
+.btn-secondary:hover {
+  background: var(--muted);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border: 1px solid var(--danger-border);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: "Roboto Condensed", sans-serif;
+}
+
+.btn-danger:hover {
+  background: var(--danger-border);
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* App Card */
+.app-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+/* Drag-and-drop drop zone styling */
+.skill-container {
+  min-height: 80px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 2px dashed #cbd5e1;
+  transition: all 0.2s ease;
+}
+
+.skill-container.drag-over {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
