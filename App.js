@@ -1911,7 +1911,7 @@ function CandidatesTable({
                           </span>
                           : f.key === 'sourcing_status' ? (
                             <select
-                              value={displayValue || 'Reviewing'}
+                              value={displayValue || ''}
                               onChange={e => handleEditChange(c.id, f.key, e.target.value)}
                               style={{
                                 width: '100%',
@@ -1924,6 +1924,7 @@ function CandidatesTable({
                                 borderRadius: 6
                               }}
                             >
+                              <option value="">-- Select Status --</option>
                               {statusOptions.map(opt => (
                                 <option key={opt} value={opt}>{opt}</option>
                               ))}
@@ -4134,6 +4135,7 @@ export default function App() {
                         <h3 style={{ fontSize: 16, fontWeight: 700, borderBottom: '2px solid var(--neutral-border)', paddingBottom: 8, marginBottom: 12, color: 'var(--black-beauty)' }}>Skillset</h3>
                         <div 
                             style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)', minHeight: 60, lineHeight: '1.6' }}
+                            title="Drag Skills here or from here"
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => {
                                 e.preventDefault();
