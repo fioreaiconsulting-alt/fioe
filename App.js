@@ -2987,22 +2987,34 @@ export default function App() {
     // Cap at 5 stars
     starCount = Math.min(starCount, 5);
     
+    // Star styling constants
+    const fullStarStyle = { color: '#fbbf24', fontSize: 20 };
+    const emptyStarStyle = { color: '#d1d5db', fontSize: 20 };
+    
     // Generate star display
     const stars = [];
     for (let i = 1; i <= 5; i++) {
       if (i <= Math.floor(starCount)) {
         // Full star
-        stars.push(<span key={i} style={{ color: '#fbbf24', fontSize: 20 }}>★</span>);
+        stars.push(<span key={i} style={fullStarStyle}>★</span>);
       } else if (i === Math.ceil(starCount) && starCount % 1 !== 0) {
-        // Half star (for decimals)
-        stars.push(<span key={i} style={{ color: '#fbbf24', fontSize: 20 }}>⯨</span>);
+        // Half star - use hollow star with lighter color for better cross-browser support
+        stars.push(<span key={i} style={{ color: '#fbbf24', fontSize: 20, opacity: 0.5 }}>★</span>);
       } else {
         // Empty star
-        stars.push(<span key={i} style={{ color: '#d1d5db', fontSize: 20 }}>★</span>);
+        stars.push(<span key={i} style={emptyStarStyle}>★</span>);
       }
     }
     
-    return <div style={{ display: 'flex', gap: 2 }}>{stars}</div>;
+    return (
+      <div 
+        style={{ display: 'flex', gap: 2 }}
+        role="img"
+        aria-label={`${starCount} out of 5 stars`}
+      >
+        {stars}
+      </div>
+    );
   };
 
   // Token state - only Account Token and Tokens Left
