@@ -313,6 +313,120 @@ async function ensureCanonicalFieldsForId(id, currentCompany, currentJobTitle, c
   return { company: canonicalCompany, personal: canonicalPersonal };
 }
 
+// Safe JSON parsing helper and persistence for vskillset
+
+function safeParseJSONField(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'object') return raw;           // already parsed (json/jsonb from pg)
+  if (typeof raw !== 'string') return raw;
+
+  // strip control chars and trim
+  const s = raw.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
+  if (!s) return null;
+
+  // Case A: Starts with normal JSON object/array -> parse directly
+  if (/^[\{\[]/.test(s)) {
+    try {
+      return JSON.parse(s);
+    } catch (e) {
+      // parsing failed — continue to heuristics
+      // console.debug('[safeParseJSONField] direct JSON.parse failed:', e.message);
+    }
+  }
+
+  // Case B: PostgreSQL array literal of JSON strings:
+  // Example: {"{\"skill\":\"Site Activation\",\"probability\":95}", "{\"skill\":\"...\"}", ...}
+  if (/^\{\s*\"/.test(s) && s.endsWith('}')) {
+    try {
+      const inner = s.slice(1, -1);
+      const parts = [];
+      let cur = '';
+      let inQuotes = false;
+      for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i];
+        cur += ch;
+        if (ch === '"') {
+          // check if escaped
+          let backslashCount = 0;
+          for (let j = i - 1; j >= 0 && inner[j] === '\\'; j--) backslashCount++;
+          if (backslashCount % 2 === 0) inQuotes = !inQuotes;
+        }
+        if (!inQuotes && ch === ',') {
+          parts.push(cur.slice(0, -1));
+          cur = '';
+        }
+      }
+      if (cur.length) parts.push(cur);
+
+      const parsedElems = parts.map(el => {
+        let sEl = el.trim();
+        if (sEl.startsWith('"') && sEl.endsWith('"')) sEl = sEl.slice(1, -1);
+        // unescape common sequences
+        sEl = sEl.replace(/\\(["\\])/g, '$1');
+        try {
+          return JSON.parse(sEl);
+        } catch (e) {
+          // return cleaned string if element is not JSON
+          return sEl;
+        }
+      });
+
+      return parsedElems;
+    } catch (e) {
+      // fallthrough to tokenization fallback
+      // console.debug('[safeParseJSONField] pg-array heuristic failed:', e.message);
+    }
+  }
+
+  // Case C: tokenization fallback — split on common delimiters and return array if multi-token
+  try {
+    // Replace a few special separators with a common delimiter, then split.
+    const normalized = s
+      .replace(/\r\n/g, '\n')
+      .replace(/[••·]/g, '\n')
+      .replace(/[;|\/]/g, ',')
+      .replace(/\band\b/gi, ',')
+      .replace(/\s*→\s*/g, ',')
+      .trim();
+
+    // Try splitting on commas/newlines and trim tokens
+    const tokens = normalized.split(/[\n,]+/)
+      .map(t => t.trim())
+      .filter(Boolean);
+
+    // If we got multiple sensible tokens, return them as an array
+    if (tokens.length > 1) return tokens;
+
+    // If single token that looks like "Skill: X" or "Skill - X", try to extract right-hand part
+    const kvMatch = tokens[0] && tokens[0].match(/^[^:\-–—]+[:\-–—]\s*(.+)$/);
+    if (kvMatch && kvMatch[1]) {
+      return [kvMatch[1].trim()];
+    }
+  } catch (e) {
+    // ignore tokenization errors
+  }
+
+  // Final fallback: return original string (no parse)
+  return raw;
+}
+
+// Try to parse vskillset and persist normalized JSON (stringified) when parse succeeds.
+// Returns the parsed object (or the original string/null).
+async function parseAndPersistVskillset(id, raw) {
+  const parsed = safeParseJSONField(raw);
+
+  // If parsed is an object/array and original was a string, persist the normalized JSON string back to the DB
+  if (parsed && (typeof parsed === 'object') && typeof raw === 'string') {
+    try {
+      await pool.query('UPDATE "process" SET vskillset = $1 WHERE id = $2', [JSON.stringify(parsed), id]);
+    } catch (err) {
+      console.warn('[parseAndPersistVskillset] failed to persist normalized vskillset for id', id, err && err.message);
+    }
+  }
+
+  return parsed;
+}
+
 // Helper to determine region from country name for validation
 function getRegionFromCountry(country) {
   if (!country) return null;
@@ -858,67 +972,69 @@ app.get('/candidates', requireLogin, async (req, res) => {
   try {
     // Always restrict to the authenticated user's records
     const result = await pool.query('SELECT * FROM "process" WHERE userid = $1 ORDER BY id DESC', [String(req.user.id)]);
-    const rows = result.rows.map(r => {
-      // ensure both process-style and candidate-style keys are present for frontend compatibility
-      const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
-      // if personal empty, generate from jobtitle
-      const personalFallback = (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null);
-      
-      // Convert bytea pic to base64 string for frontend
+    const processedRows = [];
+
+    for (const r of result.rows) {
+      // Parse/normalize vskillset (and persist normalized JSON back to DB when parse succeeds)
+      const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
+
+      // Convert pic buffer -> base64 as before
       let picBase64 = null;
-      if (r.pic && Buffer.isBuffer(r.pic)) {
-        picBase64 = r.pic.toString('base64');
-      }
-      
-      // Parse vskillset if it's a JSON string
-      let parsedVskillset = r.vskillset;
-      if (r.vskillset && typeof r.vskillset === 'string') {
-        try {
-          parsedVskillset = JSON.parse(r.vskillset);
-        } catch (e) {
-          console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e.message);
-          parsedVskillset = null;
-        }
-      }
-      
+      if (r.pic && Buffer.isBuffer(r.pic)) picBase64 = r.pic.toString('base64');
+
+      // personal fallback as before
+      const personalFallback = (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null);
+
+      const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
+
       // Parse rating if it's a JSON string
       let parsedRating = r.rating;
       if (r.rating && typeof r.rating === 'string') {
         try {
-          parsedRating = JSON.parse(r.rating);
+          // Clean the string before parsing
+          const cleanedRating = r.rating
+            .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
+            .trim();
+          
+          // Check if it looks like JSON before trying to parse
+          if (cleanedRating && (cleanedRating.startsWith('{') || cleanedRating.startsWith('['))) {
+            parsedRating = JSON.parse(cleanedRating);
+          } else {
+            // Keep as string if it doesn't look like JSON
+            parsedRating = r.rating;
+          }
         } catch (e) {
-          console.warn('[/candidates] Failed to parse rating for candidate:', r.id, e.message);
-          parsedRating = r.rating; // Keep as string if parse fails
+          // Silently handle parse failures - keep as string if parse fails
+          parsedRating = r.rating;
         }
       }
-      
-      return {
+
+      const mapped = {
         ...r,
-        // process-style keys explicit (helpful for debugging)
         jobtitle: r.jobtitle ?? null,
         company: companyCanonical ?? (r.company ?? null),
         jobfamily: r.jobfamily ?? null,
         sourcingstatus: r.sourcingstatus ?? null,
         product: r.product ?? null,
-        lskillset: r.lskillset ?? null, // ensure lskillset is available
-        vskillset: parsedVskillset ?? null, // ensure vskillset is available and parsed
-        rating: parsedRating ?? null, // ensure rating is available and parsed
+        lskillset: r.lskillset ?? null,
+        vskillset: parsedVskillset ?? null, // use parsed object (or null)
+        rating: parsedRating ?? null,
         linkedinurl: r.linkedinurl ?? null,
-        jskillset: r.jskillset ?? null, // return jskillset for frontend if needed
-        pic: picBase64, // Convert bytea to base64 for frontend
+        jskillset: r.jskillset ?? null,
+        pic: picBase64,
 
-        // candidate-style fields mapped from process columns if missing
         role: r.role ?? r.jobtitle ?? null,
         organisation: companyCanonical ?? (r.organisation ?? r.company ?? null),
         job_family: r.job_family ?? r.jobfamily ?? null,
         sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
-        // type maps to product
         type: r.product ?? null,
-        // personal: prefer the DB personal if present, otherwise fallback to canonicalized jobtitle
         personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : personalFallback
       };
-    });
-    res.json(rows);
+
+      processedRows.push(mapped);
+    }
+
+    res.json(processedRows);
   } catch (err) {
     console.error('Fetch process rows error:', err);
     res.status(500).json({ error: 'Failed to fetch candidates/process rows.' });
@@ -1395,16 +1511,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     // Reload to reflect any canonical updates
     r = (await pool.query('SELECT * FROM "process" WHERE id = $1', [r.id])).rows[0];
 
-    // Parse vskillset if it's a JSON string
-    let parsedVskillset = r.vskillset;
-    if (r.vskillset && typeof r.vskillset === 'string') {
-      try {
-        parsedVskillset = JSON.parse(r.vskillset);
-      } catch (e) {
-        console.warn('[PUT /candidates/:id] Failed to parse vskillset:', e.message);
-        parsedVskillset = null;
-      }
-    }
+    // After reloading r from DB:
+    const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
     // Convert bytea pic to base64 string for frontend
     let picBase64 = null;
@@ -1422,7 +1530,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       sourcingstatus: r.sourcingstatus ?? null,
       product: r.product ?? null,
       lskillset: r.lskillset ?? null,
-      vskillset: parsedVskillset ?? null, // ensure vskillset is available and parsed
+      vskillset: parsedVskillset ?? null, // use parsed object (or null)
       pic: picBase64, // Convert bytea to base64 for frontend
       linkedinurl: r.linkedinurl ?? null,
       jskillset: r.jskillset ?? null,
