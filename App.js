@@ -4174,49 +4174,49 @@ export default function App() {
                             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--argent)', marginBottom: 12, textTransform: 'uppercase' }}>Professional Details</div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Seniority</label>
-                                    <div style={{ fontSize: 14 }}>{resumeCandidate.seniority || '—'}</div>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Seniority</label>
+                                    <div style={{ fontSize: 16 }}>{resumeCandidate.seniority || '—'}</div>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Total Experience</label>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Total Experience</label>
                                     {/* Switched to use .exp */}
-                                    <div style={{ fontSize: 14 }}>{resumeCandidate.exp ? `${resumeCandidate.exp} Years` : '—'}</div>
+                                    <div style={{ fontSize: 16 }}>{resumeCandidate.exp ? `${resumeCandidate.exp} Years` : '—'}</div>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Job Family</label>
-                                    <div style={{ fontSize: 14 }}>{resumeCandidate.job_family || '—'}</div>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Job Family</label>
+                                    <div style={{ fontSize: 16 }}>{resumeCandidate.job_family || '—'}</div>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Sector</label>
-                                    <div style={{ fontSize: 14 }}>{resumeCandidate.sector || '—'}</div>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Sector</label>
+                                    <div style={{ fontSize: 16 }}>{resumeCandidate.sector || '—'}</div>
                                 </div>
                                 
                                 {/* AVG Tenure field added above Location */}
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>AVG Tenure</label>
-                                    <div style={{ fontSize: 14, color: 'var(--muted)' }}>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>AVG Tenure</label>
+                                    <div style={{ fontSize: 16, color: 'var(--muted)' }}>
                                         {resumeCandidate.tenure ? `${resumeCandidate.tenure} Years` : '—'}
                                     </div>
                                 </div>
                                 
                                 {/* Location field */}
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Location</label>
-                                    <div style={{ fontSize: 14, color: 'var(--muted)' }}>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Location</label>
+                                    <div style={{ fontSize: 16, color: 'var(--muted)' }}>
                                         {[resumeCandidate.city, resumeCandidate.country].filter(Boolean).join(', ') || '—'}
                                     </div>
                                 </div>
                                 
                                 {/* Mobile field moved below Location */}
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Mobile</label>
-                                    <div style={{ fontSize: 14, color: 'var(--muted)' }}>{resumeCandidate.mobile || '—'}</div>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Mobile</label>
+                                    <div style={{ fontSize: 16, color: 'var(--muted)' }}>{resumeCandidate.mobile || '—'}</div>
                                 </div>
                                 
                                 {/* Office field added below Mobile */}
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Office</label>
-                                    <div style={{ fontSize: 14, color: 'var(--muted)' }}>{resumeCandidate.office || '—'}</div>
+                                    <label style={{ display: 'block', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Office</label>
+                                    <div style={{ fontSize: 16, color: 'var(--muted)' }}>{resumeCandidate.office || '—'}</div>
                                 </div>
                             </div>
                         </div>
@@ -4357,6 +4357,52 @@ export default function App() {
                                     );
                                 })
                             ) : <span style={{ color: '#9ca3af', fontSize: 13 }}>No skills listed.</span>}
+                        </div>
+                        
+                        {/* Textbox to manually add new skills */}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                            <input
+                                type="text"
+                                value={newSkillInput}
+                                onChange={(e) => setNewSkillInput(e.target.value)}
+                                onKeyPress={(e) => {
+                                    if (e.key === 'Enter' && newSkillInput.trim()) {
+                                        handleAddSkill(newSkillInput);
+                                        setNewSkillInput('');
+                                    }
+                                }}
+                                placeholder="Enter a new skill and press Enter"
+                                style={{
+                                    flex: 1,
+                                    padding: '8px 12px',
+                                    fontSize: 14,
+                                    border: '1px solid var(--neutral-border)',
+                                    borderRadius: 6,
+                                    outline: 'none'
+                                }}
+                            />
+                            <button
+                                onClick={() => {
+                                    if (newSkillInput.trim()) {
+                                        handleAddSkill(newSkillInput);
+                                        setNewSkillInput('');
+                                    }
+                                }}
+                                disabled={!newSkillInput.trim()}
+                                style={{
+                                    padding: '8px 16px',
+                                    fontSize: 14,
+                                    fontWeight: 600,
+                                    background: newSkillInput.trim() ? '#2563eb' : '#e5e7eb',
+                                    color: newSkillInput.trim() ? 'white' : '#9ca3af',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    cursor: newSkillInput.trim() ? 'pointer' : 'not-allowed',
+                                    transition: 'background 0.2s'
+                                }}
+                            >
+                                Add Skill
+                            </button>
                         </div>
                     </div>
 

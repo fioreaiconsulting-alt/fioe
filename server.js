@@ -874,9 +874,20 @@ app.get('/candidates', requireLogin, async (req, res) => {
       let parsedVskillset = r.vskillset;
       if (r.vskillset && typeof r.vskillset === 'string') {
         try {
-          parsedVskillset = JSON.parse(r.vskillset);
+          // Clean the string before parsing - remove control characters and fix common issues
+          const cleanedVskillset = r.vskillset
+            .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
+            .trim();
+          
+          if (cleanedVskillset) {
+            parsedVskillset = JSON.parse(cleanedVskillset);
+          } else {
+            parsedVskillset = null;
+          }
         } catch (e) {
+          // Log detailed error for debugging but don't crash
           console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e.message);
+          // Keep original string value instead of null, in case it's useful for debugging
           parsedVskillset = null;
         }
       }
@@ -885,10 +896,23 @@ app.get('/candidates', requireLogin, async (req, res) => {
       let parsedRating = r.rating;
       if (r.rating && typeof r.rating === 'string') {
         try {
-          parsedRating = JSON.parse(r.rating);
+          // Clean the string before parsing
+          const cleanedRating = r.rating
+            .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
+            .trim();
+          
+          // Check if it looks like JSON before trying to parse
+          if (cleanedRating && (cleanedRating.startsWith('{') || cleanedRating.startsWith('['))) {
+            parsedRating = JSON.parse(cleanedRating);
+          } else {
+            // Keep as string if it doesn't look like JSON
+            parsedRating = r.rating;
+          }
         } catch (e) {
+          // Log detailed error for debugging
           console.warn('[/candidates] Failed to parse rating for candidate:', r.id, e.message);
-          parsedRating = r.rating; // Keep as string if parse fails
+          // Keep as string if parse fails - it might be plain text rating
+          parsedRating = r.rating;
         }
       }
       
@@ -1399,7 +1423,16 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     let parsedVskillset = r.vskillset;
     if (r.vskillset && typeof r.vskillset === 'string') {
       try {
-        parsedVskillset = JSON.parse(r.vskillset);
+        // Clean the string before parsing - remove control characters and fix common issues
+        const cleanedVskillset = r.vskillset
+          .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
+          .trim();
+        
+        if (cleanedVskillset) {
+          parsedVskillset = JSON.parse(cleanedVskillset);
+        } else {
+          parsedVskillset = null;
+        }
       } catch (e) {
         console.warn('[PUT /candidates/:id] Failed to parse vskillset:', e.message);
         parsedVskillset = null;
