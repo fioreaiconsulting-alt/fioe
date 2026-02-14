@@ -1124,7 +1124,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 }
 
 .assessment-table thead {
-  background: #5b8def;
+  background: var(--cool-blue);
   color: white;
 }
 
@@ -1154,7 +1154,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 }
 
 .assessment-badge {
-  background: #5b8def;
+  background: var(--cool-blue);
   color: white;
   padding: 6px 16px;
   border-radius: 6px;
