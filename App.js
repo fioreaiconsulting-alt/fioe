@@ -4345,7 +4345,7 @@ export default function App() {
                                         </thead>
                                         <tbody>
                                             <tr>
-                                                <td style={{ fontWeight: 600, color: '#374151', width: '35%' }}>Assessment Level</td>
+                                                <td style={{ fontWeight: 600, color: '#374151', width: '25%' }}>Assessment Level</td>
                                                 <td style={{ fontWeight: 600 }}>
                                                     <span className="assessment-badge">
                                                         {resumeCandidate.rating.assessment_level}
@@ -4354,14 +4354,14 @@ export default function App() {
                                             </tr>
                                             <tr>
                                                 <td style={{ fontWeight: 600, color: '#374151' }}>Overall Score</td>
-                                                <td style={{ color: '#5b8def', fontWeight: 700, fontSize: 18 }}>
+                                                <td style={{ color: '#5b8def', fontWeight: 700, fontSize: 24 }}>
                                                     {resumeCandidate.rating.total_score || 'N/A'}
                                                 </td>
                                             </tr>
                                             {resumeCandidate.rating.stars && (
                                                 <tr>
                                                     <td style={{ fontWeight: 600, color: '#374151' }}>Rating</td>
-                                                    <td style={{ fontSize: 18 }}>
+                                                    <td style={{ fontSize: 20 }}>
                                                         {resumeCandidate.rating.stars}
                                                     </td>
                                                 </tr>
@@ -4369,13 +4369,15 @@ export default function App() {
                                             {resumeCandidate.rating.overall_comment && (
                                                 <tr>
                                                     <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Executive Summary</td>
-                                                    <td style={{ color: '#1e40af', lineHeight: 1.6 }}>
+                                                    <td>
                                                         <div style={{ 
-                                                            padding: 12, 
-                                                            background: '#eff6ff', 
+                                                            padding: 16, 
+                                                            background: '#dbeafe', 
                                                             borderLeft: '4px solid #5b8def', 
                                                             borderRadius: 4,
-                                                            fontSize: 14
+                                                            fontSize: 14,
+                                                            color: '#1e40af',
+                                                            lineHeight: 1.6
                                                         }}>
                                                             {resumeCandidate.rating.overall_comment}
                                                         </div>
@@ -4385,14 +4387,16 @@ export default function App() {
                                             {resumeCandidate.rating.comments && (
                                                 <tr>
                                                     <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Recruiter Notes</td>
-                                                    <td style={{ color: '#374151', lineHeight: 1.6 }}>
+                                                    <td>
                                                         <div style={{ 
-                                                            padding: 12, 
-                                                            background: '#ffffff', 
+                                                            padding: 16, 
+                                                            background: '#f9fafb', 
                                                             borderRadius: 4,
                                                             border: '1px solid #e5e7eb',
                                                             whiteSpace: 'pre-wrap',
-                                                            fontSize: 14
+                                                            fontSize: 14,
+                                                            color: '#374151',
+                                                            lineHeight: 1.6
                                                         }}>
                                                             {resumeCandidate.rating.comments}
                                                         </div>
