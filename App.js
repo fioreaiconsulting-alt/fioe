@@ -1026,6 +1026,11 @@ function CandidatesTable({
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   
+  // Checkbox Rename Workflow State
+  const [renameCheckboxId, setRenameCheckboxId] = useState(null);
+  const [renameCategory, setRenameCategory] = useState('');
+  const [renameValue, setRenameValue] = useState('');
+  
   // Email modal & SMTP state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [composedToAddresses, setComposedToAddresses] = useState('');
@@ -1096,11 +1101,29 @@ function CandidatesTable({
   useEffect(() => { setSelectedIds([]); }, [page]);
 
   const handleCheckboxChange = id => {
+    const wasChecked = selectedIds.includes(id);
+    if (!wasChecked) {
+      // Show rename UI when checking
+      setRenameCheckboxId(id);
+      setRenameCategory('');
+      setRenameValue('');
+    } else {
+      // Hide rename UI when unchecking
+      if (renameCheckboxId === id) {
+        setRenameCheckboxId(null);
+        setRenameCategory('');
+        setRenameValue('');
+      }
+    }
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
   const handleSelectAll = e => {
     if (e.target.checked) setSelectedIds(candidates.map(c => c.id));
     else setSelectedIds([]);
+    // Clear rename UI on select all
+    setRenameCheckboxId(null);
+    setRenameCategory('');
+    setRenameValue('');
   };
 
   const handleSaveAll = async () => {
@@ -1231,6 +1254,60 @@ function CandidatesTable({
       setSyncMessage(err.message || 'Sync failed.');
     } finally {
       setSyncLoading(false);
+    }
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!renameCheckboxId || !renameCategory || !renameValue.trim()) {
+      alert('Please select a category and enter a new value.');
+      return;
+    }
+
+    try {
+      // Map frontend category names to database field names
+      const fieldMap = {
+        'Job Title': 'role',
+        'Sector': 'sector',
+        'Job Family': 'job_family',
+        'Geographic': 'geographic',
+        'Country': 'country'
+      };
+      
+      const dbField = fieldMap[renameCategory];
+      if (!dbField) {
+        alert('Invalid category selected.');
+        return;
+      }
+
+      // Update the edit rows state
+      setEditRows(prev => ({
+        ...prev,
+        [renameCheckboxId]: {
+          ...(prev[renameCheckboxId] || {}),
+          [dbField]: renameValue.trim()
+        }
+      }));
+
+      // Save to database via onSave callback
+      if (typeof onSave === 'function') {
+        const candidate = candidates.find(c => c.id === renameCheckboxId);
+        const payload = {
+          ...(candidate || {}),
+          ...(editRows[renameCheckboxId] || {}),
+          [dbField]: renameValue.trim()
+        };
+        await onSave(renameCheckboxId, payload);
+      }
+
+      // Clear rename UI after successful update
+      setRenameCheckboxId(null);
+      setRenameCategory('');
+      setRenameValue('');
+      
+      alert(`Successfully updated ${renameCategory} to "${renameValue.trim()}"`);
+    } catch (err) {
+      console.error('Rename failed:', err);
+      alert(`Failed to update: ${err.message || 'Unknown error'}`);
     }
   };
 
@@ -1518,6 +1595,90 @@ function CandidatesTable({
           {saveMessage && <div style={{ color: 'var(--success)', fontSize: 14 }}>{saveMessage}</div>}
           {syncMessage && <div style={{ color: 'var(--success)', fontSize: 14 }}>{syncMessage}</div>}
         </div>
+
+        {/* Checkbox Rename Workflow UI */}
+        {renameCheckboxId && (
+          <div style={{
+            padding: '12px 16px',
+            background: '#f8fafc',
+            border: '1px solid #e2e8f0',
+            borderRadius: 8,
+            marginBottom: 12,
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+            flexWrap: 'wrap'
+          }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#334155' }}>
+              Rename field for selected record:
+            </span>
+            
+            <select
+              value={renameCategory}
+              onChange={(e) => setRenameCategory(e.target.value)}
+              style={{
+                padding: '6px 12px',
+                fontSize: 14,
+                border: '1px solid #cbd5e1',
+                borderRadius: 6,
+                background: '#ffffff',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="">Select Category...</option>
+              <option value="Job Title">Job Title</option>
+              <option value="Sector">Sector</option>
+              <option value="Job Family">Job Family</option>
+              <option value="Geographic">Geographic</option>
+              <option value="Country">Country</option>
+            </select>
+
+            {renameCategory && (
+              <>
+                <input
+                  type="text"
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  placeholder={`Enter new ${renameCategory}...`}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: 14,
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 6,
+                    minWidth: 250,
+                    background: '#ffffff'
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleRenameSubmit();
+                    }
+                  }}
+                />
+                
+                <button
+                  onClick={handleRenameSubmit}
+                  className="btn-primary"
+                  style={{ padding: '6px 16px', fontSize: 14 }}
+                >
+                  Update
+                </button>
+                
+                <button
+                  onClick={() => {
+                    setRenameCheckboxId(null);
+                    setRenameCategory('');
+                    setRenameValue('');
+                  }}
+                  className="btn-secondary"
+                  style={{ padding: '6px 16px', fontSize: 14 }}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <div style={{ overflowX: 'auto', width: '100%', maxWidth: '100%' }}>
           <table
             ref={tableRef}
