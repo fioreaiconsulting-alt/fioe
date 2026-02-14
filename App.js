@@ -4416,11 +4416,12 @@ export default function App() {
                         </div>
                     </div>
 
-                    {/* Verified Skillset Details Section - Always visible */}
+                    {/* Verified Skillset Details Section - Always visible, purely visualization */}
                     <div className="vskillset-section">
                         <div 
                             className="vskillset-header"
                             onClick={() => setVskillsetExpanded(!vskillsetExpanded)}
+                            style={{ cursor: 'pointer' }}
                         >
                             <span className="vskillset-title">Verified Skillset Details</span>
                             <span className="vskillset-arrow">{vskillsetExpanded ? '▼' : '▶'}</span>
@@ -4546,7 +4547,7 @@ export default function App() {
                                                 </tr>
                                                 <tr>
                                                     <td style={{ fontWeight: 600, color: '#374151' }}>Overall Score</td>
-                                                    <td style={{ color: '#5b8def', fontWeight: 700, fontSize: 24 }}>
+                                                    <td style={{ color: '#4c82b8', fontWeight: 700, fontSize: 24 }}>
                                                         {r.total_score || 'N/A'}
                                                     </td>
                                                 </tr>
@@ -4565,7 +4566,7 @@ export default function App() {
                                                             <div style={{ 
                                                                 padding: 16, 
                                                                 background: '#dbeafe', 
-                                                                borderLeft: '4px solid #5b8def', 
+                                                                borderLeft: '4px solid #4c82b8', 
                                                                 borderRadius: 4,
                                                                 fontSize: 14,
                                                                 color: '#1e40af',
@@ -4578,7 +4579,7 @@ export default function App() {
                                                 )}
                                                 {r.comments && (
                                                     <tr>
-                                                        <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>Recruiter Notes</td>
+                                                        <td style={{ fontWeight: 600, color: '#374151', verticalAlign: 'top' }}>AI Assessment</td>
                                                         <td>
                                                             <div style={{ 
                                                                 padding: 16, 
