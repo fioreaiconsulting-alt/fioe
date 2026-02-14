@@ -1030,6 +1030,8 @@ function CandidatesTable({
   const [renameCheckboxId, setRenameCheckboxId] = useState(null);
   const [renameCategory, setRenameCategory] = useState('');
   const [renameValue, setRenameValue] = useState('');
+  const [renameMessage, setRenameMessage] = useState('');
+  const [renameError, setRenameError] = useState('');
   
   // Email modal & SMTP state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -1100,8 +1102,20 @@ function CandidatesTable({
 
   useEffect(() => { setSelectedIds([]); }, [page]);
 
+  // Helper to reset rename workflow state
+  const resetRenameState = () => {
+    setRenameCheckboxId(null);
+    setRenameCategory('');
+    setRenameValue('');
+    setRenameMessage('');
+    setRenameError('');
+  };
+
   const handleCheckboxChange = id => {
     const wasChecked = selectedIds.includes(id);
+    // Update checkbox state first
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    
     if (!wasChecked) {
       // Show rename UI when checking
       setRenameCheckboxId(id);
@@ -1110,20 +1124,15 @@ function CandidatesTable({
     } else {
       // Hide rename UI when unchecking
       if (renameCheckboxId === id) {
-        setRenameCheckboxId(null);
-        setRenameCategory('');
-        setRenameValue('');
+        resetRenameState();
       }
     }
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
   const handleSelectAll = e => {
     if (e.target.checked) setSelectedIds(candidates.map(c => c.id));
     else setSelectedIds([]);
     // Clear rename UI on select all
-    setRenameCheckboxId(null);
-    setRenameCategory('');
-    setRenameValue('');
+    resetRenameState();
   };
 
   const handleSaveAll = async () => {
@@ -1258,8 +1267,11 @@ function CandidatesTable({
   };
 
   const handleRenameSubmit = async () => {
+    setRenameMessage('');
+    setRenameError('');
+    
     if (!renameCheckboxId || !renameCategory || !renameValue.trim()) {
-      alert('Please select a category and enter a new value.');
+      setRenameError('Please select a category and enter a new value.');
       return;
     }
 
@@ -1275,7 +1287,8 @@ function CandidatesTable({
       
       const dbField = fieldMap[renameCategory];
       if (!dbField) {
-        alert('Invalid category selected.');
+        console.error('Invalid category selected:', renameCategory);
+        setRenameError('Invalid category selected.');
         return;
       }
 
@@ -1299,15 +1312,14 @@ function CandidatesTable({
         await onSave(renameCheckboxId, payload);
       }
 
-      // Clear rename UI after successful update
-      setRenameCheckboxId(null);
-      setRenameCategory('');
-      setRenameValue('');
-      
-      alert(`Successfully updated ${renameCategory} to "${renameValue.trim()}"`);
+      // Show success message and clear rename UI after successful update
+      setRenameMessage(`Successfully updated ${renameCategory} to "${renameValue.trim()}"`);
+      setTimeout(() => {
+        resetRenameState();
+      }, 2000);
     } catch (err) {
       console.error('Rename failed:', err);
-      alert(`Failed to update: ${err.message || 'Unknown error'}`);
+      setRenameError(`Failed to update: ${err.message || 'Unknown error'}`);
     }
   };
 
@@ -1648,7 +1660,7 @@ function CandidatesTable({
                     minWidth: 250,
                     background: '#ffffff'
                   }}
-                  onKeyPress={(e) => {
+                  onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handleRenameSubmit();
                     }
@@ -1664,16 +1676,15 @@ function CandidatesTable({
                 </button>
                 
                 <button
-                  onClick={() => {
-                    setRenameCheckboxId(null);
-                    setRenameCategory('');
-                    setRenameValue('');
-                  }}
+                  onClick={resetRenameState}
                   className="btn-secondary"
                   style={{ padding: '6px 16px', fontSize: 14 }}
                 >
                   Cancel
                 </button>
+                
+                {renameError && <div style={{ color: 'var(--danger)', fontSize: 14, width: '100%' }}>{renameError}</div>}
+                {renameMessage && <div style={{ color: 'var(--success)', fontSize: 14, width: '100%' }}>{renameMessage}</div>}
               </>
             )}
           </div>
