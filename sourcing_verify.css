@@ -274,8 +274,6 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
     border-collapse: collapse;
     background: #ffffff;
     border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
