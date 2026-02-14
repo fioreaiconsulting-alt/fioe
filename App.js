@@ -1279,7 +1279,9 @@ function CandidatesTable({
       // Map frontend category names to database field names
       const fieldMap = {
         'Job Title': 'role',
+        'Company': 'organisation',
         'Sector': 'sector',
+        'Personal': 'personal',
         'Job Family': 'job_family',
         'Geographic': 'geographic',
         'Country': 'country'
@@ -1540,18 +1542,20 @@ function CandidatesTable({
         overflowX: 'auto', width: '100%', maxWidth: '100%', position: 'relative', padding: 16
       }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
-          <button
-            disabled={!selectedIds.length || deleting}
-            onClick={async () => {
-              if (!selectedIds.length) return;
-              setDeleting(true);
-              await onDelete([...selectedIds]);
-              setDeleting(false);
-              setSelectedIds([]);
-            }}
-            className="btn-danger"
-            style={{ padding: '8px 16px' }}
-          >{deleting ? 'Deleting…' : 'Delete'}</button>
+          {selectedIds.length > 0 && (
+            <button
+              disabled={!selectedIds.length || deleting}
+              onClick={async () => {
+                if (!selectedIds.length) return;
+                setDeleting(true);
+                await onDelete([...selectedIds]);
+                setDeleting(false);
+                setSelectedIds([]);
+              }}
+              className="btn-danger"
+              style={{ padding: '8px 16px' }}
+            >{deleting ? 'Deleting…' : 'Delete'}</button>
+          )}
 
           <button
             onClick={onClearAllFilters}
@@ -1639,7 +1643,9 @@ function CandidatesTable({
             >
               <option value="">Select Category...</option>
               <option value="Job Title">Job Title</option>
+              <option value="Company">Company</option>
               <option value="Sector">Sector</option>
+              <option value="Personal">Personal</option>
               <option value="Job Family">Job Family</option>
               <option value="Geographic">Geographic</option>
               <option value="Country">Country</option>
