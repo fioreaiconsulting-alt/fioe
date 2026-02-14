@@ -1134,7 +1134,8 @@ function CandidatesTable({
         id: r.id,
         organisation: r.organisation ?? r.company ?? '',
         jobtitle: r.role ?? r.jobtitle ?? '',
-        seniority: r.seniority ?? ''
+        seniority: r.seniority ?? '',
+        country: r.country ?? ''
       }));
 
       if (!rows.length) {
@@ -1208,6 +1209,15 @@ function CandidatesTable({
               entry.seniority = String(row.seniority).trim();
             } else {
               entry.seniority = '';
+            }
+          }
+
+          // Sync country field
+          if (row.country !== null && row.country !== undefined) {
+            if (String(row.country).trim() !== '') {
+              entry.country = String(row.country).trim();
+            } else {
+              entry.country = '';
             }
           }
 

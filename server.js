@@ -62,7 +62,7 @@ const mappingPath = path.resolve(__dirname, 'skillset-mapping.json');
 const COMPANY_ALIAS_MAP = [
   { re: /\bnexon(?:\s+games)?\b/i, canonical: 'Nexon' },
   { re: /\bmihoyo\b|\bmiho?yo\b/i, canonical: 'Mihoyo' },
-  { re: /\btencent\b|\btencent games\b/i, canonical: 'Tencent Games' },
+  { re: /\btencent(?:\s+(?:gaming|games|cloud|music|video|pictures|entertainment))?\b/i, canonical: 'Tencent' },
   { re: /\bgarena\b/i, canonical: 'Garena' },
   { re: /\boppo\b/i, canonical: 'Oppo' },
   { re: /\blilith\b/i, canonical: 'Lilith Games' },
@@ -86,6 +86,9 @@ function normalizeCompanyName(raw) {
     .replace(/[,()"]/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+
+  // Remove special characters (non-alphanumeric except spaces)
+  cleaned = cleaned.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s{2,}/g, ' ').trim();
 
   // map again after cleaning
   for (const a of COMPANY_ALIAS_MAP) {
@@ -134,6 +137,17 @@ function canonicalJobTitle(rawTitle) {
     }
     // fallback
     return (seniorityPrefix + 'Graphics Engineer').trim();
+  }
+
+  // cloud-related normalization (Cloud Specialist, Cloud Developer → Cloud Engineer)
+  // Exception: Cloud Architect remains separate due to distinct expertise level
+  if (/\b(cloud)\b/.test(lower)) {
+    if (/\b(architect)\b/.test(lower)) {
+      return (seniorityPrefix + 'Cloud Architect').trim();
+    }
+    if (/\b(specialist|developer|engineer|consultant|analyst)\b/.test(lower)) {
+      return (seniorityPrefix + 'Cloud Engineer').trim();
+    }
   }
 
   // engine programmer / game engine
@@ -194,6 +208,76 @@ function standardizeSeniority(raw) {
   if (/\b(executive|exec|vp|cxo|chief|head|svp)\b/.test(s)) return 'Executive';
 
   return null;
+}
+
+// Remove special characters (non-alphanumeric) from a string, keeping only letters, numbers, and spaces
+function removeSpecialCharacters(text) {
+  if (text == null) return null;
+  const s = String(text).trim();
+  if (!s) return null;
+  // Keep only alphanumeric characters and spaces
+  return s.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+// Load and cache country code mapping
+let countryCodeMap = null;
+function loadCountryCodeMap() {
+  if (countryCodeMap) return countryCodeMap;
+  try {
+    const fs = require('fs');
+    const countryCodePath = path.resolve(__dirname, 'countrycode.JSON');
+    const data = fs.readFileSync(countryCodePath, 'utf8');
+    countryCodeMap = JSON.parse(data);
+    return countryCodeMap;
+  } catch (err) {
+    console.warn('[COUNTRY] Failed to load countrycode.JSON:', err.message);
+    return {};
+  }
+}
+
+// Normalize country name using countrycode.JSON mapping
+function normalizeCountry(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  
+  const countryMap = loadCountryCodeMap();
+  const lower = s.toLowerCase();
+  
+  // Check for exact match in values (case-insensitive)
+  for (const [code, name] of Object.entries(countryMap)) {
+    if (name.toLowerCase() === lower) {
+      return name;
+    }
+  }
+  
+  // Check for common aliases
+  const aliases = {
+    'south korea': 'Korea',
+    'republic of korea': 'Korea',
+    'rok': 'Korea',
+    'united states of america': 'United States',
+    'usa': 'United States',
+    'us': 'United States',
+    'uk': 'United Kingdom',
+    'great britain': 'United Kingdom',
+    'uae': 'United Arab Emirates',
+    'emirates': 'United Arab Emirates'
+  };
+  
+  if (aliases[lower]) {
+    return aliases[lower];
+  }
+  
+  // Check for partial matches (e.g., "South Korea" contains "Korea")
+  for (const [code, name] of Object.entries(countryMap)) {
+    if (lower.includes(name.toLowerCase()) || name.toLowerCase().includes(lower)) {
+      return name;
+    }
+  }
+  
+  // Return original if no match found, but title-cased
+  return s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
 
 // Utility: update process row's company/personal fields if canonicalization suggests change.
@@ -1653,11 +1737,11 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
 /**
  * ========== Data Verification (Company & Job Title Standardization via Gemini 2.5 Flash Lite) ==========
  * Endpoint: POST /verify-data
- * Body: { rows: [ { id, organisation, jobtitle?, seniority?, geographic? } ] }
- * Response: { corrected: [ { id, organisation?, company?, jobtitle?, standardized_job_title?, personal?, seniority?, geographic? } ] }
+ * Body: { rows: [ { id, organisation, jobtitle?, seniority?, geographic?, country? } ] }
+ * Response: { corrected: [ { id, organisation?, company?, jobtitle?, standardized_job_title?, personal?, seniority?, geographic?, country? } ] }
  *
- * This endpoint sends organisation, job title, seniority, and geographic data to Gemini
- * to standardize them (e.g. normalize company names, categorize job titles).
+ * This endpoint sends organisation, job title, seniority, geographic and country data to Gemini
+ * to standardize them (e.g. normalize company names, categorize job titles, normalize countries).
  */
 app.post('/verify-data', requireLogin, async (req, res) => {
   const { rows } = req.body;
@@ -1680,25 +1764,27 @@ app.post('/verify-data', requireLogin, async (req, res) => {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
     // Construct prompt for batch
-    // We send subset of fields: id, organisation, jobtitle (or role), seniority, geographic
+    // We send subset of fields: id, organisation, jobtitle (or role), seniority, geographic, country
     const lines = rows.map(r => {
       const org = r.organisation || r.company || '';
       const title = r.jobtitle || r.role || '';
       const sen = r.seniority || '';
-      const geo = r.geographic || r.country || '';
-      return JSON.stringify({ id: r.id, org, title, sen, geo });
+      const geo = r.geographic || '';
+      const country = r.country || '';
+      return JSON.stringify({ id: r.id, org, title, sen, geo, country });
     });
 
     const prompt = `
       You are a data standardization assistant.
-      I will provide a JSON list of candidate records with fields: id, org (company), title (job title), sen (seniority), geo (location).
+      I will provide a JSON list of candidate records with fields: id, org (company), title (job title), sen (seniority), geo (geographic region), country.
       
       Your task:
-      1. Standardize "org" to the canonical company name (e.g. "Tencent Games" -> "Tencent", "Mihoyo Co Ltd" -> "Mihoyo").
-      2. Standardize "title" to a standard job title.
+      1. Standardize "org" to the canonical company name (e.g. "Tencent Gaming" -> "Tencent", "Tencent Cloud" -> "Tencent", "Mihoyo Co Ltd" -> "Mihoyo").
+      2. Standardize "title" to a standard job title (e.g. "Cloud Specialist" -> "Cloud Engineer", "Cloud Developer" -> "Cloud Engineer", but "Cloud Architect" remains "Cloud Architect").
       3. Infer or standardize "sen" (seniority) to one of: Junior, Mid, Senior, Lead, Manager, Director, Expert, Executive.
-      4. Return a JSON list of objects with keys: "id", "organisation" (standardized), "jobtitle" (standardized), "seniority" (standardized).
-      5. IMPORTANT: Return ONLY the JSON. No markdown formatting.
+      4. Standardize "country" to canonical country names (e.g. "South Korea" -> "Korea", "USA" -> "United States").
+      5. Return a JSON list of objects with keys: "id", "organisation" (standardized), "jobtitle" (standardized), "seniority" (standardized), "country" (standardized).
+      6. IMPORTANT: Return ONLY the JSON. No markdown formatting.
 
       Input:
       [${lines.join(',\n')}]
@@ -1726,7 +1812,30 @@ app.post('/verify-data', requireLogin, async (req, res) => {
         throw new Error("Gemini response is not an array");
     }
 
-    res.json({ corrected: data });
+    // Apply our local normalization functions to the Gemini results
+    const normalized = data.map(item => {
+      const result = { ...item };
+      
+      // Apply company normalization with special character removal
+      if (result.organisation) {
+        result.organisation = normalizeCompanyName(result.organisation);
+      }
+      
+      // Apply job title normalization
+      if (result.jobtitle) {
+        result.jobtitle = canonicalJobTitle(result.jobtitle);
+        result.personal = result.jobtitle; // Also set personal field
+      }
+      
+      // Apply country normalization using countrycode.JSON
+      if (result.country) {
+        result.country = normalizeCountry(result.country);
+      }
+      
+      return result;
+    });
+
+    res.json({ corrected: normalized });
 
   } catch (err) {
     console.error('/verify-data error:', err);
