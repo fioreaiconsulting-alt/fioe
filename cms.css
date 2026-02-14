@@ -1159,7 +1159,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
   padding: 6px 16px;
   border-radius: 6px;
   font-size: 13px;
-  fontWeight: 700;
+  font-weight: 700;
   display: inline-block;
 }
 
