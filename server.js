@@ -79,16 +79,13 @@ function normalizeCompanyName(raw) {
   for (const a of COMPANY_ALIAS_MAP) {
     if (a.re.test(s)) return a.canonical;
   }
-  // Remove punctuation and known suffixes/words that are noise
+  // Remove known suffixes/words that are noise and all special characters
   let cleaned = s
     .replace(/\b(Co|Co\.|Company|LLC|Inc|Inc\.|Ltd|Ltd\.|GmbH|AG|S\.A\.|Pty Ltd|Sdn Bhd|SAS|S\.A\.S\.|KK|BV)\b/gi, '')
     .replace(/\b(Group|Studios|Studio|Games|Entertainment|Interactive)\b/gi, '')
-    .replace(/[,()"]/g, '')
+    .replace(/[^a-zA-Z0-9\s]/g, '') // Remove all special characters (non-alphanumeric except spaces)
     .replace(/\s{2,}/g, ' ')
     .trim();
-
-  // Remove special characters (non-alphanumeric except spaces)
-  cleaned = cleaned.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s{2,}/g, ' ').trim();
 
   // map again after cleaning
   for (const a of COMPANY_ALIAS_MAP) {
@@ -151,7 +148,10 @@ function canonicalJobTitle(rawTitle) {
   }
 
   // engine programmer / game engine
-  if (/\b(engine programmer|engineer programmer|engineer|engine programmer|game engine)\b/.test(lower) || /\b(engine)\b/.test(lower) && /\b(programmer|program)\b/.test(lower)) {
+  if (/\b(engine)\b/.test(lower) && /\b(programm(er|ing))\b/.test(lower)) {
+    return (seniorityPrefix + 'Engine Programmer').trim();
+  }
+  if (/\b(game engine)\b/.test(lower)) {
     return (seniorityPrefix + 'Engine Programmer').trim();
   }
 
@@ -246,7 +246,8 @@ function normalizeCountry(raw) {
   
   // Check for exact match in values (case-insensitive)
   for (const [code, name] of Object.entries(countryMap)) {
-    if (name.toLowerCase() === lower) {
+    const nameLower = name.toLowerCase();
+    if (nameLower === lower) {
       return name;
     }
   }
@@ -271,7 +272,8 @@ function normalizeCountry(raw) {
   
   // Check for partial matches (e.g., "South Korea" contains "Korea")
   for (const [code, name] of Object.entries(countryMap)) {
-    if (lower.includes(name.toLowerCase()) || name.toLowerCase().includes(lower)) {
+    const nameLower = name.toLowerCase();
+    if (lower.includes(nameLower) || nameLower.includes(lower)) {
       return name;
     }
   }
@@ -1822,9 +1824,12 @@ app.post('/verify-data', requireLogin, async (req, res) => {
       }
       
       // Apply job title normalization
+      // Note: The 'personal' field stores the canonical job title for the candidate.
+      // This mirrors the jobtitle field to maintain consistency across the data model
+      // where 'personal' represents the standardized role classification.
       if (result.jobtitle) {
         result.jobtitle = canonicalJobTitle(result.jobtitle);
-        result.personal = result.jobtitle; // Also set personal field
+        result.personal = result.jobtitle;
       }
       
       // Apply country normalization using countrycode.JSON
