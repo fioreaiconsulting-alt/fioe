@@ -885,9 +885,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
             parsedVskillset = null;
           }
         } catch (e) {
-          // Log detailed error for debugging but don't crash
-          console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e.message);
-          // Set to null on parse failure to indicate invalid data
+          // Silently handle parse failures - set to null on parse failure
           parsedVskillset = null;
         }
       }
@@ -909,9 +907,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
             parsedRating = r.rating;
           }
         } catch (e) {
-          // Log detailed error for debugging
-          console.warn('[/candidates] Failed to parse rating for candidate:', r.id, e.message);
-          // Keep as string if parse fails - it might be plain text rating
+          // Silently handle parse failures - keep as string if parse fails
           parsedRating = r.rating;
         }
       }
@@ -1434,7 +1430,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
           parsedVskillset = null;
         }
       } catch (e) {
-        console.warn('[PUT /candidates/:id] Failed to parse vskillset:', e.message);
+        // Silently handle parse failures - set to null on parse failure
         parsedVskillset = null;
       }
     }
