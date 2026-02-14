@@ -3595,6 +3595,58 @@ export default function App() {
     saveCandidateDebounced(id, { skillset: newSkillset });
   };
 
+  // Handler to move skill from Unmatched to Skillset (via drag-and-drop)
+  const handleMoveToSkillset = (skillToMove) => {
+    if (!resumeCandidate) return;
+    
+    // Remove from unmatched
+    const currentUnmatched = resumeCandidate.lskillset ? String(resumeCandidate.lskillset).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+    const updatedUnmatched = currentUnmatched.filter(s => s !== skillToMove);
+    const newLSkillset = updatedUnmatched.join(', ');
+    
+    // Add to skillset
+    const currentSkills = resumeCandidate.skillset ? String(resumeCandidate.skillset).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+    if (!currentSkills.some(s => s.toLowerCase() === skillToMove.toLowerCase())) {
+      currentSkills.push(skillToMove);
+    }
+    const newSkillset = currentSkills.join(', ');
+    
+    const id = resumeCandidate.id;
+    
+    // Update state
+    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, skillset: newSkillset, lskillset: newLSkillset } : c));
+    setResumeCandidate(prev => ({ ...prev, skillset: newSkillset, lskillset: newLSkillset }));
+    
+    // Save to backend
+    saveCandidateDebounced(id, { skillset: newSkillset, lskillset: newLSkillset });
+  };
+
+  // Handler to move skill from Skillset to Unmatched (via drag-and-drop)
+  const handleMoveToUnmatched = (skillToMove) => {
+    if (!resumeCandidate) return;
+    
+    // Remove from skillset
+    const currentSkills = resumeCandidate.skillset ? String(resumeCandidate.skillset).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+    const updatedSkills = currentSkills.filter(s => s !== skillToMove);
+    const newSkillset = updatedSkills.join(', ');
+    
+    // Add to unmatched
+    const currentUnmatched = resumeCandidate.lskillset ? String(resumeCandidate.lskillset).split(/[;,|]+/).map(s => s.trim()).filter(Boolean) : [];
+    if (!currentUnmatched.some(s => s.toLowerCase() === skillToMove.toLowerCase())) {
+      currentUnmatched.push(skillToMove);
+    }
+    const newLSkillset = currentUnmatched.join(', ');
+    
+    const id = resumeCandidate.id;
+    
+    // Update state
+    setCandidates(prev => prev.map(c => String(c.id) === String(id) ? { ...c, skillset: newSkillset, lskillset: newLSkillset } : c));
+    setResumeCandidate(prev => ({ ...prev, skillset: newSkillset, lskillset: newLSkillset }));
+    
+    // Save to backend
+    saveCandidateDebounced(id, { skillset: newSkillset, lskillset: newLSkillset });
+  };
+
   const handleResumeEmailCheck = (idx) => {
     setResumeEmailList(prev => prev.map((item, i) => i === idx ? { ...item, checked: !item.checked } : item));
   };
@@ -4080,13 +4132,33 @@ export default function App() {
 
                     <div style={{ marginBottom: 24 }}>
                         <h3 style={{ fontSize: 16, fontWeight: 700, borderBottom: '2px solid var(--neutral-border)', paddingBottom: 8, marginBottom: 12, color: 'var(--black-beauty)' }}>Skillset</h3>
-                        <div style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)', minHeight: 60, lineHeight: '1.6' }}>
+                        <div 
+                            style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)', minHeight: 60, lineHeight: '1.6' }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                const skill = e.dataTransfer.getData('skill');
+                                const source = e.dataTransfer.getData('source');
+                                if (skill && source === 'unmatched') {
+                                    handleMoveToSkillset(skill);
+                                }
+                            }}
+                        >
                             {resumeCandidate.skillset ? (
                                 String(resumeCandidate.skillset).split(/[;,|]+/).map((skill, i) => {
                                     const s = skill.trim();
                                     if(!s) return null;
                                     return (
-                                        <span key={i} className="skill-bubble" style={{ position: 'relative', paddingRight: 28 }}>
+                                        <span 
+                                            key={i} 
+                                            className="skill-bubble" 
+                                            style={{ position: 'relative', paddingRight: 28, cursor: 'grab' }}
+                                            draggable="true"
+                                            onDragStart={(e) => {
+                                                e.dataTransfer.setData('skill', s);
+                                                e.dataTransfer.setData('source', 'skillset');
+                                            }}
+                                        >
                                             {s}
                                             <button
                                                 onClick={() => handleRemoveSkill(s)}
@@ -4175,19 +4247,30 @@ export default function App() {
                                 {calculatingUnmatched ? 'Calculating...' : 'Calculate Unmatched'}
                             </button>
                         </div>
-                        <div style={{ 
-                            padding: 12, 
-                            background: unmatchedCalculated[resumeCandidate?.id] && !resumeCandidate.lskillset ? '#f0fdf4' : '#fff5f5', 
-                            borderRadius: 8, 
-                            border: `1px solid ${unmatchedCalculated[resumeCandidate?.id] && !resumeCandidate.lskillset ? '#bbf7d0' : '#fed7d7'}`, 
-                            minHeight: 60, 
-                            lineHeight: '1.6' 
-                        }}>
+                        <div 
+                            style={{ 
+                                padding: 12, 
+                                background: unmatchedCalculated[resumeCandidate?.id] && !resumeCandidate.lskillset ? '#f0fdf4' : '#fff5f5', 
+                                borderRadius: 8, 
+                                border: `1px solid ${unmatchedCalculated[resumeCandidate?.id] && !resumeCandidate.lskillset ? '#bbf7d0' : '#fed7d7'}`, 
+                                minHeight: 60, 
+                                lineHeight: '1.6' 
+                            }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                const skill = e.dataTransfer.getData('skill');
+                                const source = e.dataTransfer.getData('source');
+                                if (skill && source === 'skillset') {
+                                    handleMoveToUnmatched(skill);
+                                }
+                            }}
+                        >
                              {unmatchedCalculated[resumeCandidate?.id] && !resumeCandidate.lskillset ? (
                                 // Show "All skillsets are matched" message when calculated and no unmatched skills
                                 <span style={{ color: '#15803d', fontSize: 13, fontWeight: 600 }}>All skillsets are matched.</span>
                              ) : resumeCandidate.lskillset ? (
-                                // Show unmatched skills
+                                // Show unmatched skills with drag-and-drop
                                 String(resumeCandidate.lskillset)
                                     .replace(/Here are the skills present in the JD Skillset but missing or unmatched in the Candidate Skillset[:\s]*/i, '')
                                     .replace(/[\[\]"']/g, '') // Strips brackets and quotes
@@ -4196,7 +4279,16 @@ export default function App() {
                                         const s = skill.trim();
                                         if(!s) return null;
                                         return (
-                                            <span key={i} className="skill-bubble unmatched">
+                                            <span 
+                                                key={i} 
+                                                className="skill-bubble unmatched"
+                                                draggable="true"
+                                                style={{ cursor: 'grab' }}
+                                                onDragStart={(e) => {
+                                                    e.dataTransfer.setData('skill', s);
+                                                    e.dataTransfer.setData('source', 'unmatched');
+                                                }}
+                                            >
                                                 {s}
                                             </span>
                                         );
@@ -4222,69 +4314,150 @@ export default function App() {
                         </div>
                     )}
 
-                    {/* Recruiter-Style Assessment Display */}
+                    {/* Professional Assessment Table Display */}
                     {resumeCandidate.rating && (
                         <div style={{ marginBottom: 24 }}>
                             <h3 style={{ fontSize: 16, fontWeight: 700, borderBottom: '2px solid var(--neutral-border)', paddingBottom: 8, marginBottom: 12, color: 'var(--black-beauty)' }}>Candidate Assessment</h3>
                             <div style={{ padding: 16, background: 'linear-gradient(135deg, #f8fafc 0%, #ffffff 100%)', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                                 {resumeCandidate.rating && typeof resumeCandidate.rating === 'object' && resumeCandidate.rating.assessment_level ? (
-                                    // Structured assessment with recruiter-friendly format
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                                        {/* Assessment Header with Score */}
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottom: '2px solid #e5e7eb' }}>
-                                            <div>
-                                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
-                                                    Assessment Level
-                                                </div>
-                                                <div className="assessment-header" style={{ fontSize: 18, fontWeight: 700, color: '#1f2937' }}>
-                                                    {resumeCandidate.rating.assessment_level}
-                                                </div>
-                                            </div>
-                                            <div style={{ textAlign: 'right' }}>
-                                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
-                                                    Overall Score
-                                                </div>
-                                                <div style={{ fontSize: 24, fontWeight: 900, color: '#0ea5e9' }}>
-                                                    {resumeCandidate.rating.total_score || 'N/A'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        {/* Star Rating */}
-                                        {resumeCandidate.rating.stars && (
-                                            <div>
-                                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
-                                                    Rating
-                                                </div>
-                                                <div className="assessment-stars" style={{ fontSize: 20 }}>
-                                                    {resumeCandidate.rating.stars}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {/* Overall Comment/Summary */}
-                                        {resumeCandidate.rating.overall_comment && (
-                                            <div>
-                                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
-                                                    Executive Summary
-                                                </div>
-                                                <div style={{ padding: 12, background: '#eff6ff', borderLeft: '4px solid #3b82f6', fontSize: 13, lineHeight: 1.6, color: '#1e40af', borderRadius: 4 }}>
-                                                    {resumeCandidate.rating.overall_comment}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {/* Detailed Comments */}
-                                        {resumeCandidate.rating.comments && (
-                                            <div>
-                                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
-                                                    Recruiter Notes
-                                                </div>
-                                                <div className="assessment-comments" style={{ fontSize: 13, lineHeight: 1.6, color: '#374151', padding: 12, background: '#f9fafb', borderRadius: 4, border: '1px solid #e5e7eb' }}>
-                                                    {resumeCandidate.rating.comments}
-                                                </div>
-                                            </div>
-                                        )}
+                                    // Professional table format for structured assessment
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ 
+                                            width: '100%', 
+                                            borderCollapse: 'separate', 
+                                            borderSpacing: 0,
+                                            fontSize: 14
+                                        }}>
+                                            <thead>
+                                                <tr style={{ background: 'linear-gradient(to right, #3b82f6, #2563eb)', color: 'white' }}>
+                                                    <th style={{ 
+                                                        padding: '12px 16px', 
+                                                        textAlign: 'left', 
+                                                        fontWeight: 700,
+                                                        fontSize: 13,
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.5px',
+                                                        borderTopLeftRadius: 6
+                                                    }}>Category</th>
+                                                    <th style={{ 
+                                                        padding: '12px 16px', 
+                                                        textAlign: 'left', 
+                                                        fontWeight: 700,
+                                                        fontSize: 13,
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.5px',
+                                                        borderTopRightRadius: 6
+                                                    }}>Details</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                                    <td style={{ 
+                                                        padding: '12px 16px', 
+                                                        fontWeight: 600,
+                                                        color: '#374151',
+                                                        width: '30%'
+                                                    }}>Assessment Level</td>
+                                                    <td style={{ 
+                                                        padding: '12px 16px',
+                                                        color: '#1f2937',
+                                                        fontWeight: 600
+                                                    }}>
+                                                        <span style={{
+                                                            background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                                                            color: 'white',
+                                                            padding: '4px 12px',
+                                                            borderRadius: 4,
+                                                            fontSize: 13,
+                                                            fontWeight: 700
+                                                        }}>
+                                                            {resumeCandidate.rating.assessment_level}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                                <tr style={{ background: '#ffffff', borderBottom: '1px solid #e5e7eb' }}>
+                                                    <td style={{ 
+                                                        padding: '12px 16px', 
+                                                        fontWeight: 600,
+                                                        color: '#374151'
+                                                    }}>Overall Score</td>
+                                                    <td style={{ 
+                                                        padding: '12px 16px',
+                                                        color: '#0ea5e9',
+                                                        fontWeight: 900,
+                                                        fontSize: 20
+                                                    }}>
+                                                        {resumeCandidate.rating.total_score || 'N/A'}
+                                                    </td>
+                                                </tr>
+                                                {resumeCandidate.rating.stars && (
+                                                    <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                                        <td style={{ 
+                                                            padding: '12px 16px', 
+                                                            fontWeight: 600,
+                                                            color: '#374151'
+                                                        }}>Rating</td>
+                                                        <td style={{ 
+                                                            padding: '12px 16px',
+                                                            fontSize: 18
+                                                        }}>
+                                                            {resumeCandidate.rating.stars}
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {resumeCandidate.rating.overall_comment && (
+                                                    <tr style={{ background: '#ffffff', borderBottom: '1px solid #e5e7eb' }}>
+                                                        <td style={{ 
+                                                            padding: '12px 16px', 
+                                                            fontWeight: 600,
+                                                            color: '#374151',
+                                                            verticalAlign: 'top'
+                                                        }}>Executive Summary</td>
+                                                        <td style={{ 
+                                                            padding: '12px 16px',
+                                                            color: '#1e40af',
+                                                            lineHeight: 1.6
+                                                        }}>
+                                                            <div style={{ 
+                                                                padding: 12, 
+                                                                background: '#eff6ff', 
+                                                                borderLeft: '4px solid #3b82f6', 
+                                                                borderRadius: 4 
+                                                            }}>
+                                                                {resumeCandidate.rating.overall_comment}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {resumeCandidate.rating.comments && (
+                                                    <tr style={{ background: '#f9fafb' }}>
+                                                        <td style={{ 
+                                                            padding: '12px 16px', 
+                                                            fontWeight: 600,
+                                                            color: '#374151',
+                                                            verticalAlign: 'top',
+                                                            borderBottomLeftRadius: 6
+                                                        }}>Recruiter Notes</td>
+                                                        <td style={{ 
+                                                            padding: '12px 16px',
+                                                            color: '#374151',
+                                                            lineHeight: 1.6,
+                                                            borderBottomRightRadius: 6
+                                                        }}>
+                                                            <div style={{ 
+                                                                padding: 12, 
+                                                                background: '#f9fafb', 
+                                                                borderRadius: 4, 
+                                                                border: '1px solid #e5e7eb',
+                                                                whiteSpace: 'pre-wrap'
+                                                            }}>
+                                                                {resumeCandidate.rating.comments}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 ) : resumeCandidate.rating ? (
                                     // Simple text rating with improved formatting
