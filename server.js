@@ -879,6 +879,8 @@ app.get('/candidates', requireLogin, async (req, res) => {
         sourcingstatus: r.sourcingstatus ?? null,
         product: r.product ?? null,
         lskillset: r.lskillset ?? null, // ensure lskillset is available
+        vskillset: r.vskillset ?? null, // ensure vskillset is available
+        rating: r.rating ?? null, // ensure rating is available
         linkedinurl: r.linkedinurl ?? null,
         jskillset: r.jskillset ?? null, // return jskillset for frontend if needed
         pic: picBase64, // Convert bytea to base64 for frontend

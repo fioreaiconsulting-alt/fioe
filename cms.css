@@ -957,6 +957,12 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 }
 .btn-primary:disabled { opacity: .6; cursor: not-allowed; transform: none; box-shadow: none; }
 
+.btn-calculate {
+  margin-left: 12px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
 .btn-secondary {
   background: #fff;
   border: 1px solid var(--neutral-border);
@@ -978,22 +984,183 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
   cursor: pointer;
 }
 
+/* Resume Tab - Skillset containers */
+.skillset-container {
+  padding: 16px;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 2px dashed #d1d5db;
+  min-height: 80px;
+  line-height: 1.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+  align-content: flex-start;
+}
+
+.skillset-header {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  margin-bottom: 12px;
+  color: #1f2937;
+}
+
 /* Small utility classes */
 .skill-bubble {
   display: inline-block;
-  padding: 4px 10px;
-  margin: 3px;
-  border-radius: 12px;
+  padding: 6px 14px;
+  margin: 0;
+  border-radius: 20px;
   background: #dcfce7;
   border: 1px solid #86efac;
-  font-size: 12px;
+  font-size: 13px;
   color: #166534;
   font-weight: 500;
+  cursor: grab;
+  position: relative;
 }
+
+/* Only add extra padding when remove button is present (via parent selector) */
+.skillset-container .skill-bubble {
+  padding-right: 32px; /* Extra space for remove button */
+}
+
 .skill-bubble.unmatched {
-  background: #fff5f5;
-  border-color: #fecaca;
-  color: #7f1d1d;
+  padding: 6px 14px; /* No remove button on unmatched skills */
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.skill-bubble .remove-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: #166534;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.skill-bubble.unmatched .remove-btn {
+  color: #991b1b;
+}
+
+/* Verified Skillset table */
+.vskillset-section {
+  margin-bottom: 24px;
+}
+
+.vskillset-header {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.vskillset-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #374151;
+}
+
+.vskillset-arrow {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.vskillset-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.vskillset-table thead {
+  background: #f9fafb;
+}
+
+.vskillset-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 2px solid #e5e7eb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.vskillset-table td {
+  padding: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.vskillset-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Candidate Assessment table */
+.assessment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.assessment-table thead {
+  background: #5b8def;
+  color: white;
+}
+
+.assessment-table th {
+  padding: 14px 16px;
+  text-align: left;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.assessment-table td {
+  padding: 12px 16px;
+}
+
+.assessment-table tbody tr:nth-child(odd) {
+  background: #f9fafb;
+}
+
+.assessment-table tbody tr:nth-child(even) {
+  background: #ffffff;
+}
+
+.assessment-table tbody tr {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.assessment-badge {
+  background: #5b8def;
+  color: white;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-block;
 }
 
 /* Table sticky/checkbox cells fallback (keeps layout stable) */
