@@ -887,7 +887,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
         } catch (e) {
           // Log detailed error for debugging but don't crash
           console.warn('[/candidates] Failed to parse vskillset for candidate:', r.id, e.message);
-          // Keep original string value instead of null, in case it's useful for debugging
+          // Set to null on parse failure to indicate invalid data
           parsedVskillset = null;
         }
       }
