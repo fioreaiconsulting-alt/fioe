@@ -75,7 +75,7 @@ body {
   display: inline-block;
   padding: 6px 12px;
   margin: 4px;
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  background: linear-gradient(135deg, #10b981, #059669);
   color: white;
   border-radius: 16px;
   font-size: 13px;
@@ -84,12 +84,12 @@ body {
   cursor: grab;
   user-select: none;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
 }
 
 .skill-bubble:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
 }
 
 .skill-bubble:active {
