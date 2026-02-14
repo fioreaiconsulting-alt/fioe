@@ -4339,10 +4339,9 @@ export default function App() {
                         if (typeof ratingRaw === 'string') {
                             // attempt to parse JSON safely
                             try {
-                                const parsed = JSON.parse(ratingRaw);
-                                if (parsed && typeof parsed === 'object') ratingObj = parsed;
+                                ratingObj = JSON.parse(ratingRaw);
                             } catch (e) {
-                                // not JSON — leave ratingRaw as-is (string)
+                                // not JSON — leave ratingObj as null, will use ratingRaw as string
                                 ratingObj = null;
                             }
                         } else if (typeof ratingRaw === 'object') {
@@ -4461,7 +4460,7 @@ export default function App() {
                                     </div>
                                     <div style={{ fontSize: 14, lineHeight: 1.8, color: '#374151' }}>
                                         {String(ratingRaw).split('\n').map((para, idx) => (
-                                            <p key={idx} style={{ marginBottom: 12, marginTop: 0, paddingLeft: 12, borderLeft: '3px solid #e5e7eb' }}>
+                                            <p key={`para-${idx}-${para.substring(0, 20)}`} style={{ marginBottom: 12, marginTop: 0, paddingLeft: 12, borderLeft: '3px solid #e5e7eb' }}>
                                                 {para}
                                             </p>
                                         ))}
