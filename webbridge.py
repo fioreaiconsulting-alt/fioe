@@ -677,14 +677,15 @@ def gemini_analyze_jd():
     3. If no companies found, infer sector from JD content
     4. Filter companies by legal entity in specified country
     5. Always identify at least one sector (using sectors.json)
-    6. Generate at least 2 job titles (original + suggested variant)
+    6. Derive second sector from skillset (if applicable)
+    7. Generate at least 2 job titles (original + suggested variant)
     
     Returns JSON:
     {
       "job_title": "...",  # Single title for backward compatibility
       "job_titles": [...],  # Array of at least 2 job titles (original + suggestions)
       "seniority": "...",
-      "sectors": [...],  # Always mapped to sectors.json
+      "sectors": [...],  # Always mapped to sectors.json, may include skillset-based sector
       "companies": [...],  # Filtered by country legal entity
       "country": "...",
       "summary": "...",
@@ -1015,6 +1016,67 @@ def gemini_analyze_jd():
                         company_based_sectors.append(s)
                 sectors = company_based_sectors
                 heuristic_notes.append(f"sectors determined from identified companies")
+        
+        # -------------------------
+        # STEP 4.5: Derive second sector based on skillset
+        # When companies are identified (first sector), derive additional sector from skills
+        # This ensures multi-sector coverage: company-based + skillset-based
+        # -------------------------
+        def derive_sector_from_skills(skills_list, existing_sectors):
+            """
+            Derive a sector from the skillset that is different from existing sectors.
+            Maps common skill patterns to sectors.json labels.
+            
+            Example: ["AWS", "Cloud", "Kubernetes"] -> "Technology > Cloud & Infrastructure"
+            """
+            if not skills_list:
+                return None, ""
+            
+            skills_text = " ".join([str(s).lower() for s in skills_list if s])
+            
+            # Skill-to-sector mapping patterns (all map to sectors.json)
+            skill_patterns = [
+                # Cloud & Infrastructure
+                (["cloud", "aws", "azure", "gcp", "kubernetes", "docker", "devops", "terraform", "infrastructure"], 
+                 "Technology > Cloud & Infrastructure"),
+                # AI & Data
+                (["machine learning", "ml", "ai", "artificial intelligence", "data science", "python", "tensorflow", "pytorch", "nlp"],
+                 "Technology > AI & Data"),
+                # Cybersecurity
+                (["security", "cybersecurity", "penetration testing", "siem", "firewall", "encryption"],
+                 "Technology > Cybersecurity"),
+                # Software Development
+                (["java", "javascript", "react", "node", "sql", "api", "backend", "frontend", "full stack"],
+                 "Technology > Software"),
+                # Gaming
+                (["unity", "unreal", "game engine", "game development", "3d", "animation"],
+                 "Media, Gaming & Entertainment > Gaming"),
+                # Healthcare/Clinical
+                (["clinical", "medical", "patient", "healthcare", "hospital", "diagnosis"],
+                 "Healthcare > HealthTech"),
+                # Finance
+                (["trading", "financial analysis", "investment", "portfolio", "risk management", "bloomberg"],
+                 "Financial Services > Investment & Asset Management"),
+                # Manufacturing/Engineering
+                (["manufacturing", "plc", "scada", "automation", "robotics", "lean", "six sigma"],
+                 "Industrial & Manufacturing > Machinery"),
+            ]
+            
+            # Find matching sectors based on skills
+            for keywords, sector_label in skill_patterns:
+                if any(keyword in skills_text for keyword in keywords):
+                    # Verify the sector exists in sectors.json and isn't already in existing sectors
+                    if sector_label in SECTORS_INDEX and sector_label not in existing_sectors:
+                        return sector_label, f"Derived from skillset: {', '.join(keywords[:3])}"
+            
+            return None, ""
+        
+        # Apply skillset-based sector derivation if we have skills and at least one existing sector
+        if skills and len(skills) > 0 and len(sectors) > 0:
+            skillset_sector, skillset_note = derive_sector_from_skills(skills, sectors)
+            if skillset_sector:
+                sectors.append(skillset_sector)
+                heuristic_notes.append(f"second sector from skillset: {skillset_note}")
         
         # -------------------------
         # STEP 5: Ensure at least one sector is always identified
