@@ -128,17 +128,52 @@ BUCKET_COMPANIES = {
 }
 
 BUCKET_JOB_TITLES = {
-    "pharma_biotech": ["Regulatory Affairs Manager", "Clinical Research Associate", "Pharmacovigilance Specialist", "Medical Affairs Manager", "Quality Assurance Specialist", "CMC Scientist", "Biostatistician", "Clinical Project Manager"],
-    "medical_devices": ["Regulatory Affairs Manager", "Quality Engineer", "Clinical Affairs Specialist", "Design Control Engineer", "Risk Management Engineer", "Product Manager (Medical Device)", "Manufacturing Engineer"],
-    "diagnostics": ["IVD Regulatory Specialist", "Quality Systems Engineer", "Clinical Application Specialist", "Assay Development Scientist", "Validation Engineer"],
-    "clinical_research": ["CRA", "Senior CRA", "Clinical Project Manager", "Clinical Trial Manager", "Study Start-Up Specialist"],
-    "healthtech": ["Product Manager", "Clinical Informatics Lead", "Healthcare Data Scientist", "Interoperability Engineer", "Implementation Consultant"],
-    "technology": ["Software Engineer", "ML Engineer", "Data Scientist", "Solutions Architect", "Security Engineer", "MLOps Engineer"],
-    "manufacturing": ["Manufacturing Engineer", "Quality Engineer", "Process Engineer", "Supply Chain Analyst", "Automation Engineer"],
-    "energy": ["Energy Analyst", "Grid Integration Engineer", "Sustainability Manager", "HSE Engineer"],
-    "gaming": ["Game Producer", "Gameplay Engineer", "Level Designer", "Technical Artist"],
-    "web3": ["Blockchain Engineer", "Smart Contract Developer", "Web3 Product Manager"],
-    "other": ["Project Manager", "Operations Manager", "Business Analyst", "Data Analyst"],
-    "financial_services": ["Investment Analyst", "Product Manager (Wealth/Investment)", "Portfolio Manager", "Risk Analyst", "Payments Product Manager", "Fintech Product Manager", "Relationship Manager", "Asset Manager"]
+    "pharma_biotech": [
+        "Regulatory Affairs Manager", "Clinical Research Associate", "Pharmacovigilance Specialist",
+        "Medical Affairs Manager", "Quality Assurance Specialist", "CMC Scientist",
+        "Biostatistician", "Clinical Project Manager"
+    ],
+    "medical_devices": [
+        "Regulatory Affairs Manager", "Quality Engineer", "Clinical Affairs Specialist",
+        "Design Control Engineer", "Risk Management Engineer", "Product Manager (Medical Device)",
+        "Manufacturing Engineer"
+    ],
+    "diagnostics": [
+        "IVD Regulatory Specialist", "Quality Systems Engineer", "Clinical Application Specialist",
+        "Assay Development Scientist", "Validation Engineer"
+    ],
+    "clinical_research": [
+        "CRA", "Senior CRA", "Clinical Project Manager", "Clinical Trial Manager",
+        "Study Start-Up Specialist"
+    ],
+    "healthtech": [
+        "Product Manager", "Clinical Informatics Lead", "Healthcare Data Scientist",
+        "Interoperability Engineer", "Implementation Consultant"
+    ],
+    "technology": [
+        "Software Engineer", "ML Engineer", "Data Scientist", "Solutions Architect",
+        "Security Engineer", "MLOps Engineer"
+    ],
+    "manufacturing": [
+        "Manufacturing Engineer", "Quality Engineer", "Process Engineer",
+        "Supply Chain Analyst", "Automation Engineer"
+    ],
+    "energy": [
+        "Energy Analyst", "Grid Integration Engineer", "Sustainability Manager", "HSE Engineer"
+    ],
+    "gaming": [
+        "Game Producer", "Gameplay Engineer", "Level Designer", "Technical Artist"
+    ],
+    "web3": [
+        "Blockchain Engineer", "Smart Contract Developer", "Web3 Product Manager"
+    ],
+    "other": [
+        "Project Manager", "Operations Manager", "Business Analyst", "Data Analyst"
+    ],
+    "financial_services": [
+        "Investment Analyst", "Product Manager (Wealth/Investment)", "Portfolio Manager",
+        "Risk Analyst", "Payments Product Manager", "Fintech Product Manager",
+        "Relationship Manager", "Asset Manager"
+    ]
 }
 
