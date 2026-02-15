@@ -13,6 +13,8 @@ PRODUCT_TO_DOMAIN_KEYWORDS = {
     "tablet": ["consumer electronics", "electronics"],
     "laptop": ["consumer electronics", "electronics"],
     "wearables": ["consumer electronics", "electronics"],
+    # Note: HVAC/air conditioning mapped to Consumer Electronics per business requirements
+    # Could also fit in Industrial & Manufacturing > Machinery or Electronics depending on context
     "hvac": ["consumer electronics", "electronics"],
     "air conditioning": ["consumer electronics", "electronics"],
     "air conditioner": ["consumer electronics", "electronics"],

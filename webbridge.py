@@ -1108,7 +1108,8 @@ def gemini_analyze_jd():
                         pattern = r'\b' + re.escape(product_keyword) + r'\b'
                         if re.search(pattern, text_to_check):
                             # Check if the sector domain matches any valid domain for this product
-                            # Use word boundary matching to avoid false positives (e.g., "ad" in "advertising")
+                            # Use word boundary matching to ensure valid_domain appears as complete words/phrases
+                            # e.g., "cloud" matches "cloud & infrastructure" but not "cloudy"
                             matches_domain = False
                             for valid_domain in valid_domains:
                                 # Create pattern that matches valid_domain as whole words
