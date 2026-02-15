@@ -17,6 +17,7 @@ from flask import Flask, request, send_from_directory, jsonify, abort, Response,
 from sector_mappings import (
     PRODUCT_TO_DOMAIN_KEYWORDS, 
     GENERIC_ROLE_KEYWORDS,
+    GENERIC_PRODUCT_KEYWORDS,
     BUCKET_COMPANIES,
     BUCKET_JOB_TITLES
 )
@@ -397,10 +398,13 @@ def _find_best_sector_match_for_text(candidate):
 # Keys are lowercase keywords; values are exact labels expected to exist (or closely match) in SECTORS_INDEX
 # NOTE: pharma/clinical mapping removed per user request (do not auto-apply pharma heuristics)
 _KEYWORD_TO_SECTOR_LABEL = {
-    "hvac": "Industrial & Manufacturing > Machinery",
-    "air conditioning": "Industrial & Manufacturing > Machinery",
+    "hvac": "Consumer & Retail > Consumer Electronics",
+    "air conditioning": "Consumer & Retail > Consumer Electronics",
+    "air conditioner": "Consumer & Retail > Consumer Electronics",
     "air solutions": "Industrial & Manufacturing > Machinery",
     "software": "Technology > Software",
+    "cloud computing": "Technology > Cloud & Infrastructure",
+    "cloud solutions": "Technology > Cloud & Infrastructure",
     "cloud": "Technology > Cloud & Infrastructure",
     "infrastructure": "Technology > Cloud & Infrastructure",
     "ai": "Technology > AI & Data",
@@ -416,20 +420,32 @@ _KEYWORD_TO_SECTOR_LABEL = {
     "wealth": "Financial Services > Investment & Asset Management",
     "fintech": "Financial Services > Fintech",
     # Removed 'clinical', 'pharma', 'biotech' mappings to avoid automatic pharma sector assignment
-    "gaming": "Media, Gaming & Entertainment > Gaming",
+    # Removed generic 'gaming' mapping to avoid false matches (e.g., "especially gaming" in industry context)
     "ecommerce": "Consumer & Retail > E-commerce",
     "renewable": "Energy & Environment > Renewable Energy",
-    "aerospace": "Industrial & Manufacturing > Aerospace & Defense"
+    "aerospace": "Industrial & Manufacturing > Aerospace & Defense",
+    "clinical trial": "Healthcare > Clinical Research",
+    "clinical research": "Healthcare > Clinical Research",
+    "clinical studies": "Healthcare > Clinical Research"
 }
+
+# Precompile regex patterns for better performance
+_KEYWORD_PATTERNS = {kw: re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE) for kw in _KEYWORD_TO_SECTOR_LABEL.keys()}
 
 def _map_keyword_to_sector_label(text):
     """
     Search for keywords in text and return a sectors.json label if found and present in SECTORS_INDEX.
+    Uses word-boundary matching to avoid false positives (e.g., "gaming" matching in "especially gaming").
     """
     try:
         txt = (text or "").lower()
-        for kw, label in _KEYWORD_TO_SECTOR_LABEL.items():
-            if kw in txt:
+        # Sort keywords by length (longest first) to match more specific phrases first
+        sorted_keywords = sorted(_KEYWORD_TO_SECTOR_LABEL.items(), key=lambda x: len(x[0]), reverse=True)
+
+        for kw, label in sorted_keywords:
+            # Use precompiled pattern for better performance
+            pattern = _KEYWORD_PATTERNS[kw]
+            if pattern.search(txt):
                 # Ensure the label exists in SECTORS_INDEX (case-insensitive)
                 for l in SECTORS_INDEX:
                     if l.lower() == label.lower():
@@ -441,6 +457,88 @@ def _map_keyword_to_sector_label(text):
         return None
     except Exception:
         return None
+
+def _validate_sector_against_products(sector_label: str, job_title: str, jd_text: str) -> bool:
+    """
+    Validate that a proposed sector makes sense given the product keywords in the job title and JD.
+    This prevents incorrect sector assignments like "Advertising & Marketing" for HVAC roles.
+    
+    Uses PRODUCT_TO_DOMAIN_KEYWORDS (sector_mappings.py) which maps product keywords like "hvac",
+    "cloud solutions", "clinical trial" to valid domain keywords. Also uses GENERIC_PRODUCT_KEYWORDS
+    to identify ambiguous keywords like "marketing", "gcp", "compliance" that span multiple sectors.
+    
+    Returns:
+        True if the sector is valid or no conflicting evidence found
+        False if there are specific product keywords that don't match the sector domain
+    
+    Examples:
+        - sector="Media > Advertising & Marketing", jd contains "HVAC, air conditioning" → False
+        - sector="Consumer Electronics", jd contains "air conditioning" → True
+        - sector="Technology > Cloud", jd contains "cloud solutions" → True
+    """
+    if not sector_label:
+        return True
+    
+    # Extract domain part from sector label
+    parts = sector_label.split(" > ")
+    if len(parts) < 2:
+        return True  # No domain to validate against
+    
+    domain = parts[-1].lower()
+    job_title_lower = (job_title or "").lower()
+    jd_lower = (jd_text or "").lower()
+    text_to_check = f"{job_title_lower} {jd_lower}"
+    
+    # Check if any product keyword exists in the text
+    # Separate specific keywords from generic ones
+    specific_matching = []
+    specific_non_matching = []
+    generic_matching = []
+    generic_non_matching = []
+    
+    # Precompile patterns for better performance
+    product_pattern_cache = {}
+    
+    for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
+        # Use cached pattern or compile new one
+        if product_keyword not in product_pattern_cache:
+            product_pattern_cache[product_keyword] = re.compile(r'\b' + re.escape(product_keyword) + r'\b')
+        pattern = product_pattern_cache[product_keyword]
+        
+        if pattern.search(text_to_check):
+            matches_domain = False
+            for valid_domain in valid_domains:
+                # Use word boundary matching for domain validation
+                domain_pattern = r'\b' + re.escape(valid_domain) + r'\b'
+                if re.search(domain_pattern, domain):
+                    matches_domain = True
+                    break
+            
+            is_generic = product_keyword in GENERIC_PRODUCT_KEYWORDS
+            
+            if matches_domain:
+                if is_generic:
+                    generic_matching.append(product_keyword)
+                else:
+                    specific_matching.append(product_keyword)
+            else:
+                if is_generic:
+                    generic_non_matching.append(product_keyword)
+                else:
+                    specific_non_matching.append(product_keyword)
+    
+    # Decision logic: prioritize specific keywords over generic ones
+    # If we have specific non-matching products, reject the sector
+    if specific_non_matching:
+        return False
+    
+    # If we have specific matching products, accept the sector
+    if specific_matching:
+        return True
+    
+    # No specific keywords found, allow the sector
+    # (generic keywords alone shouldn't reject a sector)
+    return True
 
 # --------------------------------------------------------------------------
 # Helpers and modifications to avoid injecting pharma by default
@@ -910,6 +1008,8 @@ def gemini_analyze_jd():
                 return "", ""
 
         # Try to map any sectors returned by Gemini to sectors.json labels (strict mapping)
+        # AND validate against product keywords in the JD to prevent incorrect mappings
+        SECTOR_REJECTED_MSG = "rejected sector due to product keyword mismatch"
         heuristic_notes = []
         mapped_sectors = []
         try:
@@ -922,16 +1022,26 @@ def gemini_analyze_jd():
                         p = p.strip()
                         if not p: continue
                         mapped = _find_best_sector_match_for_text(p) or _map_keyword_to_sector_label(p)
+                        # Validate the mapped sector against product keywords in the JD
                         if mapped and mapped not in mapped_sectors:
-                            mapped_sectors.append(mapped)
+                            if _validate_sector_against_products(mapped, job_title, text_input):
+                                mapped_sectors.append(mapped)
+                            else:
+                                # Sector rejected due to product keyword mismatch
+                                heuristic_notes.append(f"{SECTOR_REJECTED_MSG}: '{mapped}'")
             elif sector and isinstance(sector, str) and sector.strip():
                 parts = re.split(r'[\/,;|]+', sector)
                 for p in parts:
                     p = p.strip()
                     if not p: continue
                     mapped = _find_best_sector_match_for_text(p) or _map_keyword_to_sector_label(p)
+                    # Validate the mapped sector against product keywords in the JD
                     if mapped and mapped not in mapped_sectors:
-                        mapped_sectors.append(mapped)
+                        if _validate_sector_against_products(mapped, job_title, text_input):
+                            mapped_sectors.append(mapped)
+                        else:
+                            # Sector rejected due to product keyword mismatch
+                            heuristic_notes.append(f"{SECTOR_REJECTED_MSG}: '{mapped}'")
             # ALWAYS use mapped sectors (even if empty) - do NOT keep unmapped sectors
             # This ensures ONLY sectors.json validated sectors are used
             sectors = mapped_sectors  # Replace with mapped sectors (empty if no valid mapping)
@@ -1091,28 +1201,72 @@ def gemini_analyze_jd():
                     
                     domain = parts[-1].lower()  # Get the last part (domain)
                     job_title_lower = job_title.lower()
+                    # Also check the full JD text for more context
+                    text_to_check = f"{job_title_lower} {jd_lower}"
                     
-                    # Check if any product keyword in job title matches the domain (using word boundaries)
-                    product_keyword_found = False
+                    # First pass: Check if any product keyword exists in the text
+                    # and collect those that match vs those that don't
+                    # Also separate specific keywords from generic ones
+                    specific_matching = []
+                    specific_non_matching = []
+                    generic_matching = []
+                    generic_non_matching = []
+                    
                     for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
                         # Use word boundary regex for exact word matching
                         pattern = r'\b' + re.escape(product_keyword) + r'\b'
-                        if re.search(pattern, job_title_lower):
-                            product_keyword_found = True
+                        if re.search(pattern, text_to_check):
                             # Check if the sector domain matches any valid domain for this product
+                            # Use word boundary matching to ensure valid_domain appears as complete words/phrases
+                            # e.g., "cloud" matches "cloud & infrastructure" but not "cloudy"
+                            matches_domain = False
                             for valid_domain in valid_domains:
-                                if valid_domain in domain:
-                                    return True
-                            # Product keyword found but doesn't match this domain - reject
-                            return False
+                                # Create pattern that matches valid_domain as whole words
+                                domain_pattern = r'\b' + re.escape(valid_domain) + r'\b'
+                                if re.search(domain_pattern, domain):
+                                    matches_domain = True
+                                    break
+                            
+                            # Separate generic keywords from specific ones
+                            is_generic = product_keyword in GENERIC_PRODUCT_KEYWORDS
+                            
+                            if matches_domain:
+                                if is_generic:
+                                    generic_matching.append(product_keyword)
+                                else:
+                                    specific_matching.append(product_keyword)
+                            else:
+                                if is_generic:
+                                    generic_non_matching.append(product_keyword)
+                                else:
+                                    specific_non_matching.append(product_keyword)
+                    
+                    # Decision logic with prioritization:
+                    # 1. If specific keywords found, they take precedence over generic ones
+                    # 2. Only use generic keywords if no specific keywords are found
+                    
+                    # If we have specific non-matching products, reject immediately
+                    # (e.g., "hvac" doesn't match "Advertising & Marketing")
+                    if specific_non_matching:
+                        return False
+                    
+                    # If we have specific matching products, accept immediately
+                    # (e.g., "cloud" matches "Cloud & Infrastructure")
+                    if specific_matching:
+                        return True
+                    
+                    # No specific keywords found, check generic keywords
+                    if generic_matching:
+                        return True
+                    if generic_non_matching:
+                        return False
                     
                     # If no specific product keyword found, allow generic roles to match any sector
                     # (e.g., "Engineer" without specific product can match any tech sector)
-                    if not product_keyword_found:
-                        for role in GENERIC_ROLE_KEYWORDS:
-                            pattern = r'\b' + re.escape(role) + r'\b'
-                            if re.search(pattern, job_title_lower):
-                                return True
+                    for role in GENERIC_ROLE_KEYWORDS:
+                        pattern = r'\b' + re.escape(role) + r'\b'
+                        if re.search(pattern, job_title_lower):
+                            return True
                     
                     return False
                 
@@ -8111,45 +8265,11 @@ def user_upload_jd():
         logger.error(f"[Upload JD] {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.post("/gemini/analyze_jd")
-def gemini_jd_analyze():
-    data = request.get_json(force=True, silent=True) or {}
-    username = (data.get("username") or "").strip()
-    text_input = (data.get("text") or "").strip()
-    sectors_data = data.get("sectors") or []
-    jd_text = text_input
-    if not jd_text and username:
-        try:
-            import psycopg2
-            pg_host=os.getenv("PGHOST","localhost"); pg_port=int(os.getenv("PGPORT","5432"))
-            pg_user=os.getenv("PGUSER","postgres"); pg_password=os.getenv("PGPASSWORD","") or "orlha"
-            pg_db=os.getenv("PGDATABASE","candidate_db")
-            conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
-            cur=conn.cursor()
-            cur.execute("SELECT jd FROM login WHERE username = %s", (username,))
-            row = cur.fetchone()
-            cur.close(); conn.close()
-            if row and row[0]: jd_text = row[0]
-        except Exception as e: return jsonify({"error": f"DB fetch error: {e}"}), 500
-    if not jd_text: return jsonify({"error": "No JD text provided or found for user"}), 400
-    try:
-        from chat_gemini_review import analyze_job_description
-        result = analyze_job_description(jd_text, sectors_data)
-        parsed = result.get("parsed", {})
-        skills = parsed.get("skills", [])
-        if username and skills: _persist_jskillset(username, skills)
-        response_obj = {
-            "seniority": parsed.get("seniority"),
-            "job_title": parsed.get("job_title"),
-            "sectors": parsed.get("sectors") or ([parsed.get("sector")] if parsed.get("sector") else []),
-            "country": parsed.get("country"),
-            "summary": result.get("summary"),
-            "skills": skills
-        }
-        return jsonify(response_obj), 200
-    except Exception as e:
-        logger.warning(f"[Gemini JD Analyze] {e}")
-        return jsonify({"error": str(e)}), 500
+# REMOVED: Duplicate /gemini/analyze_jd endpoint
+# This was overriding the main gemini_analyze_jd() function at line 677
+# which has comprehensive sector validation logic with product keyword matching.
+# The duplicate endpoint was calling chat_gemini_review.analyze_job_description()
+# which lacks the sector validation fixes for 2nd inference issues.
 
 @app.post("/user/update_skills")
 def user_update_skills():

@@ -13,6 +13,11 @@ PRODUCT_TO_DOMAIN_KEYWORDS = {
     "tablet": ["consumer electronics", "electronics"],
     "laptop": ["consumer electronics", "electronics"],
     "wearables": ["consumer electronics", "electronics"],
+    # Note: HVAC/air conditioning mapped to Consumer Electronics per business requirements
+    # Could also fit in Industrial & Manufacturing > Machinery or Electronics depending on context
+    "hvac": ["consumer electronics", "electronics"],
+    "air conditioning": ["consumer electronics", "electronics"],
+    "air conditioner": ["consumer electronics", "electronics"],
     "fashion": ["fashion & apparel", "retail"],
     "clothing": ["fashion & apparel", "retail"],
     "food": ["food & beverage", "retail"],
@@ -134,6 +139,25 @@ PRODUCT_TO_DOMAIN_KEYWORDS = {
     "localization": ["gaming localization", "gaming"]
 }
 
+# Generic product keywords that can apply to many sectors (lower priority in validation)
+# These keywords are ambiguous and can have different meanings in different contexts
+GENERIC_PRODUCT_KEYWORDS = [
+    "marketing",
+    "advertising", 
+    "sales",
+    "business",
+    "management",
+    "operations",
+    "strategy",
+    "consulting",
+    "services",
+    "gcp",  # Can mean "Google Cloud Platform" or "Good Clinical Practice"
+    "compliance",  # Can be financial, legal, or clinical compliance
+    "security",  # Can be cybersecurity or defense & security
+    "gaming",  # Can be mentioned in context ("especially gaming") without being the focus
+    "game",  # Similar to gaming
+]
+
 # Generic role keywords that can match any sector when no specific product is found
 GENERIC_ROLE_KEYWORDS = [
     "manager", 
@@ -177,7 +201,7 @@ BUCKET_COMPANIES = {
     },
     "technology": {
         "global": ["Microsoft", "Amazon Web Services", "Google Cloud", "Snowflake", "Databricks"],
-        "apac": ["Tencent Cloud", "Alibaba Cloud"]
+        "apac": ["Tencent", "Tencent Cloud", "Alibaba Cloud"]
     },
     "manufacturing": {
         "global": ["Siemens", "ABB", "Rockwell Automation", "Schneider Electric", "Bosch"],
@@ -189,7 +213,7 @@ BUCKET_COMPANIES = {
     },
     "gaming": {
         "global": ["Sony Interactive Entertainment", "Ubisoft", "Electronic Arts", "Nintendo", "Activision Blizzard"],
-        "apac": ["Tencent", "NetEase", "Bandai Namco"]
+        "apac": ["NetEase", "Bandai Namco"]
     },
     "web3": {
         "global": ["Coinbase", "Consensys", "Binance", "Circle"],
