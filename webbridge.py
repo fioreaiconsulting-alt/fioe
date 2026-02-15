@@ -458,6 +458,76 @@ def _map_keyword_to_sector_label(text):
     except Exception:
         return None
 
+def _validate_sector_against_products(sector_label: str, job_title: str, jd_text: str) -> bool:
+    """
+    Validate that a proposed sector makes sense given the product keywords in the job title and JD.
+    This prevents incorrect sector assignments like "Advertising & Marketing" for HVAC roles.
+    
+    Returns:
+        True if the sector is valid or no conflicting evidence found
+        False if there are specific product keywords that don't match the sector domain
+    
+    Examples:
+        - sector="Media > Advertising & Marketing", jd contains "HVAC, air conditioning" → False
+        - sector="Consumer Electronics", jd contains "air conditioning" → True
+        - sector="Technology > Cloud", jd contains "cloud solutions" → True
+    """
+    if not sector_label:
+        return True
+    
+    # Extract domain part from sector label
+    parts = sector_label.split(" > ")
+    if len(parts) < 2:
+        return True  # No domain to validate against
+    
+    domain = parts[-1].lower()
+    job_title_lower = (job_title or "").lower()
+    jd_lower = (jd_text or "").lower()
+    text_to_check = f"{job_title_lower} {jd_lower}"
+    
+    # Check if any product keyword exists in the text
+    # Separate specific keywords from generic ones
+    specific_matching = []
+    specific_non_matching = []
+    generic_matching = []
+    generic_non_matching = []
+    
+    for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
+        pattern = r'\b' + re.escape(product_keyword) + r'\b'
+        if re.search(pattern, text_to_check):
+            matches_domain = False
+            for valid_domain in valid_domains:
+                domain_pattern = r'\b' + re.escape(valid_domain) + r'\b'
+                if re.search(domain_pattern, domain):
+                    matches_domain = True
+                    break
+            
+            is_generic = product_keyword in GENERIC_PRODUCT_KEYWORDS
+            
+            if matches_domain:
+                if is_generic:
+                    generic_matching.append(product_keyword)
+                else:
+                    specific_matching.append(product_keyword)
+            else:
+                if is_generic:
+                    generic_non_matching.append(product_keyword)
+                else:
+                    specific_non_matching.append(product_keyword)
+    
+    # Decision logic: prioritize specific keywords over generic ones
+    # If we have specific non-matching products, reject the sector
+    if specific_non_matching:
+        return False
+    
+    # If we have specific matching products, accept the sector
+    if specific_matching:
+        return True
+    
+    # No specific keywords found, allow the sector
+    # (generic keywords alone shouldn't reject a sector)
+    return True
+
 # --------------------------------------------------------------------------
 # Helpers and modifications to avoid injecting pharma by default
 # --------------------------------------------------------------------------
@@ -926,6 +996,7 @@ def gemini_analyze_jd():
                 return "", ""
 
         # Try to map any sectors returned by Gemini to sectors.json labels (strict mapping)
+        # AND validate against product keywords in the JD to prevent incorrect mappings
         heuristic_notes = []
         mapped_sectors = []
         try:
@@ -938,16 +1009,26 @@ def gemini_analyze_jd():
                         p = p.strip()
                         if not p: continue
                         mapped = _find_best_sector_match_for_text(p) or _map_keyword_to_sector_label(p)
+                        # Validate the mapped sector against product keywords in the JD
                         if mapped and mapped not in mapped_sectors:
-                            mapped_sectors.append(mapped)
+                            if _validate_sector_against_products(mapped, job_title, text_input):
+                                mapped_sectors.append(mapped)
+                            else:
+                                # Sector rejected due to product keyword mismatch
+                                heuristic_notes.append(f"rejected sector '{mapped}' due to product keyword mismatch")
             elif sector and isinstance(sector, str) and sector.strip():
                 parts = re.split(r'[\/,;|]+', sector)
                 for p in parts:
                     p = p.strip()
                     if not p: continue
                     mapped = _find_best_sector_match_for_text(p) or _map_keyword_to_sector_label(p)
+                    # Validate the mapped sector against product keywords in the JD
                     if mapped and mapped not in mapped_sectors:
-                        mapped_sectors.append(mapped)
+                        if _validate_sector_against_products(mapped, job_title, text_input):
+                            mapped_sectors.append(mapped)
+                        else:
+                            # Sector rejected due to product keyword mismatch
+                            heuristic_notes.append(f"rejected sector '{mapped}' due to product keyword mismatch")
             # ALWAYS use mapped sectors (even if empty) - do NOT keep unmapped sectors
             # This ensures ONLY sectors.json validated sectors are used
             sectors = mapped_sectors  # Replace with mapped sectors (empty if no valid mapping)
