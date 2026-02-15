@@ -1027,7 +1027,19 @@ def gemini_analyze_jd():
             Derive a sector from the skillset that is different from existing sectors.
             Maps common skill patterns to sectors.json labels.
             
-            Example: ["AWS", "Cloud", "Kubernetes"] -> "Technology > Cloud & Infrastructure"
+            Args:
+                skills_list (list): List of skill strings extracted from JD
+                existing_sectors (list): List of already determined sector labels
+            
+            Returns:
+                tuple: (sector_label or None, note_string)
+                    - sector_label: A sectors.json validated label or None if no match
+                    - note_string: Description of matched keywords or empty string
+            
+            Example: 
+                skills_list = ["AWS", "Cloud", "Kubernetes"]
+                existing_sectors = ["Media, Gaming & Entertainment > Gaming"]
+                Returns: ("Technology > Cloud & Infrastructure", "Derived from skillset: aws, cloud, kubernetes")
             """
             if not skills_list:
                 return None, ""
@@ -1064,15 +1076,17 @@ def gemini_analyze_jd():
             
             # Find matching sectors based on skills
             for keywords, sector_label in skill_patterns:
-                if any(keyword in skills_text for keyword in keywords):
+                matched_keywords = [kw for kw in keywords if kw in skills_text]
+                if matched_keywords:
                     # Verify the sector exists in sectors.json and isn't already in existing sectors
                     if sector_label in SECTORS_INDEX and sector_label not in existing_sectors:
-                        return sector_label, f"Derived from skillset: {', '.join(keywords[:3])}"
+                        # Use actual matched keywords in note
+                        return sector_label, f"Derived from skillset: {', '.join(matched_keywords[:3])}"
             
             return None, ""
         
         # Apply skillset-based sector derivation if we have skills and at least one existing sector
-        if skills and len(skills) > 0 and len(sectors) > 0:
+        if skills and sectors:
             skillset_sector, skillset_note = derive_sector_from_skills(skills, sectors)
             if skillset_sector:
                 sectors.append(skillset_sector)
