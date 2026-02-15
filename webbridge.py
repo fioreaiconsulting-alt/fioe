@@ -787,7 +787,7 @@ def gemini_analyze_jd():
         resp = model.generate_content(prompt)
         raw_out = (resp.text or "").strip()
         parsed_obj = _extract_json_object(raw_out) or {}
-        parsed = parsed_obj.get("parsed", {}) or {}
+        parsed = parsed_obj.get("parsed", {})
         
         # Normalize output
         job_title = (parsed.get("job_title") or parsed.get("role") or "").strip()

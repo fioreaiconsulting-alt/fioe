@@ -2391,7 +2391,8 @@ function updateSectorEnabledState(){
             if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
             // Display identified companies with legal entity in country
             if (analyzeData.companies && analyzeData.companies.length) {
-              tagHtml += `<div><strong>Companies identified:</strong> ${escapeHtml(analyzeData.companies.join(', '))}</div>`;
+              const countryLabel = analyzeData.country ? ` in ${escapeHtml(analyzeData.country)}` : '';
+              tagHtml += `<div><strong>Companies (with local presence${countryLabel}):</strong> ${escapeHtml(analyzeData.companies.join(', '))}</div>`;
             }
             // Normalize "South Korea" to "Korea" for display
             if (analyzeData.country) {
