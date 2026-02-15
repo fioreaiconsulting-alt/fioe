@@ -922,13 +922,15 @@ def gemini_analyze_jd():
                     mapped = _find_best_sector_match_for_text(p) or _map_keyword_to_sector_label(p)
                     if mapped and mapped not in mapped_sectors:
                         mapped_sectors.append(mapped)
-            # If we found mappings, replace sectors/sector with mapped ones
+            # ALWAYS use mapped sectors (even if empty) - do NOT keep unmapped sectors
+            # This ensures ONLY sectors.json validated sectors are used
+            sectors = mapped_sectors  # Replace with mapped sectors (empty if no valid mapping)
+            sector = mapped_sectors[0] if mapped_sectors else ""
             if mapped_sectors:
-                sectors = mapped_sectors
-                sector = mapped_sectors[0] if mapped_sectors else sector
                 heuristic_notes.append("sector mapped from model output to sectors.json label(s)")
         except Exception:
-            pass
+            sectors = []  # Clear sectors on error to ensure no unmapped sectors slip through
+            sector = ""
 
         # Apply derivation if needed (only when no mapping from model exists)
         if not seniority:
@@ -1002,6 +1004,8 @@ def gemini_analyze_jd():
             # If we found sectors from companies, use them (but keep any additional sectors from JD analysis)
             if company_based_sectors:
                 # Merge company-based sectors with JD-derived sectors (deduplicate)
+                # IMPORTANT: Only merge sectors that were successfully mapped to sectors.json
+                # At this point, 'sectors' contains ONLY sectors.json validated sectors
                 for s in sectors:
                     if s and s not in company_based_sectors:
                         company_based_sectors.append(s)
