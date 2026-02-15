@@ -1076,10 +1076,19 @@ def gemini_analyze_jd():
             # Call the suggestion system to get related job titles
             suggested_titles = []
             if job_title or sectors:  # Need at least one of these for suggestions
+                # Use first sector to infer industry if available
+                industry = "Non-Gaming"  # Default industry for suggestion system
+                if sectors and sectors[0]:
+                    # Map sector to industry context for better suggestions
+                    sector_lower = sectors[0].lower()
+                    if "gaming" in sector_lower or "entertainment" in sector_lower:
+                        industry = "Gaming"
+                    # Non-Gaming is appropriate default for most professional roles
+                
                 gem_suggestions = _gemini_suggestions(
                     job_titles=[job_title] if job_title else [],
-                    companies=valid_companies,
-                    industry="Non-Gaming",  # Default
+                    companies=valid_companies,  # Use identified companies for context
+                    industry=industry,
                     languages=None,
                     sectors=sectors,
                     country=country
@@ -1088,11 +1097,11 @@ def gemini_analyze_jd():
                 if gem_suggestions and gem_suggestions.get("job", {}).get("related"):
                     suggested_titles = gem_suggestions.get("job", {}).get("related", [])
                 else:
-                    # Fallback to heuristic suggestions
+                    # Fallback to heuristic suggestions with company context
                     suggested_titles = _heuristic_job_suggestions(
                         job_titles=[job_title] if job_title else [],
-                        companies=[],
-                        industry="Non-Gaming",
+                        companies=valid_companies,  # Pass companies for better suggestions
+                        industry=industry,
                         languages=None,
                         sectors=sectors
                     ) or []
@@ -1126,12 +1135,15 @@ def gemini_analyze_jd():
                         # Add "Lead" variant
                         job_titles.append(f"Lead {job_title}")
             else:
-                # No job title provided at all - use generic based on sector
+                # No job title provided at all - use sector-specific defaults
+                # These are placeholder titles when no better inference is possible
                 if sectors and sectors[0] != "Other":
-                    # Use sector to infer a generic job title
-                    sector_name = sectors[0].split(">")[0].strip() if ">" in sectors[0] else sectors[0]
-                    job_titles = [f"{sector_name} Specialist", f"Senior {sector_name} Professional"]
+                    # Extract sector name for more specific title generation
+                    sector_name = sectors[0].split(">")[-1].strip() if ">" in sectors[0] else sectors[0]
+                    # Generate sector-appropriate titles (these are fallback placeholders)
+                    job_titles = [f"{sector_name} Professional", f"Senior {sector_name} Professional"]
                 else:
+                    # Ultimate fallback for unknown sectors
                     job_titles = ["Professional", "Senior Professional"]
         
         # Update justification to note job title inference
