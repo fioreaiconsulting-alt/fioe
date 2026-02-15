@@ -2069,8 +2069,42 @@ async function enhanceWelcomeWithFullName(){
 }
 async function generateAndStart(){
   const btn=document.getElementById('generateBtn');
-  if(!jobTitles.length && !languages.length && !companies.length && !autoSuggestedCompanies.length){
-    console.warn('Add at least one: Job Title / Language / Company');
+  
+  // NEW: Search precondition validation per requirements
+  // The following fields must not be empty before search can execute:
+  // - Job Title
+  // - Location (Country)
+  // - Sector
+  // - Skill
+  
+  const missingFields = [];
+  
+  // Check Job Title
+  if (!jobTitles.length) {
+    missingFields.push('Job Title');
+  }
+  
+  // Check Location/Country
+  const country = val('country');
+  if (!country || !country.trim()) {
+    missingFields.push('Location');
+  }
+  
+  // Check Sector
+  if (!selectedSectors.length) {
+    missingFields.push('Sector');
+  }
+  
+  // Check Skill
+  if (!userSkills.length) {
+    missingFields.push('Skill');
+  }
+  
+  // If any required fields are missing, show error and stop
+  if (missingFields.length > 0) {
+    const errorMsg = `Cannot proceed with search. Missing required fields: ${missingFields.join(', ')}`;
+    console.warn(errorMsg);
+    alert(`${errorMsg}\n\nPlease fill in all required fields before starting the search.`);
     return;
   }
   
@@ -2340,7 +2374,12 @@ function updateSectorEnabledState(){
           try { chatData = chatResp.ok ? await chatResp.json() : null; } catch(_) { chatData = null; }
 
           // Now call the analyzer endpoint (webbridge will host /gemini/analyze_jd)
-          const analyzePayload = { username: username, sectors: sectorsData };
+          const jobCountry = val('country') || '';
+          const analyzePayload = { 
+            username: username, 
+            sectors: sectorsData,
+            country: jobCountry
+          };
           
           // Show loading animation during JD analysis
           const box = document.getElementById('jdAnalysisBox');
@@ -2381,9 +2420,21 @@ function updateSectorEnabledState(){
           if (analyzeData) {
             if (summaryEl) summaryEl.innerHTML = analyzeData.summary || (analyzeData.observation || '');
             let tagHtml = '';
-            if (analyzeData.job_title) tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
+            // Display job titles (multiple if available)
+            if (analyzeData.job_titles && analyzeData.job_titles.length > 0) {
+              const titleLabel = analyzeData.job_titles.length > 1 ? 'Job titles' : 'Job title';
+              tagHtml += `<div><strong>${titleLabel}:</strong> ${escapeHtml(analyzeData.job_titles.join(', '))}</div>`;
+            } else if (analyzeData.job_title) {
+              // Fallback for backward compatibility
+              tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
+            }
             if (analyzeData.seniority) tagHtml += `<div><strong>Seniority:</strong> ${escapeHtml(analyzeData.seniority)}</div>`;
             if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
+            // Display identified companies with legal entity in country
+            if (analyzeData.companies && analyzeData.companies.length) {
+              const countryLabel = analyzeData.country ? ` in ${escapeHtml(analyzeData.country)}` : '';
+              tagHtml += `<div><strong>Companies (with local presence${countryLabel}):</strong> ${escapeHtml(analyzeData.companies.join(', '))}</div>`;
+            }
             // Normalize "South Korea" to "Korea" for display
             if (analyzeData.country) {
               const normalizedCountry = normalizeCountryName(analyzeData.country);
@@ -2424,7 +2475,25 @@ function updateSectorEnabledState(){
               // Track if job title was provided in JD
               const hasJobTitleInJD = analyzeData.job_title && analyzeData.job_title.trim();
               
-              if(hasJobTitleInJD && !jobTitleIndex.has(canonicalKey(analyzeData.job_title))){
+              // NEW: Add both inferred job titles to the tag list/Job Title Group
+              // Both original and suggested job titles from job_titles array
+              if (analyzeData.job_titles && Array.isArray(analyzeData.job_titles) && analyzeData.job_titles.length > 0) {
+                let titlesAdded = false;
+                analyzeData.job_titles.forEach(function(jt) {
+                  const trimmed = (jt || '').trim();
+                  if (trimmed && !jobTitleIndex.has(canonicalKey(trimmed))) {
+                    jobTitles.push(trimmed);
+                    jobTitleIndex.add(canonicalKey(trimmed));
+                    titlesAdded = true;
+                  }
+                });
+                // Update UI once after all titles processed
+                if (titlesAdded) {
+                  renderJobTitleChips();
+                  updateFullCompiledQuery();
+                }
+              } else if (hasJobTitleInJD && !jobTitleIndex.has(canonicalKey(analyzeData.job_title))) {
+                // Fallback for backward compatibility if job_titles array not present
                 jobTitles.push(analyzeData.job_title);
                 jobTitleIndex.add(canonicalKey(analyzeData.job_title));
                 renderJobTitleChips();
@@ -2440,7 +2509,7 @@ function updateSectorEnabledState(){
                 // Normalize "South Korea" to "Korea"
                 const normalizedCountry = normalizeCountryName(analyzeData.country);
                 document.getElementById('country').value = normalizedCountry; 
-                updateSectorEnabledState(); 
+                updateSectorEnabledState();
                 updateFullCompiledQuery(); 
                 scheduleEstimateUpdate(); 
               }
