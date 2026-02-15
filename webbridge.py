@@ -414,6 +414,43 @@ _KEYWORD_TO_SECTOR_LABEL = {
     "aerospace": "Industrial & Manufacturing > Aerospace & Defense"
 }
 
+# Product/domain keyword mapping for second sector validation
+# Maps product keywords to valid domain keywords they should match
+_PRODUCT_TO_DOMAIN_KEYWORDS = {
+    "mobile phone": ["consumer electronics", "electronics"],
+    "smartphone": ["consumer electronics", "electronics"],
+    "phone": ["consumer electronics", "electronics"],
+    "cloud": ["cloud", "infrastructure"],
+    "devops": ["cloud", "infrastructure"],
+    "kubernetes": ["cloud", "infrastructure"],
+    "aws": ["cloud", "infrastructure"],
+    "azure": ["cloud", "infrastructure"],
+    "gcp": ["cloud", "infrastructure"],
+    "ai": ["ai", "data", "artificial intelligence"],
+    "machine learning": ["ai", "data"],
+    "data science": ["ai", "data"],
+    "gaming": ["gaming", "entertainment"],
+    "game": ["gaming", "entertainment"],
+    "fintech": ["fintech", "financial"],
+    "bank": ["banking", "financial"],
+    "insurance": ["insurance", "financial"],
+    "e-commerce": ["e-commerce", "retail"],
+    "ecommerce": ["e-commerce", "retail"],
+    "retail": ["retail", "e-commerce"],
+    "healthcare": ["healthcare", "healthtech"],
+    "medical": ["healthcare", "medical"],
+    "pharmaceutical": ["pharmaceutical", "biotech"],
+    "software": ["software", "it services"],
+    "web": ["software", "it services"],
+    "hardware": ["hardware", "electronics"],
+    "cybersecurity": ["cybersecurity", "security"],
+    "security": ["cybersecurity", "security"],
+}
+
+# Generic role keywords that can match any sector when no specific product is found
+_GENERIC_ROLE_KEYWORDS = ["manager", "engineer", "developer", "analyst", "consultant", 
+                          "director", "lead", "specialist", "coordinator", "administrator"]
+
 def _map_keyword_to_sector_label(text):
     """
     Search for keywords in text and return a sectors.json label if found and present in SECTORS_INDEX.
@@ -1084,41 +1121,11 @@ def gemini_analyze_jd():
                     domain = parts[-1].lower()  # Get the last part (domain)
                     job_title_lower = job_title.lower()
                     
-                    # Product/domain keyword mapping for validation
-                    product_keywords = {
-                        "mobile phone": ["consumer electronics", "electronics"],
-                        "smartphone": ["consumer electronics", "electronics"],
-                        "phone": ["consumer electronics", "electronics"],
-                        "cloud": ["cloud", "infrastructure"],
-                        "devops": ["cloud", "infrastructure"],
-                        "kubernetes": ["cloud", "infrastructure"],
-                        "aws": ["cloud", "infrastructure"],
-                        "azure": ["cloud", "infrastructure"],
-                        "gcp": ["cloud", "infrastructure"],
-                        "ai": ["ai", "data", "artificial intelligence"],
-                        "machine learning": ["ai", "data"],
-                        "data science": ["ai", "data"],
-                        "gaming": ["gaming", "entertainment"],
-                        "game": ["gaming", "entertainment"],
-                        "fintech": ["fintech", "financial"],
-                        "bank": ["banking", "financial"],
-                        "insurance": ["insurance", "financial"],
-                        "e-commerce": ["e-commerce", "retail"],
-                        "ecommerce": ["e-commerce", "retail"],
-                        "retail": ["retail", "e-commerce"],
-                        "healthcare": ["healthcare", "healthtech"],
-                        "medical": ["healthcare", "medical"],
-                        "pharmaceutical": ["pharmaceutical", "biotech"],
-                        "software": ["software", "it services"],
-                        "web": ["software", "it services"],
-                        "hardware": ["hardware", "electronics"],
-                        "cybersecurity": ["cybersecurity", "security"],
-                        "security": ["cybersecurity", "security"],
-                    }
-                    
-                    # Check if any product keyword in job title matches the domain
-                    for product_keyword, valid_domains in product_keywords.items():
-                        if product_keyword in job_title_lower:
+                    # Check if any product keyword in job title matches the domain (using word boundaries)
+                    for product_keyword, valid_domains in _PRODUCT_TO_DOMAIN_KEYWORDS.items():
+                        # Use word boundary regex for exact word matching
+                        pattern = r'\b' + re.escape(product_keyword) + r'\b'
+                        if re.search(pattern, job_title_lower):
                             # Check if the sector domain matches any valid domain for this product
                             for valid_domain in valid_domains:
                                 if valid_domain in domain:
@@ -1126,10 +1133,10 @@ def gemini_analyze_jd():
                     
                     # If no specific product keyword found, allow general match
                     # (e.g., "Engineer" without specific product can match any tech sector)
-                    generic_roles = ["manager", "engineer", "developer", "analyst", "consultant", 
-                                   "director", "lead", "specialist", "coordinator", "administrator"]
-                    if any(role in job_title_lower for role in generic_roles):
-                        return True
+                    for role in _GENERIC_ROLE_KEYWORDS:
+                        pattern = r'\b' + re.escape(role) + r'\b'
+                        if re.search(pattern, job_title_lower):
+                            return True
                     
                     return False
                 
