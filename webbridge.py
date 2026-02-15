@@ -463,6 +463,10 @@ def _validate_sector_against_products(sector_label: str, job_title: str, jd_text
     Validate that a proposed sector makes sense given the product keywords in the job title and JD.
     This prevents incorrect sector assignments like "Advertising & Marketing" for HVAC roles.
     
+    Uses PRODUCT_TO_DOMAIN_KEYWORDS (sector_mappings.py) which maps product keywords like "hvac",
+    "cloud solutions", "clinical trial" to valid domain keywords. Also uses GENERIC_PRODUCT_KEYWORDS
+    to identify ambiguous keywords like "marketing", "gcp", "compliance" that span multiple sectors.
+    
     Returns:
         True if the sector is valid or no conflicting evidence found
         False if there are specific product keywords that don't match the sector domain
@@ -492,11 +496,19 @@ def _validate_sector_against_products(sector_label: str, job_title: str, jd_text
     generic_matching = []
     generic_non_matching = []
     
+    # Precompile patterns for better performance
+    product_pattern_cache = {}
+    
     for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
-        pattern = r'\b' + re.escape(product_keyword) + r'\b'
-        if re.search(pattern, text_to_check):
+        # Use cached pattern or compile new one
+        if product_keyword not in product_pattern_cache:
+            product_pattern_cache[product_keyword] = re.compile(r'\b' + re.escape(product_keyword) + r'\b')
+        pattern = product_pattern_cache[product_keyword]
+        
+        if pattern.search(text_to_check):
             matches_domain = False
             for valid_domain in valid_domains:
+                # Use word boundary matching for domain validation
                 domain_pattern = r'\b' + re.escape(valid_domain) + r'\b'
                 if re.search(domain_pattern, domain):
                     matches_domain = True
@@ -997,6 +1009,7 @@ def gemini_analyze_jd():
 
         # Try to map any sectors returned by Gemini to sectors.json labels (strict mapping)
         # AND validate against product keywords in the JD to prevent incorrect mappings
+        SECTOR_REJECTED_MSG = "rejected sector due to product keyword mismatch"
         heuristic_notes = []
         mapped_sectors = []
         try:
@@ -1015,7 +1028,7 @@ def gemini_analyze_jd():
                                 mapped_sectors.append(mapped)
                             else:
                                 # Sector rejected due to product keyword mismatch
-                                heuristic_notes.append(f"rejected sector '{mapped}' due to product keyword mismatch")
+                                heuristic_notes.append(f"{SECTOR_REJECTED_MSG}: '{mapped}'")
             elif sector and isinstance(sector, str) and sector.strip():
                 parts = re.split(r'[\/,;|]+', sector)
                 for p in parts:
@@ -1028,7 +1041,7 @@ def gemini_analyze_jd():
                             mapped_sectors.append(mapped)
                         else:
                             # Sector rejected due to product keyword mismatch
-                            heuristic_notes.append(f"rejected sector '{mapped}' due to product keyword mismatch")
+                            heuristic_notes.append(f"{SECTOR_REJECTED_MSG}: '{mapped}'")
             # ALWAYS use mapped sectors (even if empty) - do NOT keep unmapped sectors
             # This ensures ONLY sectors.json validated sectors are used
             sectors = mapped_sectors  # Replace with mapped sectors (empty if no valid mapping)
