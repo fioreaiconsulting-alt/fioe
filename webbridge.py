@@ -1026,11 +1026,12 @@ def gemini_analyze_jd():
         def derive_sector_from_skills_and_title(skills_list, job_title_text, jd_text, existing_sectors):
             """
             Derive a sector from the skillset, job title, and job description that is different from existing sectors.
-            Uses the same hierarchical validation logic as webbridgepro.py:
+            Uses the same hierarchical validation logic as webbridgepro.py with additional product/domain validation:
               1. Try to match exact or long-form labels from sectors.json (longest match wins)
               2. Try token overlap matching via _find_best_sector_match_for_text()
               3. Try keyword mapping via _map_keyword_to_sector_label()
-              4. Return None if no match (do NOT return freeform labels)
+              4. Validate that the product/domain mentioned in job title exists in the derived sector
+              5. Return None if no match (do NOT return freeform labels)
             
             Args:
                 skills_list (list): List of skill strings extracted from JD
@@ -1060,6 +1061,78 @@ def gemini_analyze_jd():
                 jd_lower = (jd_text or "").lower()
                 combined_text = f"{skills_text} {title_text} {jd_lower}"
                 
+                # Helper function to validate product/domain in sector label
+                def validate_product_in_sector(sector_label, job_title):
+                    """
+                    Validate that the product/domain mentioned in job title exists within the sector.
+                    This is an exception rule when company name doesn't exist or cannot be mapped.
+                    
+                    Examples:
+                    - "Product Manager, Mobile Phone" + "Consumer & Retail > Consumer Electronics" 
+                      → "mobile phone" matches "consumer electronics" ✓
+                    - "Cloud Engineer" + "Technology > Cloud & Infrastructure"
+                      → "cloud" matches "cloud & infrastructure" ✓
+                    """
+                    if not sector_label or not job_title:
+                        return True  # No validation needed if inputs missing
+                    
+                    # Extract domain part from sector label (e.g., "Cloud & Infrastructure" from "Technology > Cloud & Infrastructure")
+                    parts = sector_label.split(" > ")
+                    if len(parts) < 2:
+                        return True  # No domain to validate against
+                    
+                    domain = parts[-1].lower()  # Get the last part (domain)
+                    job_title_lower = job_title.lower()
+                    
+                    # Product/domain keyword mapping for validation
+                    product_keywords = {
+                        "mobile phone": ["consumer electronics", "electronics"],
+                        "smartphone": ["consumer electronics", "electronics"],
+                        "phone": ["consumer electronics", "electronics"],
+                        "cloud": ["cloud", "infrastructure"],
+                        "devops": ["cloud", "infrastructure"],
+                        "kubernetes": ["cloud", "infrastructure"],
+                        "aws": ["cloud", "infrastructure"],
+                        "azure": ["cloud", "infrastructure"],
+                        "gcp": ["cloud", "infrastructure"],
+                        "ai": ["ai", "data", "artificial intelligence"],
+                        "machine learning": ["ai", "data"],
+                        "data science": ["ai", "data"],
+                        "gaming": ["gaming", "entertainment"],
+                        "game": ["gaming", "entertainment"],
+                        "fintech": ["fintech", "financial"],
+                        "bank": ["banking", "financial"],
+                        "insurance": ["insurance", "financial"],
+                        "e-commerce": ["e-commerce", "retail"],
+                        "ecommerce": ["e-commerce", "retail"],
+                        "retail": ["retail", "e-commerce"],
+                        "healthcare": ["healthcare", "healthtech"],
+                        "medical": ["healthcare", "medical"],
+                        "pharmaceutical": ["pharmaceutical", "biotech"],
+                        "software": ["software", "it services"],
+                        "web": ["software", "it services"],
+                        "hardware": ["hardware", "electronics"],
+                        "cybersecurity": ["cybersecurity", "security"],
+                        "security": ["cybersecurity", "security"],
+                    }
+                    
+                    # Check if any product keyword in job title matches the domain
+                    for product_keyword, valid_domains in product_keywords.items():
+                        if product_keyword in job_title_lower:
+                            # Check if the sector domain matches any valid domain for this product
+                            for valid_domain in valid_domains:
+                                if valid_domain in domain:
+                                    return True
+                    
+                    # If no specific product keyword found, allow general match
+                    # (e.g., "Engineer" without specific product can match any tech sector)
+                    generic_roles = ["manager", "engineer", "developer", "analyst", "consultant", 
+                                   "director", "lead", "specialist", "coordinator", "administrator"]
+                    if any(role in job_title_lower for role in generic_roles):
+                        return True
+                    
+                    return False
+                
                 # 1) Try sectors.json labels (longest-match strategy by substring)
                 best_match = ""
                 best_orig = ""
@@ -1071,12 +1144,14 @@ def gemini_analyze_jd():
                             best_match = lbl_low
                             best_orig = label
                 if best_orig and best_orig not in existing_sectors:
-                    return best_orig, "Matched sectors.json label"
+                    if validate_product_in_sector(best_orig, job_title_text):
+                        return best_orig, "Matched sectors.json label with product validation"
                 
                 # 2) Try token overlap matching on combined text
                 mapped_from_combined = _find_best_sector_match_for_text(combined_text)
                 if mapped_from_combined and mapped_from_combined not in existing_sectors:
-                    return mapped_from_combined, "Matched sectors.json label via token overlap"
+                    if validate_product_in_sector(mapped_from_combined, job_title_text):
+                        return mapped_from_combined, "Matched sectors.json label via token overlap with product validation"
                 
                 # 3) Try keyword mapping on combined text, title, and skills separately
                 kw_map = _map_keyword_to_sector_label(combined_text)
@@ -1085,7 +1160,8 @@ def gemini_analyze_jd():
                 if not kw_map and skills_text:
                     kw_map = _map_keyword_to_sector_label(skills_text)
                 if kw_map and kw_map not in existing_sectors:
-                    return kw_map, "Mapped via keyword to sectors.json label"
+                    if validate_product_in_sector(kw_map, job_title_text):
+                        return kw_map, "Mapped via keyword to sectors.json label with product validation"
                 
                 # 4) Do NOT return freeform labels; instead return None to indicate no strict sectors.json match
                 return None, ""
