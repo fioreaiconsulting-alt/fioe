@@ -1122,21 +1122,26 @@ def gemini_analyze_jd():
                     job_title_lower = job_title.lower()
                     
                     # Check if any product keyword in job title matches the domain (using word boundaries)
+                    product_keyword_found = False
                     for product_keyword, valid_domains in _PRODUCT_TO_DOMAIN_KEYWORDS.items():
                         # Use word boundary regex for exact word matching
                         pattern = r'\b' + re.escape(product_keyword) + r'\b'
                         if re.search(pattern, job_title_lower):
+                            product_keyword_found = True
                             # Check if the sector domain matches any valid domain for this product
                             for valid_domain in valid_domains:
                                 if valid_domain in domain:
                                     return True
+                            # Product keyword found but doesn't match this domain - reject
+                            return False
                     
-                    # If no specific product keyword found, allow general match
+                    # If no specific product keyword found, allow generic roles to match any sector
                     # (e.g., "Engineer" without specific product can match any tech sector)
-                    for role in _GENERIC_ROLE_KEYWORDS:
-                        pattern = r'\b' + re.escape(role) + r'\b'
-                        if re.search(pattern, job_title_lower):
-                            return True
+                    if not product_keyword_found:
+                        for role in _GENERIC_ROLE_KEYWORDS:
+                            pattern = r'\b' + re.escape(role) + r'\b'
+                            if re.search(pattern, job_title_lower):
+                                return True
                     
                     return False
                 
