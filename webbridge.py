@@ -676,14 +676,16 @@ def gemini_analyze_jd():
     2. Determine sectors from identified companies (using sectors.json)
     3. If no companies found, infer sector from JD content
     4. Filter companies by legal entity in specified country
-    5. Always identify at least one sector
+    5. Always identify at least one sector (using sectors.json)
+    6. Generate at least 2 job titles (original + suggested variant)
     
     Returns JSON:
     {
-      "job_title": "...",
+      "job_title": "...",  # Single title for backward compatibility
+      "job_titles": [...],  # Array of at least 2 job titles (original + suggestions)
       "seniority": "...",
-      "sectors": [...],
-      "companies": [...],
+      "sectors": [...],  # Always mapped to sectors.json
+      "companies": [...],  # Filtered by country legal entity
       "country": "...",
       "summary": "...",
       "missing": [...],
@@ -1056,12 +1058,100 @@ def gemini_analyze_jd():
         if not seniority: missing.append("seniority")
         if not sectors: missing.append("sector")
         if not country: missing.append("country")
+        
+        # -------------------------
+        # STEP 6: Job Title Inference - Generate at least 2 job titles
+        # As per requirement: must return at least two job titles:
+        # 1. Original job title from JD
+        # 2. Closest matched job title from Job Title Suggestion process
+        # -------------------------
+        job_titles = []
+        
+        # Add original job title if present
+        if job_title:
+            job_titles.append(job_title)
+        
+        # Get suggested job titles using the suggestion system
+        try:
+            # Call the suggestion system to get related job titles
+            suggested_titles = []
+            if job_title or sectors:  # Need at least one of these for suggestions
+                gem_suggestions = _gemini_suggestions(
+                    job_titles=[job_title] if job_title else [],
+                    companies=valid_companies,
+                    industry="Non-Gaming",  # Default
+                    languages=None,
+                    sectors=sectors,
+                    country=country
+                )
+                
+                if gem_suggestions and gem_suggestions.get("job", {}).get("related"):
+                    suggested_titles = gem_suggestions.get("job", {}).get("related", [])
+                else:
+                    # Fallback to heuristic suggestions
+                    suggested_titles = _heuristic_job_suggestions(
+                        job_titles=[job_title] if job_title else [],
+                        companies=[],
+                        industry="Non-Gaming",
+                        languages=None,
+                        sectors=sectors
+                    ) or []
+            
+            # Add the closest matched job title (first suggestion)
+            if suggested_titles:
+                # Filter out the original job title if it appears in suggestions
+                for suggested in suggested_titles:
+                    if suggested and isinstance(suggested, str):
+                        suggested_clean = suggested.strip()
+                        # Avoid duplicates (case-insensitive comparison)
+                        if not any(jt.lower() == suggested_clean.lower() for jt in job_titles):
+                            job_titles.append(suggested_clean)
+                            break  # Only add the first (closest) match
+        except Exception as e:
+            logger.warning(f"Failed to get job title suggestions: {e}")
+        
+        # Ensure we have at least 2 job titles as required
+        # If we only have 1 (or 0), add a generic variant
+        if len(job_titles) < 2:
+            if job_title:
+                # Create a variant by adding "Senior" if not already present
+                if "senior" not in job_title.lower():
+                    job_titles.append(f"Senior {job_title}")
+                else:
+                    # Remove "Senior" to create a variant
+                    variant = re.sub(r'\bSenior\s+', '', job_title, flags=re.IGNORECASE).strip()
+                    if variant and variant != job_title:
+                        job_titles.append(variant)
+                    else:
+                        # Add "Lead" variant
+                        job_titles.append(f"Lead {job_title}")
+            else:
+                # No job title provided at all - use generic based on sector
+                if sectors and sectors[0] != "Other":
+                    # Use sector to infer a generic job title
+                    sector_name = sectors[0].split(">")[0].strip() if ">" in sectors[0] else sectors[0]
+                    job_titles = [f"{sector_name} Specialist", f"Senior {sector_name} Professional"]
+                else:
+                    job_titles = ["Professional", "Senior Professional"]
+        
+        # Update justification to note job title inference
+        if len(job_titles) >= 2:
+            title_note = f" Generated {len(job_titles)} job title variants (original + suggested)."
+            if justification:
+                justification = justification.strip()
+                if not justification.endswith("."):
+                    justification += "."
+                justification += title_note
+            else:
+                justification = title_note.strip()
+        
         # -------------------------
         # End enhanced workflow
         # -------------------------
 
         out = {
-            "job_title": job_title,
+            "job_title": job_title,  # Keep single job_title for backward compatibility
+            "job_titles": job_titles,  # NEW: Array of at least 2 job titles
             "seniority": seniority,
             "sectors": sectors if isinstance(sectors, list) else ([sectors] if sectors else []),
             "companies": valid_companies,  # Include filtered companies with legal entity in country

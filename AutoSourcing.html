@@ -2386,7 +2386,14 @@ function updateSectorEnabledState(){
           if (analyzeData) {
             if (summaryEl) summaryEl.innerHTML = analyzeData.summary || (analyzeData.observation || '');
             let tagHtml = '';
-            if (analyzeData.job_title) tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
+            // Display job titles (multiple if available)
+            if (analyzeData.job_titles && analyzeData.job_titles.length > 0) {
+              const titleLabel = analyzeData.job_titles.length > 1 ? 'Job titles' : 'Job title';
+              tagHtml += `<div><strong>${titleLabel}:</strong> ${escapeHtml(analyzeData.job_titles.join(', '))}</div>`;
+            } else if (analyzeData.job_title) {
+              // Fallback for backward compatibility
+              tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
+            }
             if (analyzeData.seniority) tagHtml += `<div><strong>Seniority:</strong> ${escapeHtml(analyzeData.seniority)}</div>`;
             if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
             // Display identified companies with legal entity in country
