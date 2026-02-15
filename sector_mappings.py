@@ -154,6 +154,8 @@ GENERIC_PRODUCT_KEYWORDS = [
     "gcp",  # Can mean "Google Cloud Platform" or "Good Clinical Practice"
     "compliance",  # Can be financial, legal, or clinical compliance
     "security",  # Can be cybersecurity or defense & security
+    "gaming",  # Can be mentioned in context ("especially gaming") without being the focus
+    "game",  # Similar to gaming
 ]
 
 # Generic role keywords that can match any sector when no specific product is found
