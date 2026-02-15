@@ -668,13 +668,22 @@ def translate_company_endpoint():
 @app.post("/gemini/analyze_jd")
 def gemini_analyze_jd():
     """
-    Accepts JSON body: { "username": "...", "text": "..." }
+    Accepts JSON body: { "username": "...", "text": "...", "country": "..." }
     If username provided but text empty, server may fetch stored JD from DB (optional).
+    
+    Implements workflow:
+    1. Identify companies mentioned in JD
+    2. Determine sectors from identified companies (using sectors.json)
+    3. If no companies found, infer sector from JD content
+    4. Filter companies by legal entity in specified country
+    5. Always identify at least one sector
+    
     Returns JSON:
     {
       "job_title": "...",
       "seniority": "...",
       "sectors": [...],
+      "companies": [...],
       "country": "...",
       "summary": "...",
       "missing": [...],
@@ -686,6 +695,7 @@ def gemini_analyze_jd():
     username = (data.get("username") or "").strip()
     text_input = (data.get("text") or "").strip()
     sectors_data = data.get("sectors") or []
+    country = (data.get("country") or "").strip()
 
     # If no text but username provided, attempt to read JD from login.jd column (best-effort)
     if not text_input and username:
@@ -704,41 +714,88 @@ def gemini_analyze_jd():
     if not text_input:
         return jsonify({"error":"No JD text provided or found for user"}), 400
 
-    # Build sectors reference for prompt
-    sectors_list = ""
-    if sectors_data:
-        sectors_list = "\n\nAVAILABLE SECTORS:\n" + json.dumps(sectors_data, indent=2)
-
-    # Build strict JSON request to Gemini
-    prompt = (
-        "You are a recruiting assistant. Analyze the job description and return STRICT JSON with keys:\n"
-        "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
-        + sectors_list +
-        "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
-    )
-
     if not genai or not GEMINI_API_KEY:
         # Fallback: simple heuristics if gemini not configured
-        # Minimal heuristic: try to extract a job title line and country
         try:
             from chat_extract import analyze_job_description as heuristic_analyze
             s, missing = heuristic_analyze(text_input)
-            return jsonify({"summary": s, "missing": missing, "parsed": {}, "skills": [], "raw": "", "observation": ""}), 200
+            return jsonify({"summary": s, "missing": missing, "parsed": {}, "skills": [], "companies": [], "raw": "", "observation": ""}), 200
         except Exception:
             return jsonify({"error":"Gemini not available and no heuristic fallback"}), 503
 
     try:
+        # -------------------------
+        # STEP 1: Identify companies mentioned in JD
+        # -------------------------
+        identified_companies = []
+        company_identification_note = ""
+        
+        company_prompt = (
+            "You are a recruiting assistant. Analyze the following job description and identify ALL company names mentioned.\n"
+            "Return STRICT JSON with this structure:\n"
+            "{ \"companies\": [\"Company Name 1\", \"Company Name 2\", ...] }\n"
+            "Rules:\n"
+            "- Include the hiring company if explicitly mentioned\n"
+            "- Include client companies, partner companies, or competitor companies mentioned\n"
+            "- Use official company names (e.g., 'Microsoft' not 'MS', 'Johnson & Johnson' not 'J&J')\n"
+            "- Do NOT include generic industry terms (e.g., 'tech companies', 'pharma firms')\n"
+            "- Return empty array if no specific companies are mentioned\n"
+            "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
+        )
+        
         model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+        company_resp = model.generate_content(company_prompt)
+        company_raw = (company_resp.text or "").strip()
+        company_obj = _extract_json_object(company_raw) or {}
+        
+        raw_companies = company_obj.get("companies") or []
+        if isinstance(raw_companies, list):
+            for c in raw_companies:
+                if isinstance(c, str) and c.strip():
+                    identified_companies.append(c.strip())
+        
+        company_identification_note = f"Identified {len(identified_companies)} companies in JD." if identified_companies else "No companies identified in JD."
+        
+        # -------------------------
+        # STEP 2: Main JD Analysis with enhanced prompt
+        # -------------------------
+        
+        # Build sectors reference for prompt
+        sectors_list = ""
+        if sectors_data:
+            sectors_list = "\n\nAVAILABLE SECTORS:\n" + json.dumps(sectors_data, indent=2)
+        
+        # Include identified companies in the analysis prompt
+        companies_context = ""
+        if identified_companies:
+            companies_context = f"\n\nIDENTIFIED COMPANIES: {', '.join(identified_companies)}\n"
+            companies_context += "Use these companies to help determine the appropriate sector(s) from the available sectors list."
+
+        # Build strict JSON request to Gemini
+        prompt = (
+            "You are a recruiting assistant. Analyze the job description and return STRICT JSON with keys:\n"
+            "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
+            "IMPORTANT:\n"
+            "- You MUST identify at least one sector. Use your best judgment if unclear.\n"
+            "- Multiple sectors may be assigned if the role spans multiple domains.\n"
+            "- Match sectors to the AVAILABLE SECTORS list provided below.\n"
+            + companies_context
+            + sectors_list
+            + "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
+        )
+
         resp = model.generate_content(prompt)
         raw_out = (resp.text or "").strip()
         parsed_obj = _extract_json_object(raw_out) or {}
         parsed = parsed_obj.get("parsed") or parsed_obj.get("parsed", {}) or {}
+        
         # Normalize output
         job_title = (parsed.get("job_title") or parsed.get("role") or "").strip()
         seniority = (parsed.get("seniority") or "").strip()
         sector = parsed.get("sector") or ""
         sectors = parsed.get("sectors") or ([sector] if sector else [])
-        country = (parsed.get("country") or parsed.get("location") or "").strip()
+        if not country:  # Use country from analysis if not provided in request
+            country = (parsed.get("country") or parsed.get("location") or "").strip()
         skills = parsed.get("skills") or parsed_obj.get("skills") or []
         if isinstance(skills, str) and skills.strip():
             skills = [s.strip() for s in skills.split(",") if s.strip()]
@@ -903,20 +960,111 @@ def gemini_analyze_jd():
             else:
                 observation = " ".join(heuristic_notes) + "."
 
-        # Recompute missing after derivation
+        # -------------------------
+        # STEP 3: Filter identified companies by legal entity in specified country
+        # Only suggest companies that have a legal entity in the specified country
+        # -------------------------
+        valid_companies = []
+        if identified_companies and country:
+            for company in identified_companies:
+                if _has_local_presence(company, country):
+                    valid_companies.append(company)
+            
+            if len(valid_companies) < len(identified_companies):
+                filtered_count = len(identified_companies) - len(valid_companies)
+                company_identification_note += f" Filtered {filtered_count} companies without legal entity in {country}."
+        elif identified_companies:
+            # If no country specified, include all identified companies
+            valid_companies = identified_companies
+        
+        # -------------------------
+        # STEP 4: Determine sectors based on identified companies (if available)
+        # If companies were identified and mapped to sectors, those should take precedence
+        # -------------------------
+        company_based_sectors = []
+        if valid_companies:
+            # Try to determine sectors from the identified companies
+            for company in valid_companies:
+                # Check if company matches any bucket in BUCKET_COMPANIES
+                company_lower = company.lower().strip()
+                for bucket_name, bucket_data in BUCKET_COMPANIES.items():
+                    for region in ["global", "apac"]:
+                        region_companies = bucket_data.get(region, [])
+                        if any(company_lower == c.lower().strip() for c in region_companies):
+                            # Map bucket to sector
+                            sector_from_bucket = _bucket_to_sector_label(bucket_name)
+                            if sector_from_bucket and sector_from_bucket not in company_based_sectors:
+                                company_based_sectors.append(sector_from_bucket)
+                            break
+            
+            # If we found sectors from companies, use them (but keep any additional sectors from JD analysis)
+            if company_based_sectors:
+                # Merge company-based sectors with JD-derived sectors (deduplicate)
+                for s in sectors:
+                    if s and s not in company_based_sectors:
+                        company_based_sectors.append(s)
+                sectors = company_based_sectors
+                heuristic_notes.append(f"sectors determined from identified companies")
+        
+        # -------------------------
+        # STEP 5: Ensure at least one sector is always identified
+        # -------------------------
+        if not sectors or (isinstance(sectors, list) and len(sectors) == 0):
+            # Apply sector derivation as fallback
+            derived_sector, note = derive_sector_from_text(text_input, job_title)
+            if derived_sector:
+                sectors = [derived_sector]
+                sector = derived_sector
+                heuristic_notes.append(f"sector derived (fallback): {note}")
+            else:
+                # Last resort: assign a generic sector based on job title keywords
+                sectors = ["Other"]
+                heuristic_notes.append("sector set to 'Other' as fallback")
+
+        # Update justification/observation with company identification and filtering notes
+        if company_identification_note:
+            note_text = f" {company_identification_note}"
+            if justification:
+                justification = justification.strip()
+                if not justification.endswith("."):
+                    justification += "."
+                justification += note_text
+            else:
+                justification = note_text.strip()
+
+        # If we made heuristic derivations or mappings, append explanation to justification/observation
+        if heuristic_notes:
+            note_text = " Heuristic derivation applied: " + "; ".join(heuristic_notes) + "."
+            if justification:
+                justification = justification.strip()
+                # avoid duplicating punctuation
+                if not justification.endswith("."):
+                    justification += "."
+                justification += note_text
+            else:
+                justification = note_text.strip()
+            if observation:
+                if not observation.endswith("."):
+                    observation += "."
+                observation += " " + " ".join(heuristic_notes) + "."
+            else:
+                observation = " ".join(heuristic_notes) + "."
+
+        # Recompute missing after all derivations
         missing = []
         if not job_title: missing.append("job_title")
         if not seniority: missing.append("seniority")
         if not sectors: missing.append("sector")
         if not country: missing.append("country")
         # -------------------------
-        # End heuristic derivation
+        # End enhanced workflow
         # -------------------------
 
         out = {
             "job_title": job_title,
             "seniority": seniority,
             "sectors": sectors if isinstance(sectors, list) else ([sectors] if sectors else []),
+            "companies": valid_companies,  # Include filtered companies with legal entity in country
             "country": country,
             "summary": summary,
             "missing": missing,
@@ -2849,6 +2997,12 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
     languages = languages or []
     sectors = sectors or []
     locality_hint = "Prioritize Singapore/APAC relevance where naturally applicable." if SINGAPORE_CONTEXT else ""
+    
+    # Add country-specific filtering instruction
+    country_filter_hint = ""
+    if country:
+        country_filter_hint = f"\n- When suggesting companies, ONLY recommend companies with a legal entity or registered presence in {country}.\n- Exclude companies that do not operate in {country}.\n"
+    
     input_obj = {
         "sectors": sectors,
         "jobTitles": job_titles,
@@ -2867,6 +3021,7 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
         f"- Provide EXACTLY {company_limit} distinct, real, company or organization names in company.related.\n"
         "- Company names MUST be real, brand-level entities (e.g., 'Ubisoft', 'Electronic Arts', 'Pfizer').\n"
         "- DO NOT output generic placeholders (e.g., 'Gaming Studio', 'Tech Company', 'Pharma Company', 'Consulting Firm', 'Marketing Agency').\n"
+        + country_filter_hint +
         "- No duplicates, no commentary, no extra keys.\n"
         "- If insufficient context, fill remaining slots with well-known global or APAC companies relevant to the sectors/location.\n"
         "- Maintain JSON key order as shown.\n"
@@ -3064,6 +3219,41 @@ def _canon_sector_bucket(name: str):
     if "gaming" in s: return "gaming"
     if "web3" in s or "blockchain" in s: return "web3"
     return "other"
+
+def _bucket_to_sector_label(bucket_name: str):
+    """
+    Map bucket names (from BUCKET_COMPANIES) to sectors.json labels.
+    Returns a sector label that should exist in SECTORS_INDEX, or None.
+    """
+    bucket_to_label = {
+        "pharma_biotech": "Healthcare > Pharmaceuticals",
+        "medical_devices": "Healthcare > Medical Devices",
+        "diagnostics": "Healthcare > Diagnostics",
+        "clinical_research": "Healthcare > Clinical Research",
+        "healthtech": "Healthcare > HealthTech",
+        "technology": "Technology",
+        "manufacturing": "Industrial & Manufacturing",
+        "energy": "Energy & Environment",
+        "gaming": "Media, Gaming & Entertainment > Gaming",
+        "web3": "Emerging & Cross-Sector > Web3 & Blockchain",
+        "financial_services": "Financial Services",
+        "cybersecurity": "Technology > Cybersecurity",
+        "other": None
+    }
+    
+    label = bucket_to_label.get(bucket_name)
+    # Verify the label exists in SECTORS_INDEX before returning
+    if label and label in SECTORS_INDEX:
+        return label
+    
+    # If exact match not found, try to find a partial match in SECTORS_INDEX
+    if label:
+        label_lower = label.lower()
+        for idx_label in SECTORS_INDEX:
+            if label_lower in idx_label.lower() or idx_label.lower() in label_lower:
+                return idx_label
+    
+    return None
 
 @app.post("/suggest")
 def suggest():

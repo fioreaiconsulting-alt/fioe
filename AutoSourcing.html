@@ -2340,7 +2340,12 @@ function updateSectorEnabledState(){
           try { chatData = chatResp.ok ? await chatResp.json() : null; } catch(_) { chatData = null; }
 
           // Now call the analyzer endpoint (webbridge will host /gemini/analyze_jd)
-          const analyzePayload = { username: username, sectors: sectorsData };
+          const currentCountry = val('country') || '';
+          const analyzePayload = { 
+            username: username, 
+            sectors: sectorsData,
+            country: currentCountry
+          };
           
           // Show loading animation during JD analysis
           const box = document.getElementById('jdAnalysisBox');
@@ -2384,6 +2389,10 @@ function updateSectorEnabledState(){
             if (analyzeData.job_title) tagHtml += `<div><strong>Job title:</strong> ${escapeHtml(analyzeData.job_title)}</div>`;
             if (analyzeData.seniority) tagHtml += `<div><strong>Seniority:</strong> ${escapeHtml(analyzeData.seniority)}</div>`;
             if (analyzeData.sectors && analyzeData.sectors.length) tagHtml += `<div><strong>Sector:</strong> ${escapeHtml((analyzeData.sectors||[]).join(', '))}</div>`;
+            // Display identified companies with legal entity in country
+            if (analyzeData.companies && analyzeData.companies.length) {
+              tagHtml += `<div><strong>Companies identified:</strong> ${escapeHtml(analyzeData.companies.join(', '))}</div>`;
+            }
             // Normalize "South Korea" to "Korea" for display
             if (analyzeData.country) {
               const normalizedCountry = normalizeCountryName(analyzeData.country);
