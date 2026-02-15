@@ -216,48 +216,76 @@ BUCKET_JOB_TITLES = {
     "pharma_biotech": [
         "Regulatory Affairs Manager", "Clinical Research Associate", "Pharmacovigilance Specialist",
         "Medical Affairs Manager", "Quality Assurance Specialist", "CMC Scientist",
-        "Biostatistician", "Clinical Project Manager"
+        "Biostatistician", "Clinical Project Manager", "Drug Safety Officer",
+        "Clinical Data Manager", "Medical Science Liaison", "Toxicologist",
+        "Regulatory Affairs Specialist", "Clinical Operations Manager"
     ],
     "medical_devices": [
         "Regulatory Affairs Manager", "Quality Engineer", "Clinical Affairs Specialist",
         "Design Control Engineer", "Risk Management Engineer", "Product Manager (Medical Device)",
-        "Manufacturing Engineer"
+        "Manufacturing Engineer", "Validation Engineer", "Biomedical Engineer",
+        "Device Development Scientist", "Clinical Evaluation Specialist"
     ],
     "diagnostics": [
         "IVD Regulatory Specialist", "Quality Systems Engineer", "Clinical Application Specialist",
-        "Assay Development Scientist", "Validation Engineer"
+        "Assay Development Scientist", "Validation Engineer", "Molecular Diagnostics Scientist",
+        "Lab Automation Engineer", "Clinical Laboratory Scientist"
     ],
     "clinical_research": [
         "CRA", "Senior CRA", "Clinical Project Manager", "Clinical Trial Manager",
-        "Study Start-Up Specialist"
+        "Study Start-Up Specialist", "Site Activation Manager", "Regulatory Start-Up Specialist",
+        "Clinical Operations Lead", "Clinical Program Manager"
     ],
     "healthtech": [
-        "Product Manager", "Clinical Informatics Lead", "Healthcare Data Scientist",
-        "Interoperability Engineer", "Implementation Consultant"
+        "Clinical Informatics Lead", "Healthcare Data Scientist",
+        "Interoperability Engineer", "Implementation Consultant", "Digital Health Analyst",
+        "Telemedicine Product Manager", "HealthTech Solutions Architect",
+        "Electronic Health Records Specialist"
     ],
     "technology": [
         "Software Engineer", "ML Engineer", "Data Scientist", "Solutions Architect",
-        "Security Engineer", "MLOps Engineer", "Cloud Engineer"
+        "Security Engineer", "MLOps Engineer", "Cloud Engineer", "DevOps Engineer",
+        "AI Research Scientist", "Backend Developer", "Frontend Developer",
+        "Full Stack Engineer", "Systems Administrator", "IT Project Manager"
     ],
     "manufacturing": [
         "Manufacturing Engineer", "Quality Engineer", "Process Engineer",
-        "Supply Chain Analyst", "Automation Engineer"
+        "Supply Chain Analyst", "Automation Engineer", "Industrial Engineer",
+        "Lean Manufacturing Specialist", "Operations Manager", "Production Planner"
     ],
     "energy": [
-        "Energy Analyst", "Grid Integration Engineer", "Sustainability Manager", "HSE Engineer"
+        "Energy Analyst", "Grid Integration Engineer", "Sustainability Manager",
+        "HSE Engineer", "Renewable Energy Project Manager", "Solar Engineer",
+        "Wind Energy Specialist", "Oil & Gas Engineer", "Utilities Operations Manager"
     ],
     "gaming": [
-        "Game Producer", "Gameplay Engineer", "Level Designer", "Technical Artist"
+        "Game Producer", "Gameplay Engineer", "Level Designer", "Technical Artist",
+        "Game Tester", "Game QA Engineer", "Narrative Designer", "Game Economy Designer",
+        "Esports Manager"
     ],
     "web3": [
-        "Blockchain Engineer", "Smart Contract Developer", "Web3 Product Manager"
-    ],
-    "other": [
-        "Project Manager", "Operations Manager", "Business Analyst", "Data Analyst"
+        "Blockchain Engineer", "Smart Contract Developer", "Web3 Product Manager",
+        "Crypto Analyst", "NFT Product Manager", "Decentralized App (dApp) Developer",
+        "Tokenomics Specialist"
     ],
     "financial_services": [
         "Investment Analyst", "Product Manager (Wealth/Investment)", "Portfolio Manager",
         "Risk Analyst", "Payments Product Manager", "Fintech Product Manager",
-        "Relationship Manager", "Asset Manager"
+        "Relationship Manager", "Asset Manager", "Compliance Officer",
+        "Banking Operations Manager", "Insurance Underwriter", "Credit Risk Analyst"
+    ],
+    "government_education_nonprofit": [
+        "Policy Analyst", "Public Sector Project Manager", "Education Program Manager",
+        "University Research Coordinator", "NGO Program Officer", "Charity Fundraising Manager",
+        "Defense Analyst", "Security Policy Advisor"
+    ],
+    "transport_infrastructure": [
+        "Aviation Operations Manager", "Rail Project Engineer", "Mobility Product Manager",
+        "Smart Cities Consultant", "Maritime Logistics Coordinator", "Transit Planner"
+    ],
+    "other": [
+        "Project Manager", "Operations Manager", "Business Analyst", "Data Analyst",
+        "HR Manager", "Recruitment Consultant", "Marketing Manager", "Sales Manager",
+        "Customer Success Manager"
     ]
 }
