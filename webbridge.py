@@ -429,6 +429,9 @@ _KEYWORD_TO_SECTOR_LABEL = {
     "clinical studies": "Healthcare > Clinical Research"
 }
 
+# Precompile regex patterns for better performance
+_KEYWORD_PATTERNS = {kw: re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE) for kw in _KEYWORD_TO_SECTOR_LABEL.keys()}
+
 def _map_keyword_to_sector_label(text):
     """
     Search for keywords in text and return a sectors.json label if found and present in SECTORS_INDEX.
@@ -438,12 +441,11 @@ def _map_keyword_to_sector_label(text):
         txt = (text or "").lower()
         # Sort keywords by length (longest first) to match more specific phrases first
         sorted_keywords = sorted(_KEYWORD_TO_SECTOR_LABEL.items(), key=lambda x: len(x[0]), reverse=True)
-        
+
         for kw, label in sorted_keywords:
-            # Use word boundary regex for more accurate matching
-            # This prevents "gaming" from matching in "especially gaming ecosystems"
-            pattern = r'\b' + re.escape(kw) + r'\b'
-            if re.search(pattern, txt):
+            # Use precompiled pattern for better performance
+            pattern = _KEYWORD_PATTERNS[kw]
+            if pattern.search(txt):
                 # Ensure the label exists in SECTORS_INDEX (case-insensitive)
                 for l in SECTORS_INDEX:
                     if l.lower() == label.lower():
