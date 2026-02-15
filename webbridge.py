@@ -925,10 +925,14 @@ def gemini_analyze_jd():
             # ALWAYS use mapped sectors (even if empty) - do NOT keep unmapped sectors
             # This ensures ONLY sectors.json validated sectors are used
             sectors = mapped_sectors  # Replace with mapped sectors (empty if no valid mapping)
-            sector = mapped_sectors[0] if mapped_sectors else ""
             if mapped_sectors:
+                sector = mapped_sectors[0]  # Only set if we have valid mappings
                 heuristic_notes.append("sector mapped from model output to sectors.json label(s)")
-        except Exception:
+            else:
+                sector = ""  # Clear single sector if no valid mapping
+        except (KeyError, ValueError, AttributeError, TypeError) as e:
+            # Only catch expected mapping errors, log for debugging
+            logger.warning(f"Sector mapping error: {e}")
             sectors = []  # Clear sectors on error to ensure no unmapped sectors slip through
             sector = ""
 
