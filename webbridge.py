@@ -398,10 +398,13 @@ def _find_best_sector_match_for_text(candidate):
 # Keys are lowercase keywords; values are exact labels expected to exist (or closely match) in SECTORS_INDEX
 # NOTE: pharma/clinical mapping removed per user request (do not auto-apply pharma heuristics)
 _KEYWORD_TO_SECTOR_LABEL = {
-    "hvac": "Industrial & Manufacturing > Machinery",
-    "air conditioning": "Industrial & Manufacturing > Machinery",
+    "hvac": "Consumer & Retail > Consumer Electronics",
+    "air conditioning": "Consumer & Retail > Consumer Electronics",
+    "air conditioner": "Consumer & Retail > Consumer Electronics",
     "air solutions": "Industrial & Manufacturing > Machinery",
     "software": "Technology > Software",
+    "cloud computing": "Technology > Cloud & Infrastructure",
+    "cloud solutions": "Technology > Cloud & Infrastructure",
     "cloud": "Technology > Cloud & Infrastructure",
     "infrastructure": "Technology > Cloud & Infrastructure",
     "ai": "Technology > AI & Data",
@@ -417,20 +420,30 @@ _KEYWORD_TO_SECTOR_LABEL = {
     "wealth": "Financial Services > Investment & Asset Management",
     "fintech": "Financial Services > Fintech",
     # Removed 'clinical', 'pharma', 'biotech' mappings to avoid automatic pharma sector assignment
-    "gaming": "Media, Gaming & Entertainment > Gaming",
+    # Removed generic 'gaming' mapping to avoid false matches (e.g., "especially gaming" in industry context)
     "ecommerce": "Consumer & Retail > E-commerce",
     "renewable": "Energy & Environment > Renewable Energy",
-    "aerospace": "Industrial & Manufacturing > Aerospace & Defense"
+    "aerospace": "Industrial & Manufacturing > Aerospace & Defense",
+    "clinical trial": "Healthcare > Clinical Research",
+    "clinical research": "Healthcare > Clinical Research",
+    "clinical studies": "Healthcare > Clinical Research"
 }
 
 def _map_keyword_to_sector_label(text):
     """
     Search for keywords in text and return a sectors.json label if found and present in SECTORS_INDEX.
+    Uses word-boundary matching to avoid false positives (e.g., "gaming" matching in "especially gaming").
     """
     try:
         txt = (text or "").lower()
-        for kw, label in _KEYWORD_TO_SECTOR_LABEL.items():
-            if kw in txt:
+        # Sort keywords by length (longest first) to match more specific phrases first
+        sorted_keywords = sorted(_KEYWORD_TO_SECTOR_LABEL.items(), key=lambda x: len(x[0]), reverse=True)
+        
+        for kw, label in sorted_keywords:
+            # Use word boundary regex for more accurate matching
+            # This prevents "gaming" from matching in "especially gaming ecosystems"
+            pattern = r'\b' + re.escape(kw) + r'\b'
+            if re.search(pattern, txt):
                 # Ensure the label exists in SECTORS_INDEX (case-insensitive)
                 for l in SECTORS_INDEX:
                     if l.lower() == label.lower():
