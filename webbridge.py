@@ -8156,45 +8156,11 @@ def user_upload_jd():
         logger.error(f"[Upload JD] {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.post("/gemini/analyze_jd")
-def gemini_jd_analyze():
-    data = request.get_json(force=True, silent=True) or {}
-    username = (data.get("username") or "").strip()
-    text_input = (data.get("text") or "").strip()
-    sectors_data = data.get("sectors") or []
-    jd_text = text_input
-    if not jd_text and username:
-        try:
-            import psycopg2
-            pg_host=os.getenv("PGHOST","localhost"); pg_port=int(os.getenv("PGPORT","5432"))
-            pg_user=os.getenv("PGUSER","postgres"); pg_password=os.getenv("PGPASSWORD","") or "orlha"
-            pg_db=os.getenv("PGDATABASE","candidate_db")
-            conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
-            cur=conn.cursor()
-            cur.execute("SELECT jd FROM login WHERE username = %s", (username,))
-            row = cur.fetchone()
-            cur.close(); conn.close()
-            if row and row[0]: jd_text = row[0]
-        except Exception as e: return jsonify({"error": f"DB fetch error: {e}"}), 500
-    if not jd_text: return jsonify({"error": "No JD text provided or found for user"}), 400
-    try:
-        from chat_gemini_review import analyze_job_description
-        result = analyze_job_description(jd_text, sectors_data)
-        parsed = result.get("parsed", {})
-        skills = parsed.get("skills", [])
-        if username and skills: _persist_jskillset(username, skills)
-        response_obj = {
-            "seniority": parsed.get("seniority"),
-            "job_title": parsed.get("job_title"),
-            "sectors": parsed.get("sectors") or ([parsed.get("sector")] if parsed.get("sector") else []),
-            "country": parsed.get("country"),
-            "summary": result.get("summary"),
-            "skills": skills
-        }
-        return jsonify(response_obj), 200
-    except Exception as e:
-        logger.warning(f"[Gemini JD Analyze] {e}")
-        return jsonify({"error": str(e)}), 500
+# REMOVED: Duplicate /gemini/analyze_jd endpoint
+# This was overriding the main gemini_analyze_jd() function at line 677
+# which has comprehensive sector validation logic with product keyword matching.
+# The duplicate endpoint was calling chat_gemini_review.analyze_job_description()
+# which lacks the sector validation fixes for 2nd inference issues.
 
 @app.post("/user/update_skills")
 def user_update_skills():
