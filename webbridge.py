@@ -1026,7 +1026,11 @@ def gemini_analyze_jd():
         def derive_sector_from_skills_and_title(skills_list, job_title_text, jd_text, existing_sectors):
             """
             Derive a sector from the skillset, job title, and job description that is different from existing sectors.
-            Maps common skill, title, and JD text patterns to sectors.json labels.
+            Uses the same hierarchical validation logic as webbridgepro.py:
+              1. Try to match exact or long-form labels from sectors.json (longest match wins)
+              2. Try token overlap matching via _find_best_sector_match_for_text()
+              3. Try keyword mapping via _map_keyword_to_sector_label()
+              4. Return None if no match (do NOT return freeform labels)
             
             Args:
                 skills_list (list): List of skill strings extracted from JD
@@ -1044,64 +1048,49 @@ def gemini_analyze_jd():
                 job_title_text = "Cloud Engineer"
                 jd_text = "Tencent is seeking a Cloud Solutions Developer..."
                 existing_sectors = ["Media, Gaming & Entertainment > Gaming"]
-                Returns: ("Technology > Cloud & Infrastructure", "Derived from skillset, job title, and JD: cloud, aws, kubernetes")
+                Returns: ("Technology > Cloud & Infrastructure", "Matched sectors.json label via token overlap")
             """
             if not skills_list and not job_title_text and not jd_text:
                 return None, ""
             
-            # Combine skills, job title, and JD text for comprehensive analysis
-            skills_text = " ".join([str(s).lower() for s in skills_list if s])
-            title_text = (job_title_text or "").lower()
-            jd_lower = (jd_text or "").lower()
-            combined_text = f"{skills_text} {title_text} {jd_lower}"
-            
-            # Skill-to-sector mapping patterns (all map to sectors.json)
-            skill_patterns = [
-                # Cloud & Infrastructure - enhanced with virtualization keywords
-                (["cloud", "aws", "azure", "gcp", "kubernetes", "docker", "devops", "terraform", "infrastructure", 
-                  "kvm", "xen", "lxc", "virtualization", "vmware", "hypervisor"], 
-                 "Technology > Cloud & Infrastructure"),
-                # AI & Data
-                (["machine learning", "ml", "ai", "artificial intelligence", "data science", "python", "tensorflow", "pytorch", "nlp"],
-                 "Technology > AI & Data"),
-                # Cybersecurity
-                (["security", "cybersecurity", "penetration testing", "siem", "firewall", "encryption"],
-                 "Technology > Cybersecurity"),
-                # Software Development
-                (["java", "javascript", "react", "node", "sql", "api", "backend", "frontend", "full stack", "software", "engineer", "developer"],
-                 "Technology > Software"),
-                # Gaming
-                (["unity", "unreal", "game engine", "game development", "3d", "animation"],
-                 "Media, Gaming & Entertainment > Gaming"),
-                # Healthcare/Clinical
-                (["clinical", "medical", "patient", "healthcare", "hospital", "diagnosis"],
-                 "Healthcare > HealthTech"),
-                # Finance
-                (["trading", "financial analysis", "investment", "portfolio", "risk management", "bloomberg"],
-                 "Financial Services > Investment & Asset Management"),
-                # Manufacturing/Engineering
-                (["manufacturing", "plc", "scada", "automation", "robotics", "lean", "six sigma"],
-                 "Industrial & Manufacturing > Machinery"),
-            ]
-            
-            # Find matching sectors based on combined skills, job title, and JD text
-            for keywords, sector_label in skill_patterns:
-                matched_keywords = [kw for kw in keywords if kw in combined_text]
-                if matched_keywords:
-                    # Verify the sector exists in sectors.json and isn't already in existing sectors
-                    if sector_label in SECTORS_INDEX and sector_label not in existing_sectors:
-                        # Determine source of match for accurate attribution
-                        sources = []
-                        if title_text and any(kw in title_text for kw in matched_keywords):
-                            sources.append("job title")
-                        if skills_text and any(kw in skills_text for kw in matched_keywords):
-                            sources.append("skillset")
-                        if jd_lower and any(kw in jd_lower for kw in matched_keywords):
-                            sources.append("JD")
-                        source = ", ".join(sources) if sources else "context"
-                        return sector_label, f"Derived from {source}: {', '.join(matched_keywords[:3])}"
-            
-            return None, ""
+            try:
+                # Combine skills, job title, and JD text for comprehensive analysis
+                skills_text = " ".join([str(s).lower() for s in skills_list if s])
+                title_text = (job_title_text or "").lower()
+                jd_lower = (jd_text or "").lower()
+                combined_text = f"{skills_text} {title_text} {jd_lower}"
+                
+                # 1) Try sectors.json labels (longest-match strategy by substring)
+                best_match = ""
+                best_orig = ""
+                for label in SECTORS_INDEX:
+                    lbl_low = label.lower()
+                    if lbl_low and lbl_low in combined_text:
+                        # prefer the longest matched label (more specific)
+                        if len(lbl_low) > len(best_match):
+                            best_match = lbl_low
+                            best_orig = label
+                if best_orig and best_orig not in existing_sectors:
+                    return best_orig, "Matched sectors.json label"
+                
+                # 2) Try token overlap matching on combined text
+                mapped_from_combined = _find_best_sector_match_for_text(combined_text)
+                if mapped_from_combined and mapped_from_combined not in existing_sectors:
+                    return mapped_from_combined, "Matched sectors.json label via token overlap"
+                
+                # 3) Try keyword mapping on combined text, title, and skills separately
+                kw_map = _map_keyword_to_sector_label(combined_text)
+                if not kw_map and title_text:
+                    kw_map = _map_keyword_to_sector_label(title_text)
+                if not kw_map and skills_text:
+                    kw_map = _map_keyword_to_sector_label(skills_text)
+                if kw_map and kw_map not in existing_sectors:
+                    return kw_map, "Mapped via keyword to sectors.json label"
+                
+                # 4) Do NOT return freeform labels; instead return None to indicate no strict sectors.json match
+                return None, ""
+            except Exception:
+                return None, ""
         
         # Apply skillset-based sector derivation if we have skills, job title, or JD text, and at least one existing sector
         if (skills or job_title or text_input) and sectors:
