@@ -1248,7 +1248,7 @@ def gemini_analyze_jd():
             else:
                 # No job title provided at all - use sector-specific defaults
                 # These are placeholder titles when no better inference is possible
-                if sectors and len(sectors) > 0:
+                if sectors:
                     # Extract sector name for more specific title generation
                     sector_name = sectors[0].split(">")[-1].strip() if ">" in sectors[0] else sectors[0]
                     # Generate sector-appropriate titles (these are fallback placeholders)
