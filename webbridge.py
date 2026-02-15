@@ -677,7 +677,7 @@ def gemini_analyze_jd():
     3. If no companies found, infer sector from JD content
     4. Filter companies by legal entity in specified country
     5. Always identify at least one sector (using sectors.json)
-    6. Derive second sector from skillset (if applicable)
+    6. Derive second sector from skillset and job title (if applicable)
     7. Generate at least 2 job titles (original + suggested variant)
     
     Returns JSON:
@@ -685,7 +685,7 @@ def gemini_analyze_jd():
       "job_title": "...",  # Single title for backward compatibility
       "job_titles": [...],  # Array of at least 2 job titles (original + suggestions)
       "seniority": "...",
-      "sectors": [...],  # Always mapped to sectors.json, may include skillset-based sector
+      "sectors": [...],  # Always mapped to sectors.json, may include skillset+title-based sector
       "companies": [...],  # Filtered by country legal entity
       "country": "...",
       "summary": "...",
@@ -1022,13 +1022,14 @@ def gemini_analyze_jd():
         # When companies are identified (first sector), derive additional sector from skills
         # This ensures multi-sector coverage: company-based + skillset-based
         # -------------------------
-        def derive_sector_from_skills(skills_list, existing_sectors):
+        def derive_sector_from_skills_and_title(skills_list, job_title_text, existing_sectors):
             """
-            Derive a sector from the skillset that is different from existing sectors.
-            Maps common skill patterns to sectors.json labels.
+            Derive a sector from the skillset and job title that is different from existing sectors.
+            Maps common skill and job title patterns to sectors.json labels.
             
             Args:
                 skills_list (list): List of skill strings extracted from JD
+                job_title_text (str): Job title from JD
                 existing_sectors (list): List of already determined sector labels
             
             Returns:
@@ -1038,13 +1039,17 @@ def gemini_analyze_jd():
             
             Example: 
                 skills_list = ["AWS", "Cloud", "Kubernetes"]
+                job_title_text = "Cloud Engineer"
                 existing_sectors = ["Media, Gaming & Entertainment > Gaming"]
-                Returns: ("Technology > Cloud & Infrastructure", "Derived from skillset: aws, cloud, kubernetes")
+                Returns: ("Technology > Cloud & Infrastructure", "Derived from skillset and job title: cloud, aws, kubernetes")
             """
-            if not skills_list:
+            if not skills_list and not job_title_text:
                 return None, ""
             
+            # Combine skills and job title for analysis
             skills_text = " ".join([str(s).lower() for s in skills_list if s])
+            title_text = (job_title_text or "").lower()
+            combined_text = f"{skills_text} {title_text}"
             
             # Skill-to-sector mapping patterns (all map to sectors.json)
             skill_patterns = [
@@ -1058,7 +1063,7 @@ def gemini_analyze_jd():
                 (["security", "cybersecurity", "penetration testing", "siem", "firewall", "encryption"],
                  "Technology > Cybersecurity"),
                 # Software Development
-                (["java", "javascript", "react", "node", "sql", "api", "backend", "frontend", "full stack"],
+                (["java", "javascript", "react", "node", "sql", "api", "backend", "frontend", "full stack", "software", "engineer", "developer"],
                  "Technology > Software"),
                 # Gaming
                 (["unity", "unreal", "game engine", "game development", "3d", "animation"],
@@ -1074,23 +1079,24 @@ def gemini_analyze_jd():
                  "Industrial & Manufacturing > Machinery"),
             ]
             
-            # Find matching sectors based on skills
+            # Find matching sectors based on combined skills and job title
             for keywords, sector_label in skill_patterns:
-                matched_keywords = [kw for kw in keywords if kw in skills_text]
+                matched_keywords = [kw for kw in keywords if kw in combined_text]
                 if matched_keywords:
                     # Verify the sector exists in sectors.json and isn't already in existing sectors
                     if sector_label in SECTORS_INDEX and sector_label not in existing_sectors:
                         # Use actual matched keywords in note
-                        return sector_label, f"Derived from skillset: {', '.join(matched_keywords[:3])}"
+                        source = "skillset and job title" if title_text and any(kw in title_text for kw in matched_keywords) else "skillset"
+                        return sector_label, f"Derived from {source}: {', '.join(matched_keywords[:3])}"
             
             return None, ""
         
-        # Apply skillset-based sector derivation if we have skills and at least one existing sector
-        if skills and sectors:
-            skillset_sector, skillset_note = derive_sector_from_skills(skills, sectors)
+        # Apply skillset-based sector derivation if we have skills or job title, and at least one existing sector
+        if (skills or job_title) and sectors:
+            skillset_sector, skillset_note = derive_sector_from_skills_and_title(skills, job_title, sectors)
             if skillset_sector:
                 sectors.append(skillset_sector)
-                heuristic_notes.append(f"second sector from skillset: {skillset_note}")
+                heuristic_notes.append(f"second sector: {skillset_note}")
         
         # -------------------------
         # STEP 5: Ensure at least one sector is always identified
