@@ -2102,9 +2102,9 @@ async function generateAndStart(){
   
   // If any required fields are missing, show error and stop
   if (missingFields.length > 0) {
-    const errorMsg = 'Cannot proceed with search. Missing required fields: ' + missingFields.join(', ');
+    const errorMsg = `Cannot proceed with search. Missing required fields: ${missingFields.join(', ')}`;
     console.warn(errorMsg);
-    alert(errorMsg + '\n\nPlease fill in all required fields before starting the search.');
+    alert(`${errorMsg}\n\nPlease fill in all required fields before starting the search.`);
     return;
   }
   
@@ -2478,16 +2478,17 @@ function updateSectorEnabledState(){
               // NEW: Add both inferred job titles to the tag list/Job Title Group
               // Both original and suggested job titles from job_titles array
               if (analyzeData.job_titles && Array.isArray(analyzeData.job_titles) && analyzeData.job_titles.length > 0) {
-                let addedCount = 0;
+                let titlesAdded = false;
                 analyzeData.job_titles.forEach(function(jt) {
                   const trimmed = (jt || '').trim();
                   if (trimmed && !jobTitleIndex.has(canonicalKey(trimmed))) {
                     jobTitles.push(trimmed);
                     jobTitleIndex.add(canonicalKey(trimmed));
-                    addedCount++;
+                    titlesAdded = true;
                   }
                 });
-                if (addedCount > 0) {
+                // Update UI once after all titles processed
+                if (titlesAdded) {
                   renderJobTitleChips();
                   updateFullCompiledQuery();
                 }
