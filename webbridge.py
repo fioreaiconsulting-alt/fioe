@@ -1091,28 +1091,47 @@ def gemini_analyze_jd():
                     
                     domain = parts[-1].lower()  # Get the last part (domain)
                     job_title_lower = job_title.lower()
+                    # Also check the full JD text for more context
+                    text_to_check = f"{job_title_lower} {jd_lower}"
                     
-                    # Check if any product keyword in job title matches the domain (using word boundaries)
-                    product_keyword_found = False
+                    # First pass: Check if any product keyword exists in the text
+                    # and collect those that match vs those that don't
+                    matching_products = []
+                    non_matching_products = []
+                    
                     for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
                         # Use word boundary regex for exact word matching
                         pattern = r'\b' + re.escape(product_keyword) + r'\b'
-                        if re.search(pattern, job_title_lower):
-                            product_keyword_found = True
+                        if re.search(pattern, text_to_check):
                             # Check if the sector domain matches any valid domain for this product
+                            # Use word boundary matching to avoid false positives (e.g., "ad" in "advertising")
+                            matches_domain = False
                             for valid_domain in valid_domains:
-                                if valid_domain in domain:
-                                    return True
-                            # Product keyword found but doesn't match this domain - reject
-                            return False
+                                # Create pattern that matches valid_domain as whole words
+                                domain_pattern = r'\b' + re.escape(valid_domain) + r'\b'
+                                if re.search(domain_pattern, domain):
+                                    matches_domain = True
+                                    break
+                            
+                            if matches_domain:
+                                matching_products.append(product_keyword)
+                            else:
+                                non_matching_products.append(product_keyword)
+                    
+                    # If we found product keywords:
+                    # - If any match the domain, allow it (return True)
+                    # - If none match but some were found, reject it (return False) 
+                    if matching_products:
+                        return True
+                    if non_matching_products:
+                        return False
                     
                     # If no specific product keyword found, allow generic roles to match any sector
                     # (e.g., "Engineer" without specific product can match any tech sector)
-                    if not product_keyword_found:
-                        for role in GENERIC_ROLE_KEYWORDS:
-                            pattern = r'\b' + re.escape(role) + r'\b'
-                            if re.search(pattern, job_title_lower):
-                                return True
+                    for role in GENERIC_ROLE_KEYWORDS:
+                        pattern = r'\b' + re.escape(role) + r'\b'
+                        if re.search(pattern, job_title_lower):
+                            return True
                     
                     return False
                 
