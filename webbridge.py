@@ -13,6 +13,9 @@ import hashlib
 import difflib
 from flask import Flask, request, send_from_directory, jsonify, abort, Response, stream_with_context
 
+# Import sector and product mappings from separate configuration file
+from sector_mappings import PRODUCT_TO_DOMAIN_KEYWORDS, GENERIC_ROLE_KEYWORDS
+
 # Import DispatcherMiddleware to mount the second app
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
@@ -413,43 +416,6 @@ _KEYWORD_TO_SECTOR_LABEL = {
     "renewable": "Energy & Environment > Renewable Energy",
     "aerospace": "Industrial & Manufacturing > Aerospace & Defense"
 }
-
-# Product/domain keyword mapping for second sector validation
-# Maps product keywords to valid domain keywords they should match
-_PRODUCT_TO_DOMAIN_KEYWORDS = {
-    "mobile phone": ["consumer electronics", "electronics"],
-    "smartphone": ["consumer electronics", "electronics"],
-    "phone": ["consumer electronics", "electronics"],
-    "cloud": ["cloud", "infrastructure"],
-    "devops": ["cloud", "infrastructure"],
-    "kubernetes": ["cloud", "infrastructure"],
-    "aws": ["cloud", "infrastructure"],
-    "azure": ["cloud", "infrastructure"],
-    "gcp": ["cloud", "infrastructure"],
-    "ai": ["ai", "data", "artificial intelligence"],
-    "machine learning": ["ai", "data"],
-    "data science": ["ai", "data"],
-    "gaming": ["gaming", "entertainment"],
-    "game": ["gaming", "entertainment"],
-    "fintech": ["fintech", "financial"],
-    "bank": ["banking", "financial"],
-    "insurance": ["insurance", "financial"],
-    "e-commerce": ["e-commerce", "retail"],
-    "ecommerce": ["e-commerce", "retail"],
-    "retail": ["retail", "e-commerce"],
-    "healthcare": ["healthcare", "healthtech"],
-    "medical": ["healthcare", "medical"],
-    "pharmaceutical": ["pharmaceutical", "biotech"],
-    "software": ["software", "it services"],
-    "web": ["software", "it services"],
-    "hardware": ["hardware", "electronics"],
-    "cybersecurity": ["cybersecurity", "security"],
-    "security": ["cybersecurity", "security"],
-}
-
-# Generic role keywords that can match any sector when no specific product is found
-_GENERIC_ROLE_KEYWORDS = ["manager", "engineer", "developer", "analyst", "consultant", 
-                          "director", "lead", "specialist", "coordinator", "administrator"]
 
 def _map_keyword_to_sector_label(text):
     """
@@ -1123,7 +1089,7 @@ def gemini_analyze_jd():
                     
                     # Check if any product keyword in job title matches the domain (using word boundaries)
                     product_keyword_found = False
-                    for product_keyword, valid_domains in _PRODUCT_TO_DOMAIN_KEYWORDS.items():
+                    for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
                         # Use word boundary regex for exact word matching
                         pattern = r'\b' + re.escape(product_keyword) + r'\b'
                         if re.search(pattern, job_title_lower):
@@ -1138,7 +1104,7 @@ def gemini_analyze_jd():
                     # If no specific product keyword found, allow generic roles to match any sector
                     # (e.g., "Engineer" without specific product can match any tech sector)
                     if not product_keyword_found:
-                        for role in _GENERIC_ROLE_KEYWORDS:
+                        for role in GENERIC_ROLE_KEYWORDS:
                             pattern = r'\b' + re.escape(role) + r'\b'
                             if re.search(pattern, job_title_lower):
                                 return True
