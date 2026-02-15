@@ -199,7 +199,7 @@ BUCKET_COMPANIES = {
     },
     "technology": {
         "global": ["Microsoft", "Amazon Web Services", "Google Cloud", "Snowflake", "Databricks"],
-        "apac": ["Tencent Cloud", "Alibaba Cloud"]
+        "apac": ["Tencent", "Tencent Cloud", "Alibaba Cloud"]
     },
     "manufacturing": {
         "global": ["Siemens", "ABB", "Rockwell Automation", "Schneider Electric", "Bosch"],
@@ -211,7 +211,7 @@ BUCKET_COMPANIES = {
     },
     "gaming": {
         "global": ["Sony Interactive Entertainment", "Ubisoft", "Electronic Arts", "Nintendo", "Activision Blizzard"],
-        "apac": ["Tencent", "NetEase", "Bandai Namco"]
+        "apac": ["NetEase", "Bandai Namco"]
     },
     "web3": {
         "global": ["Coinbase", "Consensys", "Binance", "Circle"],
