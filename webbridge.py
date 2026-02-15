@@ -787,7 +787,7 @@ def gemini_analyze_jd():
         resp = model.generate_content(prompt)
         raw_out = (resp.text or "").strip()
         parsed_obj = _extract_json_object(raw_out) or {}
-        parsed = parsed_obj.get("parsed") or parsed_obj.get("parsed", {}) or {}
+        parsed = parsed_obj.get("parsed", {}) or {}
         
         # Normalize output
         job_title = (parsed.get("job_title") or parsed.get("role") or "").strip()
@@ -3250,7 +3250,8 @@ def _bucket_to_sector_label(bucket_name: str):
     if label:
         label_lower = label.lower()
         for idx_label in SECTORS_INDEX:
-            if label_lower in idx_label.lower() or idx_label.lower() in label_lower:
+            idx_label_lower = idx_label.lower()
+            if label_lower in idx_label_lower or idx_label_lower in label_lower:
                 return idx_label
     
     return None

@@ -2340,11 +2340,11 @@ function updateSectorEnabledState(){
           try { chatData = chatResp.ok ? await chatResp.json() : null; } catch(_) { chatData = null; }
 
           // Now call the analyzer endpoint (webbridge will host /gemini/analyze_jd)
-          const currentCountry = val('country') || '';
+          const jobCountry = val('country') || '';
           const analyzePayload = { 
             username: username, 
             sectors: sectorsData,
-            country: currentCountry
+            country: jobCountry
           };
           
           // Show loading animation during JD analysis
