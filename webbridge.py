@@ -17,6 +17,7 @@ from flask import Flask, request, send_from_directory, jsonify, abort, Response,
 from sector_mappings import (
     PRODUCT_TO_DOMAIN_KEYWORDS, 
     GENERIC_ROLE_KEYWORDS,
+    GENERIC_PRODUCT_KEYWORDS,
     BUCKET_COMPANIES,
     BUCKET_JOB_TITLES
 )
@@ -1096,8 +1097,11 @@ def gemini_analyze_jd():
                     
                     # First pass: Check if any product keyword exists in the text
                     # and collect those that match vs those that don't
-                    matching_products = []
-                    non_matching_products = []
+                    # Also separate specific keywords from generic ones
+                    specific_matching = []
+                    specific_non_matching = []
+                    generic_matching = []
+                    generic_non_matching = []
                     
                     for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
                         # Use word boundary regex for exact word matching
@@ -1113,17 +1117,38 @@ def gemini_analyze_jd():
                                     matches_domain = True
                                     break
                             
+                            # Separate generic keywords from specific ones
+                            is_generic = product_keyword in GENERIC_PRODUCT_KEYWORDS
+                            
                             if matches_domain:
-                                matching_products.append(product_keyword)
+                                if is_generic:
+                                    generic_matching.append(product_keyword)
+                                else:
+                                    specific_matching.append(product_keyword)
                             else:
-                                non_matching_products.append(product_keyword)
+                                if is_generic:
+                                    generic_non_matching.append(product_keyword)
+                                else:
+                                    specific_non_matching.append(product_keyword)
                     
-                    # If we found product keywords:
-                    # - If any match the domain, allow it (return True)
-                    # - If none match but some were found, reject it (return False) 
-                    if matching_products:
+                    # Decision logic with prioritization:
+                    # 1. If specific keywords found, they take precedence over generic ones
+                    # 2. Only use generic keywords if no specific keywords are found
+                    
+                    # If we have specific non-matching products, reject immediately
+                    # (e.g., "hvac" doesn't match "Advertising & Marketing")
+                    if specific_non_matching:
+                        return False
+                    
+                    # If we have specific matching products, accept immediately
+                    # (e.g., "cloud" matches "Cloud & Infrastructure")
+                    if specific_matching:
                         return True
-                    if non_matching_products:
+                    
+                    # No specific keywords found, check generic keywords
+                    if generic_matching:
+                        return True
+                    if generic_non_matching:
                         return False
                     
                     # If no specific product keyword found, allow generic roles to match any sector

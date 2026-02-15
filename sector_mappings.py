@@ -137,6 +137,23 @@ PRODUCT_TO_DOMAIN_KEYWORDS = {
     "localization": ["gaming localization", "gaming"]
 }
 
+# Generic product keywords that can apply to many sectors (lower priority in validation)
+# These keywords are ambiguous and can have different meanings in different contexts
+GENERIC_PRODUCT_KEYWORDS = [
+    "marketing",
+    "advertising", 
+    "sales",
+    "business",
+    "management",
+    "operations",
+    "strategy",
+    "consulting",
+    "services",
+    "gcp",  # Can mean "Google Cloud Platform" or "Good Clinical Practice"
+    "compliance",  # Can be financial, legal, or clinical compliance
+    "security",  # Can be cybersecurity or defense & security
+]
+
 # Generic role keywords that can match any sector when no specific product is found
 GENERIC_ROLE_KEYWORDS = [
     "manager", 
