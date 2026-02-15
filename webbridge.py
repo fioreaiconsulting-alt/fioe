@@ -13,6 +13,14 @@ import hashlib
 import difflib
 from flask import Flask, request, send_from_directory, jsonify, abort, Response, stream_with_context
 
+# Import sector and product mappings from separate configuration file
+from sector_mappings import (
+    PRODUCT_TO_DOMAIN_KEYWORDS, 
+    GENERIC_ROLE_KEYWORDS,
+    BUCKET_COMPANIES,
+    BUCKET_JOB_TITLES
+)
+
 # Import DispatcherMiddleware to mount the second app
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
@@ -1026,7 +1034,12 @@ def gemini_analyze_jd():
         def derive_sector_from_skills_and_title(skills_list, job_title_text, jd_text, existing_sectors):
             """
             Derive a sector from the skillset, job title, and job description that is different from existing sectors.
-            Maps common skill, title, and JD text patterns to sectors.json labels.
+            Uses the same hierarchical validation logic as webbridgepro.py with additional product/domain validation:
+              1. Try to match exact or long-form labels from sectors.json (longest match wins)
+              2. Try token overlap matching via _find_best_sector_match_for_text()
+              3. Try keyword mapping via _map_keyword_to_sector_label()
+              4. Validate that the product/domain mentioned in job title exists in the derived sector
+              5. Return None if no match (do NOT return freeform labels)
             
             Args:
                 skills_list (list): List of skill strings extracted from JD
@@ -1044,64 +1057,99 @@ def gemini_analyze_jd():
                 job_title_text = "Cloud Engineer"
                 jd_text = "Tencent is seeking a Cloud Solutions Developer..."
                 existing_sectors = ["Media, Gaming & Entertainment > Gaming"]
-                Returns: ("Technology > Cloud & Infrastructure", "Derived from skillset, job title, and JD: cloud, aws, kubernetes")
+                Returns: ("Technology > Cloud & Infrastructure", "Matched sectors.json label via token overlap")
             """
             if not skills_list and not job_title_text and not jd_text:
                 return None, ""
             
-            # Combine skills, job title, and JD text for comprehensive analysis
-            skills_text = " ".join([str(s).lower() for s in skills_list if s])
-            title_text = (job_title_text or "").lower()
-            jd_lower = (jd_text or "").lower()
-            combined_text = f"{skills_text} {title_text} {jd_lower}"
-            
-            # Skill-to-sector mapping patterns (all map to sectors.json)
-            skill_patterns = [
-                # Cloud & Infrastructure - enhanced with virtualization keywords
-                (["cloud", "aws", "azure", "gcp", "kubernetes", "docker", "devops", "terraform", "infrastructure", 
-                  "kvm", "xen", "lxc", "virtualization", "vmware", "hypervisor"], 
-                 "Technology > Cloud & Infrastructure"),
-                # AI & Data
-                (["machine learning", "ml", "ai", "artificial intelligence", "data science", "python", "tensorflow", "pytorch", "nlp"],
-                 "Technology > AI & Data"),
-                # Cybersecurity
-                (["security", "cybersecurity", "penetration testing", "siem", "firewall", "encryption"],
-                 "Technology > Cybersecurity"),
-                # Software Development
-                (["java", "javascript", "react", "node", "sql", "api", "backend", "frontend", "full stack", "software", "engineer", "developer"],
-                 "Technology > Software"),
-                # Gaming
-                (["unity", "unreal", "game engine", "game development", "3d", "animation"],
-                 "Media, Gaming & Entertainment > Gaming"),
-                # Healthcare/Clinical
-                (["clinical", "medical", "patient", "healthcare", "hospital", "diagnosis"],
-                 "Healthcare > HealthTech"),
-                # Finance
-                (["trading", "financial analysis", "investment", "portfolio", "risk management", "bloomberg"],
-                 "Financial Services > Investment & Asset Management"),
-                # Manufacturing/Engineering
-                (["manufacturing", "plc", "scada", "automation", "robotics", "lean", "six sigma"],
-                 "Industrial & Manufacturing > Machinery"),
-            ]
-            
-            # Find matching sectors based on combined skills, job title, and JD text
-            for keywords, sector_label in skill_patterns:
-                matched_keywords = [kw for kw in keywords if kw in combined_text]
-                if matched_keywords:
-                    # Verify the sector exists in sectors.json and isn't already in existing sectors
-                    if sector_label in SECTORS_INDEX and sector_label not in existing_sectors:
-                        # Determine source of match for accurate attribution
-                        sources = []
-                        if title_text and any(kw in title_text for kw in matched_keywords):
-                            sources.append("job title")
-                        if skills_text and any(kw in skills_text for kw in matched_keywords):
-                            sources.append("skillset")
-                        if jd_lower and any(kw in jd_lower for kw in matched_keywords):
-                            sources.append("JD")
-                        source = ", ".join(sources) if sources else "context"
-                        return sector_label, f"Derived from {source}: {', '.join(matched_keywords[:3])}"
-            
-            return None, ""
+            try:
+                # Combine skills, job title, and JD text for comprehensive analysis
+                skills_text = " ".join([str(s).lower() for s in skills_list if s])
+                title_text = (job_title_text or "").lower()
+                jd_lower = (jd_text or "").lower()
+                combined_text = f"{skills_text} {title_text} {jd_lower}"
+                
+                # Helper function to validate product/domain in sector label
+                def validate_product_in_sector(sector_label, job_title):
+                    """
+                    Validate that the product/domain mentioned in job title exists within the sector.
+                    This is an exception rule when company name doesn't exist or cannot be mapped.
+                    
+                    Examples:
+                    - "Product Manager, Mobile Phone" + "Consumer & Retail > Consumer Electronics" 
+                      → "mobile phone" matches "consumer electronics" ✓
+                    - "Cloud Engineer" + "Technology > Cloud & Infrastructure"
+                      → "cloud" matches "cloud & infrastructure" ✓
+                    """
+                    if not sector_label or not job_title:
+                        return True  # No validation needed if inputs missing
+                    
+                    # Extract domain part from sector label (e.g., "Cloud & Infrastructure" from "Technology > Cloud & Infrastructure")
+                    parts = sector_label.split(" > ")
+                    if len(parts) < 2:
+                        return True  # No domain to validate against
+                    
+                    domain = parts[-1].lower()  # Get the last part (domain)
+                    job_title_lower = job_title.lower()
+                    
+                    # Check if any product keyword in job title matches the domain (using word boundaries)
+                    product_keyword_found = False
+                    for product_keyword, valid_domains in PRODUCT_TO_DOMAIN_KEYWORDS.items():
+                        # Use word boundary regex for exact word matching
+                        pattern = r'\b' + re.escape(product_keyword) + r'\b'
+                        if re.search(pattern, job_title_lower):
+                            product_keyword_found = True
+                            # Check if the sector domain matches any valid domain for this product
+                            for valid_domain in valid_domains:
+                                if valid_domain in domain:
+                                    return True
+                            # Product keyword found but doesn't match this domain - reject
+                            return False
+                    
+                    # If no specific product keyword found, allow generic roles to match any sector
+                    # (e.g., "Engineer" without specific product can match any tech sector)
+                    if not product_keyword_found:
+                        for role in GENERIC_ROLE_KEYWORDS:
+                            pattern = r'\b' + re.escape(role) + r'\b'
+                            if re.search(pattern, job_title_lower):
+                                return True
+                    
+                    return False
+                
+                # 1) Try sectors.json labels (longest-match strategy by substring)
+                best_match = ""
+                best_orig = ""
+                for label in SECTORS_INDEX:
+                    lbl_low = label.lower()
+                    if lbl_low and lbl_low in combined_text:
+                        # prefer the longest matched label (more specific)
+                        if len(lbl_low) > len(best_match):
+                            best_match = lbl_low
+                            best_orig = label
+                if best_orig and best_orig not in existing_sectors:
+                    if validate_product_in_sector(best_orig, job_title_text):
+                        return best_orig, "Matched sectors.json label with product validation"
+                
+                # 2) Try token overlap matching on combined text
+                mapped_from_combined = _find_best_sector_match_for_text(combined_text)
+                if mapped_from_combined and mapped_from_combined not in existing_sectors:
+                    if validate_product_in_sector(mapped_from_combined, job_title_text):
+                        return mapped_from_combined, "Matched sectors.json label via token overlap with product validation"
+                
+                # 3) Try keyword mapping on combined text, title, and skills separately
+                kw_map = _map_keyword_to_sector_label(combined_text)
+                if not kw_map and title_text:
+                    kw_map = _map_keyword_to_sector_label(title_text)
+                if not kw_map and skills_text:
+                    kw_map = _map_keyword_to_sector_label(skills_text)
+                if kw_map and kw_map not in existing_sectors:
+                    if validate_product_in_sector(kw_map, job_title_text):
+                        return kw_map, "Mapped via keyword to sectors.json label with product validation"
+                
+                # 4) Do NOT return freeform labels; instead return None to indicate no strict sectors.json match
+                return None, ""
+            except Exception:
+                return None, ""
         
         # Apply skillset-based sector derivation if we have skills, job title, or JD text, and at least one existing sector
         if (skills or job_title or text_input) and sectors:
@@ -3330,50 +3378,6 @@ def _prioritize_cross_sector(sets):
         for c in s:
             if c in single and c not in seen: ordered.append(c); seen.add(c)
     return ordered
-
-# BUCKET_COMPANIES extended with financial_services bucket and other existing buckets
-BUCKET_COMPANIES = {
-    "pharma_biotech":{"global":["Pfizer","Roche","Novartis","Johnson & Johnson","Merck","GSK","Sanofi","AstraZeneca","Bayer"],"apac":["Takeda","CSL","Sino Biopharm","Sun Pharma","Daiichi Sankyo"]},
-    "medical_devices":{"global":["Johnson & Johnson","Medtronic","Abbott","Baxter","Stryker","BD","Philips Healthcare","Siemens Healthineers"],"apac":["Terumo","Nipro","Wuxi AppTec (Devices)"]},
-    "diagnostics":{"global":["Roche Diagnostics","Siemens Healthineers","Abbott Diagnostics","BD","Qiagen","Bio-Rad"],"apac":["Sysmex","Mindray"]},
-    "clinical_research":{"global":["IQVIA","Labcorp","ICON","Parexel","PPD","Syneos Health"],"apac":["Novotech","Tigermed"]},
-    "healthtech":{"global":["Philips","Siemens Healthineers","GE HealthCare","Cerner (Oracle Health)","Epic Systems"],"apac":["HealthHub","IHiS","Ramsay Sime Darby Health Care"]},
-    "technology":{"global":["Microsoft","Amazon Web Services","Google Cloud","Snowflake","Databricks"],"apac":["Tencent Cloud","Alibaba Cloud"]},
-    "manufacturing":{"global":["Siemens","ABB","Rockwell Automation","Schneider Electric","Bosch"],"apac":["Mitsubishi Electric","FANUC","Yaskawa"]},
-    "energy":{"global":["Shell","BP","TotalEnergies","Schneider Electric","Siemens Energy"],"apac":["PETRONAS","Sembcorp","Keppel"]},
-    "gaming":{"global":["Sony Interactive Entertainment","Ubisoft","Electronic Arts","Nintendo","Activision Blizzard"],"apac":["Tencent","NetEase","Bandai Namco"]},
-    "web3":{"global":["Coinbase","Consensys","Binance","Circle"],"apac":["OKX","Bybit"]},
-    # New: Financial Services bucket to align with sectors.json "Financial Services > ..."
-    "financial_services":{
-        "global": [
-            "J.P. Morgan", "Goldman Sachs", "Morgan Stanley", "BlackRock", "UBS", "Credit Suisse", "HSBC", "Citi", "BNP Paribas", "Deutsche Bank",
-            "Standard Chartered", "State Street", "Northern Trust", "Schroders", "Fidelity"
-        ],
-        "apac": [
-            "Samsung Life Insurance", "Hana Financial Investment", "Mirae Asset", "KB Asset Management", "NH Investment & Securities",
-            "Korea Investment & Securities", "Shinhan Investment Corp", "Samsung Securities","Samsung Fire & Marine Insurance","Hyundai Marine & Fire Insurance",
-            "DB Insurance","Meritz Fire & Marine Insurance","Tong Yang Securities","Woori Investment Bank","Daishin Securities","Hana Securities",
-            "Kiwoom Securities","KTB Investment & Securities","Eugene Investment & Securities","Korea Life Insurance","LSM Investment",
-            "Shinhan BNP Paribas Asset Management","Samsung SDS","LG CNS","SK C&C","POSCO ICT","Hyundai Information Technology","Hanmi Financial",
-            "Nonghyup Bank","Lotte Card"
-        ]
-    }
-}
-
-BUCKET_JOB_TITLES = {
-    "pharma_biotech":["Regulatory Affairs Manager","Clinical Research Associate","Pharmacovigilance Specialist","Medical Affairs Manager","Quality Assurance Specialist","CMC Scientist","Biostatistician","Clinical Project Manager"],
-    "medical_devices":["Regulatory Affairs Manager","Quality Engineer","Clinical Affairs Specialist","Design Control Engineer","Risk Management Engineer","Product Manager (Medical Device)","Manufacturing Engineer"],
-    "diagnostics":["IVD Regulatory Specialist","Quality Systems Engineer","Clinical Application Specialist","Assay Development Scientist","Validation Engineer"],
-    "clinical_research":["CRA","Senior CRA","Clinical Project Manager","Clinical Trial Manager","Study Start-Up Specialist"],
-    "healthtech":["Product Manager","Clinical Informatics Lead","Healthcare Data Scientist","Interoperability Engineer","Implementation Consultant"],
-    "technology":["Software Engineer","ML Engineer","Data Scientist","Solutions Architect","Security Engineer","MLOps Engineer"],
-    "manufacturing":["Manufacturing Engineer","Quality Engineer","Process Engineer","Supply Chain Analyst","Automation Engineer"],
-    "energy":["Energy Analyst","Grid Integration Engineer","Sustainability Manager","HSE Engineer"],
-    "gaming":["Game Producer","Gameplay Engineer","Level Designer","Technical Artist"],
-    "web3":["Blockchain Engineer","Smart Contract Developer","Web3 Product Manager"],
-    "other":["Project Manager","Operations Manager","Business Analyst","Data Analyst"],
-    "financial_services":["Investment Analyst","Product Manager (Wealth/Investment)","Portfolio Manager","Risk Analyst","Payments Product Manager","Fintech Product Manager","Relationship Manager","Asset Manager"]
-}
 
 def _heuristic_multi_sector(selected, user_job_title, user_company, languages=None):
     languages = languages or []
