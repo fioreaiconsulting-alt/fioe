@@ -637,7 +637,9 @@ def _extract_json_object(text: str):
 def _extract_confirmed_skills(profile_context: str, target_skills: list) -> list:
     """
     Extractive pass: find target skills that are explicitly mentioned in
-    profile_context using word-boundary regex (case-insensitive).
+    profile_context using lookahead/lookbehind boundary checks (case-insensitive).
+    Uses (?<!\\w)...(?!\\w) instead of \\b so skills containing non-word chars
+    (C#, C++, .NET, AWS, etc.) are matched correctly.
     Returns list of confirmed skill names (preserving original casing).
     """
     if not profile_context or not target_skills:
@@ -647,7 +649,9 @@ def _extract_confirmed_skills(profile_context: str, target_skills: list) -> list
     for skill in target_skills:
         if not skill or not isinstance(skill, str):
             continue
-        pattern = r'\b' + re.escape(skill.lower()) + r'\b'
+        # (?<!\w) and (?!\w) handle skills ending/starting with non-word chars
+        # (e.g. C#, C++, .NET) where \b word-boundary would fail
+        pattern = r'(?<!\w)' + re.escape(skill.strip().lower()) + r'(?!\w)'
         if re.search(pattern, exp_lower):
             confirmed.append(skill)
     return confirmed
@@ -2312,84 +2316,86 @@ def gemini_assess_profile():
             
             conn = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
             cur = conn.cursor()
-            
-            # Normalize linkedin URL
-            normalized = linkedinurl.lower().strip().rstrip('/')
-            if not normalized.startswith('http'):
-                normalized = 'https://' + normalized
-            
-            # Fetch experience and existing skillset from process table
-            experience_text = ""
-            existing_skillset = []
-            
-            cur.execute("""
-                SELECT experience, skillset 
-                FROM process 
-                WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
-                LIMIT 1
-            """, (normalized,))
-            row = cur.fetchone()
-            
-            if row:
-                experience_text = (row[0] or "").strip()
-                # Parse existing skillset
-                if row[1]:
-                    skillset_val = row[1]
-                    if isinstance(skillset_val, str):
-                        try:
-                            # Try JSON parse first
-                            existing_skillset = json.loads(skillset_val)
-                            if not isinstance(existing_skillset, list):
-                                existing_skillset = []
-                        except (json.JSONDecodeError, ValueError):
-                            # Fallback to comma-separated
-                            existing_skillset = [s.strip() for s in skillset_val.split(',') if s.strip()]
-                    elif isinstance(skillset_val, list):
-                        existing_skillset = skillset_val
-            
-            # Use experience as profile context
-            profile_context = experience_text
-            
-            if not profile_context:
-                logger.info(f"[Gemini Assess -> vskillset] Skipped: No experience data for linkedin='{linkedinurl}'")
-            elif assessment_level == "L2" and not (genai and GEMINI_API_KEY):
-                logger.warning(f"[Gemini Assess -> vskillset] Skipped: Gemini not configured (required for L2)")
-            else:
-                # STEP 1: Extractive pass - find skills explicitly in experience text
-                explicitly_confirmed = _extract_confirmed_skills(profile_context, target_skills)
-                confirmed_set = set(s.lower() for s in explicitly_confirmed)
-                confirmed_results = [
-                    {
-                        "skill": skill,
-                        "probability": 95,
-                        "category": "High",
-                        "reason": "Explicitly present in CV/JD (extractive)",
-                        "source": "confirmed"
-                    }
-                    for skill in explicitly_confirmed
-                ]
-                logger.info(f"[Gemini Assess -> vskillset] Extractive pass: {len(confirmed_results)}/{len(target_skills)} skills confirmed from text")
-
-                # STEP 2: Handle unconfirmed skills based on assessment level
-                unconfirmed_skills = [s for s in target_skills if s.lower() not in confirmed_set]
-                inferred_results = []
-
-                if assessment_level == "L1":
-                    # L1: extractive-only — no Gemini call; mark non-present skills as Low
-                    for skill in unconfirmed_skills:
-                        inferred_results.append({
+            try:
+                # Normalize linkedin URL (full for matching; path for normalized_linkedin column)
+                normalized = linkedinurl.lower().strip().rstrip('/')
+                if not normalized.startswith('http'):
+                    normalized = 'https://' + normalized
+                normalized_path = _normalize_linkedin_to_path(linkedinurl)
+                
+                # Fetch experience and existing skillset from process table
+                experience_text = ""
+                existing_skillset = []
+                
+                cur.execute("""
+                    SELECT experience, skillset 
+                    FROM process 
+                    WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                       OR normalized_linkedin = %s
+                    LIMIT 1
+                """, (normalized, normalized_path))
+                row = cur.fetchone()
+                
+                if row:
+                    experience_text = (row[0] or "").strip()
+                    # Parse existing skillset
+                    if row[1]:
+                        skillset_val = row[1]
+                        if isinstance(skillset_val, str):
+                            try:
+                                # Try JSON parse first
+                                existing_skillset = json.loads(skillset_val)
+                                if not isinstance(existing_skillset, list):
+                                    existing_skillset = []
+                            except (json.JSONDecodeError, ValueError):
+                                # Fallback to comma-separated
+                                existing_skillset = [s.strip() for s in skillset_val.split(',') if s.strip()]
+                        elif isinstance(skillset_val, list):
+                            existing_skillset = skillset_val
+                
+                # Use experience as profile context
+                profile_context = experience_text
+                
+                if not profile_context:
+                    logger.info(f"[Gemini Assess -> vskillset] Skipped: No experience data for linkedin='{linkedinurl}'")
+                elif assessment_level == "L2" and not (genai and GEMINI_API_KEY):
+                    logger.warning(f"[Gemini Assess -> vskillset] Skipped: Gemini not configured (required for L2)")
+                else:
+                    # STEP 1: Extractive pass - find skills explicitly in experience text
+                    explicitly_confirmed = _extract_confirmed_skills(profile_context, target_skills)
+                    confirmed_set = set(s.lower() for s in explicitly_confirmed)
+                    confirmed_results = [
+                        {
                             "skill": skill,
-                            "probability": 20,
-                            "category": "Low",
-                            "reason": "Not present in CV (extractive mode)",
-                            "source": "inferred"
-                        })
-                    logger.info(f"[Gemini Assess -> vskillset] L1 mode: {len(unconfirmed_skills)} non-present skills marked Low (no inference)")
-                elif unconfirmed_skills and (genai and GEMINI_API_KEY):
-                    # L2: call Gemini only for unconfirmed/missing skills
-                    model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+                            "probability": 95,
+                            "category": "High",
+                            "reason": "Explicitly present in CV/JD (extractive)",
+                            "source": "confirmed"
+                        }
+                        for skill in explicitly_confirmed
+                    ]
+                    logger.info(f"[Gemini Assess -> vskillset] Extractive pass: {len(confirmed_results)}/{len(target_skills)} skills confirmed from text")
 
-                    prompt = f"""SYSTEM:
+                    # STEP 2: Handle unconfirmed skills based on assessment level
+                    unconfirmed_skills = [s for s in target_skills if s.lower() not in confirmed_set]
+                    inferred_results = []
+
+                    if assessment_level == "L1":
+                        # L1: extractive-only — no Gemini call; mark non-present skills as Low
+                        for skill in unconfirmed_skills:
+                            inferred_results.append({
+                                "skill": skill,
+                                "probability": 20,
+                                "category": "Low",
+                                "reason": "Not present in CV (extractive mode)",
+                                "source": "inferred"
+                            })
+                        logger.info(f"[Gemini Assess -> vskillset] L1 mode: {len(unconfirmed_skills)} non-present skills marked Low (no inference)")
+                    elif unconfirmed_skills and (genai and GEMINI_API_KEY):
+                        # L2: call Gemini only for unconfirmed/missing skills
+                        model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+
+                        prompt = f"""SYSTEM:
 You are an expert recruiter. Given the candidate's experience below, evaluate each skill in the JSON array and return JSON:
 {{ "evaluations": [ {{ "skill":"...", "probability":0-100, "category":"Low|Medium|High", "reason":"..." }} ] }}
 
@@ -2401,92 +2407,94 @@ SKILLS_TO_EVALUATE (not found explicitly in experience text):
 
 Return ONLY the JSON object."""
 
-                    try:
-                        resp = model.generate_content(prompt)
-                        parsed = _extract_json_object(resp.text or "")
-                        if isinstance(parsed, dict) and isinstance(parsed.get("evaluations"), list):
-                            inferred_results = parsed["evaluations"]
-                        else:
-                            # Fallback: treat unconfirmed skills as Medium
-                            inferred_results = [{"skill": s, "probability": 50, "category": "Medium", "reason": "Inference fallback"} for s in unconfirmed_skills]
-                    except Exception as e_infer:
-                        # Conservative fallback on error
-                        logger.warning(f"[Gemini Assess -> vskillset] L2 inference failed: {e_infer}")
-                        inferred_results = [{"skill": s, "probability": 50, "category": "Medium", "reason": "Inference failed - fallback"} for s in unconfirmed_skills]
-
-                    # Ensure all required fields are present and annotate source
-                    for item in inferred_results:
-                        if "probability" not in item:
-                            item["probability"] = 50
-                        if "category" not in item:
-                            prob = item.get("probability", 50)
-                            if prob >= 75:
-                                item["category"] = "High"
-                            elif prob >= 40:
-                                item["category"] = "Medium"
+                        try:
+                            resp = model.generate_content(prompt)
+                            parsed = _extract_json_object(resp.text or "")
+                            if isinstance(parsed, dict) and isinstance(parsed.get("evaluations"), list):
+                                inferred_results = parsed["evaluations"]
                             else:
-                                item["category"] = "Low"
-                        if "reason" not in item:
-                            item["reason"] = "No reasoning provided"
-                        item["source"] = "inferred"
+                                # Fallback: treat unconfirmed skills as Medium
+                                inferred_results = [{"skill": s, "probability": 50, "category": "Medium", "reason": "Inference fallback"} for s in unconfirmed_skills]
+                        except Exception as e_infer:
+                            # Conservative fallback on error
+                            logger.warning(f"[Gemini Assess -> vskillset] L2 inference failed: {e_infer}")
+                            inferred_results = [{"skill": s, "probability": 50, "category": "Medium", "reason": "Inference failed - fallback"} for s in unconfirmed_skills]
 
-                # STEP 3: Merge confirmed + inferred results
-                results = confirmed_results + inferred_results
-                logger.info(f"[Gemini Assess -> vskillset] Merged: {len(confirmed_results)} confirmed + {len(inferred_results)} inferred = {len(results)} total")
+                        # Ensure all required fields are present and annotate source
+                        for item in inferred_results:
+                            if "probability" not in item:
+                                item["probability"] = 50
+                            if "category" not in item:
+                                prob = item.get("probability", 50)
+                                if prob >= 75:
+                                    item["category"] = "High"
+                                elif prob >= 40:
+                                    item["category"] = "Medium"
+                                else:
+                                    item["category"] = "Low"
+                            if "reason" not in item:
+                                item["reason"] = "No reasoning provided"
+                            item["source"] = "inferred"
 
-                # Persist vskillset to database
-                vskillset_json = json.dumps(results, ensure_ascii=False)
-                
-                # Get High-confidence skills for skillset column (confirmed always High; inferred High ≥75%)
-                high_skills = [item["skill"] for item in results if item["category"] == "High"]
-                
-                # MERGE with existing skillset (not replace)
-                # Preserve order: keep existing skills first, then add new ones (avoiding duplicates)
-                existing_set = set(existing_skillset)
-                merged_skillset = existing_skillset + [skill for skill in high_skills if skill not in existing_set]
-                # Ensure all skills are strings before joining
-                skillset_str = ", ".join([str(s) for s in merged_skillset if s])
-                
-                # Check if vskillset column exists
-                cur.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='process' 
-                      AND column_name IN ('vskillset', 'skillset')
-                """)
-                available_cols = {r[0] for r in cur.fetchall()}
-                
-                # Update process table
-                updates = []
-                if 'vskillset' in available_cols:
-                    updates.append("vskillset = %s")
-                if 'skillset' in available_cols:
-                    updates.append("skillset = %s")
-                
-                if updates:
-                    update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s"
+                    # STEP 3: Merge confirmed + inferred results
+                    results = confirmed_results + inferred_results
+                    logger.info(f"[Gemini Assess -> vskillset] Merged: {len(confirmed_results)} confirmed + {len(inferred_results)} inferred = {len(results)} total")
+
+                    # Persist vskillset to database
+                    vskillset_json = json.dumps(results, ensure_ascii=False)
                     
-                    update_values = []
+                    # Get High-confidence skills for skillset column (confirmed always High; inferred High ≥75%)
+                    high_skills = [item["skill"] for item in results if item["category"] == "High"]
+                    
+                    # MERGE with existing skillset (not replace)
+                    # Preserve order: keep existing skills first, then add new ones (avoiding duplicates)
+                    existing_set = set(existing_skillset)
+                    merged_skillset = existing_skillset + [skill for skill in high_skills if skill not in existing_set]
+                    # Ensure all skills are strings before joining
+                    skillset_str = ", ".join([str(s) for s in merged_skillset if s])
+                    
+                    # Check if vskillset column exists
+                    cur.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns
+                        WHERE table_schema='public' AND table_name='process' 
+                          AND column_name IN ('vskillset', 'skillset')
+                    """)
+                    available_cols = {r[0] for r in cur.fetchall()}
+                    
+                    # Update process table
+                    updates = []
                     if 'vskillset' in available_cols:
-                        update_values.append(vskillset_json)
+                        updates.append("vskillset = %s")
                     if 'skillset' in available_cols:
-                        update_values.append(skillset_str)
-                    update_values.append(normalized)
+                        updates.append("skillset = %s")
                     
-                    cur.execute(update_sql, tuple(update_values))
-                    conn.commit()
-                    
-                    logger.info(f"[Gemini Assess -> vskillset] Populated vskillset and merged {len(high_skills)} High skills into skillset for linkedin='{linkedinurl}'")
-                    logger.info(f"[Gemini Assess -> vskillset] Merged skillset has {len(merged_skillset)} total skills: {merged_skillset[:10]}")  # Log first 10 skills
-                    
-                    # Update candidate_skills so assessment uses the merged skillset
-                    candidate_skills = merged_skillset
-                    
-                    # Store vskillset results for later inclusion in response
-                    vskillset_results = results
-            
-            cur.close()
-            conn.close()
+                    if updates:
+                        update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s"
+                        
+                        update_values = []
+                        if 'vskillset' in available_cols:
+                            update_values.append(vskillset_json)
+                        if 'skillset' in available_cols:
+                            update_values.append(skillset_str)
+                        update_values.extend([normalized, normalized_path])
+                        
+                        cur.execute(update_sql, tuple(update_values))
+                        conn.commit()
+                        
+                        logger.info(f"[Gemini Assess -> vskillset] Populated vskillset and merged {len(high_skills)} High skills into skillset for linkedin='{linkedinurl}'")
+                        logger.info(f"[Gemini Assess -> vskillset] Merged skillset has {len(merged_skillset)} total skills: {merged_skillset[:10]}")  # Log first 10 skills
+                        
+                        # Update candidate_skills so assessment uses the merged skillset
+                        candidate_skills = merged_skillset
+                        
+                        # Store vskillset results for later inclusion in response
+                        vskillset_results = results
+            finally:
+                try: cur.close()
+                except Exception: pass
+                try: conn.close()
+                except Exception: pass
     except Exception as e_vskillset:
         logger.warning(f"[Gemini Assess -> vskillset] Failed to populate vskillset: {e_vskillset}")
 
