@@ -1078,6 +1078,36 @@ function generateAssessmentHTML(data) {
 }
 
 /* Apply bulk results: update Review table if present, otherwise update Search table rows */
+/* Helper: sync a successful assessment result into rowsData and DOM dataset */
+function _syncAssessmentToRowsData(linkedinurl, result) {
+    try {
+        const scoreMatch = (result.total_score || '0%').toString().match(/(\d+)%?/);
+        const scoreNum = scoreMatch ? scoreMatch[1] : '0';
+        const ratingLevel = result.is_level2 ? 'L2' : (
+            result.assessment_level && result.assessment_level.includes('L2') ? 'L2' : 'L1'
+        );
+
+        // Sync rowsData so any subsequent renderTable() call preserves L2 state
+        const idx = rowsData.findIndex(r => r.linkedinurl === linkedinurl);
+        if (idx >= 0) {
+            rowsData[idx].rating = result;
+            rowsData[idx].rating_score = scoreNum;
+            rowsData[idx].rating_stars = String(result.stars || 0);
+            rowsData[idx].rating_level = ratingLevel;
+        }
+
+        // Sync DOM dataset so tr.dataset.rating is up-to-date for namecard
+        try {
+            const selUrl = (window.CSS && CSS.escape) ? CSS.escape(linkedinurl) : linkedinurl.replace(/"/g, '\\"');
+            const tr = document.querySelector(`#sourcingTable tbody tr[data-linkedinurl="${selUrl}"]`);
+            if (tr) {
+                try { tr.dataset.rating = JSON.stringify(result); } catch(e) { console.warn('_syncAssessmentToRowsData: failed to serialize rating', e); }
+                tr.classList.add('assessment-complete');
+            }
+        } catch(e) { console.warn('_syncAssessmentToRowsData: DOM sync failed', e); }
+    } catch(e) { console.warn('_syncAssessmentToRowsData: rowsData sync failed', e); }
+}
+
 function applyBulkAssessmentResults(results) {
     if (!results || !Array.isArray(results)) return;
     // If pendingReviewRows is empty, renderAssessmentReviewTable will be no-op (guarded).
@@ -1096,6 +1126,8 @@ function applyBulkAssessmentResults(results) {
             } else if (!result.error) {
                 // Generate and cache full assessment HTML with category breakdown
                 cacheAssessmentHTML(linkedinurl, result);
+                // Sync into rowsData and DOM dataset to survive subsequent renderTable() calls
+                _syncAssessmentToRowsData(linkedinurl, result);
                 
                 // Try update search table row with successful result
                 if (updateSearchTableRowWithResult(linkedinurl, result)) {
@@ -1140,6 +1172,8 @@ function applyBulkAssessmentResults(results) {
 
         // Generate and cache full assessment HTML with category breakdown
         cacheAssessmentHTML(linkedinurl, result);
+        // Sync into rowsData and DOM dataset to survive subsequent renderTable() calls
+        _syncAssessmentToRowsData(linkedinurl, result);
 
         const rowIndex = pendingReviewRows.findIndex(r => r.linkedinurl === linkedinurl);
         if (rowIndex >= 0) {
@@ -4121,6 +4155,16 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
                 });
             }
         } catch(e) { console.warn("Failed to cache assessment HTML (L2)", e); }
+
+        // Render vskillset from assessment response into UI (table row & details card)
+        try {
+            if (data.vskillset && Array.isArray(data.vskillset) && data.vskillset.length > 0
+                    && window.vskillset && typeof window.vskillset.renderVSkillsetToUI === 'function') {
+                const highSkills = data.vskillset.filter(i => i && i.category === 'High').map(i => i.skill);
+                window.vskillset.renderVSkillsetToUI(anchor, { vskillset: data.vskillset, skillset: highSkills });
+                console.log('[Assessment] vskillset rendered from assessment response:', data.vskillset.length, 'skills,', highSkills.length, 'High');
+            }
+        } catch(e) { console.warn('[Assessment] Failed to render vskillset from assessment response', e); }
 
         const threshold = 50; 
         const ratingString = `${headerText}: ${data.total_score} (${starCount} ★) - ${data.comments || ''}`;
