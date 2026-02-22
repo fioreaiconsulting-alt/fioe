@@ -7146,7 +7146,10 @@ def process_pending_assessments():
 
 def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text="", cv_data=None):
     """
-    Generate vskillset for a profile using Gemini inference.
+    Generate vskillset for a profile using extractive-first approach:
+    1. Extract confirmed skills from experience text via word-boundary regex.
+    2. Send only unconfirmed/missing skills to Gemini for inference.
+    3. Merge confirmed + inferred results.
     Returns list of skill evaluation results or None if failed.
     """
     if not (genai and GEMINI_API_KEY):
@@ -7184,22 +7187,42 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
             logger.warning(f"[vskillset_gen] No experience or CV data for {linkedinurl}")
             return None
         
-        # Call Gemini to evaluate skills
-        model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
-        
-        prompt = f"""SYSTEM:
+        # STEP 1: Extractive pass
+        explicitly_confirmed = _extract_confirmed_skills(profile_context, target_skills)
+        confirmed_set = set(s.lower() for s in explicitly_confirmed)
+        confirmed_results = [
+            {
+                "skill": skill,
+                "probability": 100,
+                "category": "High",
+                "reason": "Explicitly mentioned in experience text",
+                "source": "confirmed"
+            }
+            for skill in explicitly_confirmed
+        ]
+        logger.info(f"[vskillset_gen] Extractive pass: {len(confirmed_results)}/{len(target_skills)} skills confirmed for {linkedinurl[:50]}")
+
+        # STEP 2: Inference only for unconfirmed skills
+        unconfirmed_skills = [s for s in target_skills if s.lower() not in confirmed_set]
+        inferred_results = []
+
+        if unconfirmed_skills:
+            model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+
+            prompt = f"""SYSTEM:
 You are an expert technical recruiter evaluating candidate skillsets based on their work experience.
 
 TASK:
 For each skill in the list below, evaluate the candidate's likely proficiency based on their experience.
+These skills were NOT found explicitly in the experience text, so use contextual inference from
+job titles, companies, products, sector, and experience patterns.
 Assign a probability score (0-100) and categorize as Low (<40), Medium (40-74), or High (75-100).
-Provide clear reasoning based on job titles, companies, and experience patterns.
 
 CANDIDATE PROFILE:
 {profile_context[:3000]}
 
-SKILLS TO EVALUATE:
-{json.dumps(target_skills, ensure_ascii=False)}
+SKILLS TO INFER (not found explicitly in experience text):
+{json.dumps(unconfirmed_skills, ensure_ascii=False)}
 
 OUTPUT FORMAT (JSON):
 {{
@@ -7214,33 +7237,35 @@ OUTPUT FORMAT (JSON):
 }}
 
 Return ONLY the JSON object, no other text."""
-        
-        resp = model.generate_content(prompt)
-        raw_text = (resp.text or "").strip()
-        
-        # Extract JSON from response
-        parsed = _extract_json_object(raw_text)
-        
-        if not parsed or "evaluations" not in parsed:
-            logger.warning(f"[vskillset_gen] Gemini returned invalid JSON")
-            return None
-        
-        results = parsed["evaluations"]
-        
-        # Ensure all required fields are present
-        for item in results:
-            if "probability" not in item:
-                item["probability"] = 50
-            if "category" not in item:
-                prob = item.get("probability", 50)
-                if prob >= 75:
-                    item["category"] = "High"
-                elif prob >= 40:
-                    item["category"] = "Medium"
-                else:
-                    item["category"] = "Low"
-            if "reason" not in item:
-                item["reason"] = "No reasoning provided"
+
+            resp = model.generate_content(prompt)
+            raw_text = (resp.text or "").strip()
+
+            parsed = _extract_json_object(raw_text)
+
+            if not parsed or "evaluations" not in parsed:
+                logger.warning(f"[vskillset_gen] Gemini returned invalid JSON; proceeding with only confirmed skills for {linkedinurl[:50]}")
+            else:
+                inferred_results = parsed["evaluations"]
+
+            # Ensure all required fields are present and annotate source
+            for item in inferred_results:
+                if "probability" not in item:
+                    item["probability"] = 50
+                if "category" not in item:
+                    prob = item.get("probability", 50)
+                    if prob >= 75:
+                        item["category"] = "High"
+                    elif prob >= 40:
+                        item["category"] = "Medium"
+                    else:
+                        item["category"] = "Low"
+                if "reason" not in item:
+                    item["reason"] = "No reasoning provided"
+                item["source"] = "inferred"
+
+        # STEP 3: Merge confirmed + inferred
+        results = confirmed_results + inferred_results
         
         # Persist to database
         try:
@@ -7248,9 +7273,9 @@ Return ONLY the JSON object, no other text."""
             cur = conn.cursor()
             
             vskillset_json = json.dumps(results, ensure_ascii=False)
-            confirmed_skills = [item["skill"] for item in results if item["category"] == "High"]
+            high_skills = [item["skill"] for item in results if item["category"] == "High"]
             # Ensure all skills are strings before joining
-            skillset_str = ", ".join([str(s) for s in confirmed_skills if s])
+            skillset_str = ", ".join([str(s) for s in high_skills if s])
             
             # Check if vskillset column exists
             cur.execute("""
@@ -7269,7 +7294,7 @@ Return ONLY the JSON object, no other text."""
             # Update skillset with High skills only as comma-separated string
             if 'skillset' in available_cols:
                 cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_str, linkedinurl))
-                logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
+                logger.info(f"[vskillset_gen] Persisted {len(high_skills)} High skills to skillset for {linkedinurl[:50]}")
             
             conn.commit()
             cur.close()
