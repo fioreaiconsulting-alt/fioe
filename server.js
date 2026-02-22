@@ -648,10 +648,10 @@ app.post('/login', async (req, res) => {
     // Success
     const uid = user.id || user.userid || user.username;
     
-    // Set cookies (standard options)
-    const cookieOpts = { maxAge: 2592000000, httpOnly: false, path: '/' }; // httpOnly false so client JS can read if needed, or secure true in prod
+    // Set cookies (standard options); sameSite 'lax' ensures cookies are sent on same-site cross-port requests
+    const cookieOpts = { maxAge: 2592000000, httpOnly: false, path: '/', sameSite: 'lax' };
     res.cookie('username', user.username, cookieOpts);
-    res.cookie('userid', uid, cookieOpts);
+    res.cookie('userid', String(uid), cookieOpts);
 
     res.json({
       ok: true,
@@ -667,8 +667,8 @@ app.post('/login', async (req, res) => {
 });
 
 app.post('/logout', (req, res) => {
-  res.clearCookie('username');
-  res.clearCookie('userid');
+  res.clearCookie('username', { path: '/' });
+  res.clearCookie('userid', { path: '/' });
   res.json({ ok: true, message: "Logged out" });
 });
 
