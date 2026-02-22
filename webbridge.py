@@ -307,6 +307,10 @@ def dedupe(seq):
 # ---- NEW: Load sectors.json index once for server-side sector matching ----
 SECTORS_JSON_PATH = os.path.join(BASE_DIR, "sectors.json")
 SECTORS_INDEX = []  # list of labels (strings) in human-friendly form, e.g. "Financial Services > Banking"
+SECTORS_TOKEN_INDEX = []  # list of (label, token_set) pairs, built after SECTORS_INDEX is loaded
+
+# Minimum Jaccard score required for a sector label match (configurable via env var)
+MIN_SECTOR_JACCARD = float(os.getenv("MIN_SECTOR_JACCARD", "0.12"))
 
 def _load_sectors_index():
     global SECTORS_INDEX
@@ -367,11 +371,19 @@ def _token_set(s):
     normalized = re.sub(r'&amp;|&', 'and', s.lower())
     return set(re.findall(r'\w+', normalized))
 
+def _build_sectors_token_index():
+    """Pre-tokenize all sector labels so _find_best_sector_match_for_text avoids repeated tokenization."""
+    global SECTORS_TOKEN_INDEX
+    SECTORS_TOKEN_INDEX = [(label, _token_set(label)) for label in SECTORS_INDEX]
+
+_build_sectors_token_index()
+
 def _find_best_sector_match_for_text(candidate):
     """
     Given an arbitrary candidate string (e.g., "Air Conditioning / HVAC"),
     find the best-matching label from SECTORS_INDEX by token overlap.
     Uses Jaccard similarity (intersection/union) to normalize for label length.
+    Requires a minimum Jaccard score (MIN_SECTOR_JACCARD) to reject weak matches.
     Returns the matched label (exact wording from sectors.json) or None.
     """
     try:
@@ -384,8 +396,7 @@ def _find_best_sector_match_for_text(candidate):
         best_score = 0.0
         best_abs = 0
         top_candidates = []
-        for label in SECTORS_INDEX:
-            label_tokens = _token_set(label)
+        for label, label_tokens in SECTORS_TOKEN_INDEX:
             if not label_tokens:
                 continue
             intersection = cand_tokens & label_tokens
@@ -402,7 +413,8 @@ def _find_best_sector_match_for_text(candidate):
                 best_score = score
                 best_abs = abs_overlap
                 best = label
-        if best_score > 0:
+        # Require a minimum Jaccard threshold to avoid weak matches
+        if best and best_score >= MIN_SECTOR_JACCARD:
             top3 = heapq.nlargest(3, top_candidates, key=lambda x: (x[0], x[1]))
             logger.debug(
                 "_find_best_sector_match_for_text top-3 for %r: %s",
@@ -410,6 +422,11 @@ def _find_best_sector_match_for_text(candidate):
                 top3
             )
             return best
+        logger.debug(
+            "_find_best_sector_match_for_text: no strong match for %r (best_score=%.4f)",
+            candidate,
+            best_score
+        )
         return None
     except Exception:
         return None
