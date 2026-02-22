@@ -804,6 +804,31 @@ def gemini_analyze_jd():
     if not text_input:
         return jsonify({"error":"No JD text provided or found for user"}), 400
 
+    # Optional extractive short-circuit: if caller provides target_skills and ALL of them are
+    # explicitly present in the JD text, skip the expensive Gemini call.
+    target_skills_jd = data.get("target_skills") or []
+    if target_skills_jd:
+        confirmed_jd = _extract_confirmed_skills(text_input, target_skills_jd)
+        if len(confirmed_jd) == len(target_skills_jd):
+            _job_title = (data.get("job_title") or "").strip()
+            _seniority = (data.get("seniority") or "").strip()
+            logger.info(f"[gemini_analyze_jd] Extractive short-circuit: all {len(confirmed_jd)} target skills confirmed in JD")
+            return jsonify({
+                "job_title": _job_title,
+                "job_titles": [_job_title] if _job_title else [],
+                "seniority": _seniority,
+                "sectors": sectors_data or [],
+                "companies": [],
+                "country": country,
+                "summary": "All target skills explicitly present in JD; Gemini inference skipped.",
+                "missing": [],
+                "suggestions": [],
+                "justification": "Extractive confirmation: all target skills found verbatim in JD text.",
+                "observation": "",
+                "skills": confirmed_jd,
+                "raw": ""
+            }), 200
+
     if not genai or not GEMINI_API_KEY:
         # Fallback: simple heuristics if gemini not configured
         try:

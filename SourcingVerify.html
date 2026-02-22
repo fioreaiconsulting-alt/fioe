@@ -4156,6 +4156,16 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
             }
         } catch(e) { console.warn("Failed to cache assessment HTML (L2)", e); }
 
+        // Render vskillset from assessment response into UI (table row & details card)
+        try {
+            if (data.vskillset && Array.isArray(data.vskillset) && data.vskillset.length > 0
+                    && window.vskillset && typeof window.vskillset.renderVSkillsetToUI === 'function') {
+                const highSkills = data.vskillset.filter(i => i && i.category === 'High').map(i => i.skill);
+                window.vskillset.renderVSkillsetToUI(anchor, { vskillset: data.vskillset, skillset: highSkills });
+                console.log('[Assessment] vskillset rendered from assessment response:', data.vskillset.length, 'skills,', highSkills.length, 'High');
+            }
+        } catch(e) { console.warn('[Assessment] Failed to render vskillset from assessment response', e); }
+
         const threshold = 50; 
         const ratingString = `${headerText}: ${data.total_score} (${starCount} ★) - ${data.comments || ''}`;
 
