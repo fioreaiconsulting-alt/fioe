@@ -10,6 +10,7 @@ import json
 import requests
 import io
 import hashlib
+import heapq
 import difflib
 from flask import Flask, request, send_from_directory, jsonify, abort, Response, stream_with_context
 
@@ -362,12 +363,15 @@ _load_sectors_index()
 # Helper functions for sector matching (new)
 def _token_set(s):
     if not s: return set()
-    return set(re.findall(r'\w+', s.lower()))
+    # Normalize & and &amp; to "and" so label tokens match consistently
+    normalized = re.sub(r'&amp;|&', 'and', s.lower())
+    return set(re.findall(r'\w+', normalized))
 
 def _find_best_sector_match_for_text(candidate):
     """
     Given an arbitrary candidate string (e.g., "Air Conditioning / HVAC"),
     find the best-matching label from SECTORS_INDEX by token overlap.
+    Uses Jaccard similarity (intersection/union) to normalize for label length.
     Returns the matched label (exact wording from sectors.json) or None.
     """
     try:
@@ -377,17 +381,34 @@ def _find_best_sector_match_for_text(candidate):
         if not cand_tokens:
             return None
         best = None
-        best_score = 0
-        # Prefer longer labels (more specific) when tie
+        best_score = 0.0
+        best_abs = 0
+        top_candidates = []
         for label in SECTORS_INDEX:
             label_tokens = _token_set(label)
             if not label_tokens:
                 continue
-            score = len(cand_tokens & label_tokens)
-            if score > best_score or (score == best_score and best and len(label) > len(best)):
+            intersection = cand_tokens & label_tokens
+            abs_overlap = len(intersection)
+            if abs_overlap == 0:
+                continue
+            # Jaccard similarity: intersection / union (normalizes for label length)
+            score = abs_overlap / len(cand_tokens | label_tokens)
+            top_candidates.append((score, abs_overlap, label))
+            # Prefer highest Jaccard score; tie-break by abs overlap, then shorter label
+            if (score > best_score or
+                    (score == best_score and abs_overlap > best_abs) or
+                    (score == best_score and abs_overlap == best_abs and best and len(label) < len(best))):
                 best_score = score
+                best_abs = abs_overlap
                 best = label
         if best_score > 0:
+            top3 = heapq.nlargest(3, top_candidates, key=lambda x: (x[0], x[1]))
+            logger.debug(
+                "_find_best_sector_match_for_text top-3 for %r: %s",
+                candidate,
+                top3
+            )
             return best
         return None
     except Exception:
@@ -425,11 +446,12 @@ _KEYWORD_TO_SECTOR_LABEL = {
 def _map_keyword_to_sector_label(text):
     """
     Search for keywords in text and return a sectors.json label if found and present in SECTORS_INDEX.
+    Uses word-boundary regex to avoid false substring matches (e.g., "ai" inside "training").
     """
     try:
         txt = (text or "").lower()
         for kw, label in _KEYWORD_TO_SECTOR_LABEL.items():
-            if kw in txt:
+            if re.search(r'\b' + re.escape(kw) + r'\b', txt):
                 # Ensure the label exists in SECTORS_INDEX (case-insensitive)
                 for l in SECTORS_INDEX:
                     if l.lower() == label.lower():
@@ -1106,17 +1128,47 @@ def gemini_analyze_jd():
                             # Product keyword found but doesn't match this domain - reject
                             return False
                     
-                    # If no specific product keyword found, allow generic roles to match any sector
-                    # (e.g., "Engineer" without specific product can match any tech sector)
+                    # If no specific product keyword found, allow generic roles only when
+                    # there is strong token overlap between combined_text and sector label (>= 0.4).
+                    # This prevents generic titles like "Engineer" from validating unrelated sectors.
                     if not product_keyword_found:
-                        for role in GENERIC_ROLE_KEYWORDS:
-                            pattern = r'\b' + re.escape(role) + r'\b'
-                            if re.search(pattern, job_title_lower):
-                                return True
+                        combined_tokens = _token_set(combined_text)
+                        label_tokens = _token_set(sector_label)
+                        if combined_tokens and label_tokens:
+                            overlap_ratio = len(combined_tokens & label_tokens) / len(label_tokens)
+                        else:
+                            overlap_ratio = 0.0
+                        if overlap_ratio >= 0.4:
+                            for role in GENERIC_ROLE_KEYWORDS:
+                                pattern = r'\b' + re.escape(role) + r'\b'
+                                if re.search(pattern, job_title_lower):
+                                    return True
                     
                     return False
                 
-                # 1) Try sectors.json labels (longest-match strategy by substring)
+                # 1) Try token overlap matching on job title (most precise, short text signal)
+                mapped_from_title = _find_best_sector_match_for_text(title_text) if title_text else None
+                if mapped_from_title and mapped_from_title not in existing_sectors:
+                    if validate_product_in_sector(mapped_from_title, job_title_text):
+                        return mapped_from_title, "Matched sectors.json label via title token overlap with product validation"
+                
+                # 2) Try keyword mapping on title, skills, then combined text
+                kw_map = _map_keyword_to_sector_label(title_text) if title_text else None
+                if not kw_map and skills_text:
+                    kw_map = _map_keyword_to_sector_label(skills_text)
+                if not kw_map:
+                    kw_map = _map_keyword_to_sector_label(combined_text)
+                if kw_map and kw_map not in existing_sectors:
+                    if validate_product_in_sector(kw_map, job_title_text):
+                        return kw_map, "Mapped via keyword to sectors.json label with product validation"
+                
+                # 3) Try token overlap on combined text as a broader signal
+                mapped_from_combined = _find_best_sector_match_for_text(combined_text)
+                if mapped_from_combined and mapped_from_combined not in existing_sectors:
+                    if validate_product_in_sector(mapped_from_combined, job_title_text):
+                        return mapped_from_combined, "Matched sectors.json label via token overlap with product validation"
+                
+                # 4) Substring label match as strict fallback (only when label phrase truly appears in text)
                 best_match = ""
                 best_orig = ""
                 for label in SECTORS_INDEX:
@@ -1130,23 +1182,7 @@ def gemini_analyze_jd():
                     if validate_product_in_sector(best_orig, job_title_text):
                         return best_orig, "Matched sectors.json label with product validation"
                 
-                # 2) Try token overlap matching on combined text
-                mapped_from_combined = _find_best_sector_match_for_text(combined_text)
-                if mapped_from_combined and mapped_from_combined not in existing_sectors:
-                    if validate_product_in_sector(mapped_from_combined, job_title_text):
-                        return mapped_from_combined, "Matched sectors.json label via token overlap with product validation"
-                
-                # 3) Try keyword mapping on combined text, title, and skills separately
-                kw_map = _map_keyword_to_sector_label(combined_text)
-                if not kw_map and title_text:
-                    kw_map = _map_keyword_to_sector_label(title_text)
-                if not kw_map and skills_text:
-                    kw_map = _map_keyword_to_sector_label(skills_text)
-                if kw_map and kw_map not in existing_sectors:
-                    if validate_product_in_sector(kw_map, job_title_text):
-                        return kw_map, "Mapped via keyword to sectors.json label with product validation"
-                
-                # 4) Do NOT return freeform labels; instead return None to indicate no strict sectors.json match
+                # 5) Do NOT return freeform labels; instead return None to indicate no strict sectors.json match
                 return None, ""
             except Exception:
                 return None, ""
