@@ -360,6 +360,14 @@ def _load_sectors_index():
     except Exception as e:
         logger.warning(f"[SectorsIndex] failed to load {SECTORS_JSON_PATH}: {e}")
         SECTORS_INDEX = []
+    # Rebuild pre-tokenized index if already defined (handles runtime reloads).
+    # _build_sectors_token_index is defined later in the module; this guard avoids a
+    # NameError on the initial _load_sectors_index() call made at module startup before
+    # that function is defined, while still keeping SECTORS_TOKEN_INDEX in sync on
+    # any subsequent runtime reloads of sectors.json.
+    _rebuild = globals().get('_build_sectors_token_index')
+    if callable(_rebuild):
+        _rebuild()
 
 # immediately load sectors index (best-effort)
 _load_sectors_index()
@@ -413,8 +421,14 @@ def _find_best_sector_match_for_text(candidate):
                 best_score = score
                 best_abs = abs_overlap
                 best = label
-        # Require a minimum Jaccard threshold to avoid weak matches
-        if best and best_score >= MIN_SECTOR_JACCARD:
+        # Require a minimum Jaccard threshold to avoid weak matches.
+        # Exception: accept absolute overlap >= 1 for short candidate strings (<=2 tokens)
+        # where Jaccard can underestimate match quality (e.g. single-token "cloud").
+        match_ok = best and (
+            best_score >= MIN_SECTOR_JACCARD or
+            (len(cand_tokens) <= 2 and best_abs >= 1)
+        )
+        if match_ok:
             top3 = heapq.nlargest(3, top_candidates, key=lambda x: (x[0], x[1]))
             logger.debug(
                 "_find_best_sector_match_for_text top-3 for %r: %s",
@@ -423,9 +437,10 @@ def _find_best_sector_match_for_text(candidate):
             )
             return best
         logger.debug(
-            "_find_best_sector_match_for_text: no strong match for %r (best_score=%.4f)",
+            "_find_best_sector_match_for_text: no strong match for %r (best_score=%.4f, top-3=%s)",
             candidate,
-            best_score
+            best_score,
+            heapq.nlargest(3, top_candidates, key=lambda x: (x[0], x[1])) if top_candidates else []
         )
         return None
     except Exception:
