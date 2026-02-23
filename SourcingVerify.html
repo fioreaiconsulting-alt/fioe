@@ -67,7 +67,7 @@
 }
 </style>
 
-<!-- Leaflet for country map visualization in Deep Research -->
+<!-- Leaflet for country map visualization in Market Analytic -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -85,7 +85,7 @@
 <div class="tabs-nav">
   <button class="tab-btn active" onclick="switchTab('tab-search')">Search Results</button>
   <button class="tab-btn" onclick="switchTab('tab-details')" id="tab-details-btn">View Details</button>
-  <button class="tab-btn" onclick="switchTab('tab-research')" id="tab-research-btn">Deep Research</button>
+  <button class="tab-btn" onclick="switchTab('tab-research')" id="tab-research-btn">Market Analytic</button>
 </div>
 
 <!-- Tab 1: Search Results -->
@@ -172,7 +172,7 @@
       <!-- Deep Research button: Moved to end position and styled to be invisible per requirement.
            Button remains functional with pointer-events but invisible until explicitly needed.
            Styling: white on white with opacity:0 as requested in comment #3768916799 -->
-      <button id="exportCsvBtn" title="Deep Research" style="outline:white; color:white; background:white; border:1px solid white; opacity:0; pointer-events:auto;">Deep Research</button>
+      <button id="exportCsvBtn" title="Market Analytic" style="outline:white; color:white; background:white; border:1px solid white; opacity:0; pointer-events:auto;">Market Analytic</button>
 
       <button id="marketAnalysisBtn" title="Transfer sourcing data to admin table & open Data Sorter">Run Market Analysis</button>
   </div>
@@ -243,7 +243,7 @@
     </div>
 </div>
 
-<!-- Tab 4: Deep Research (EMBEDDED DATA SORTER) -->
+<!-- Tab 4: Market Analytic (EMBEDDED DATA SORTER) -->
 <div id="tab-research" class="tab-pane">
     <div style="margin-bottom: 12px;">
         <button onclick="switchTab('tab-search')" class="btn-secondary" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328;">&larr; Back to Search Results</button>
@@ -471,7 +471,7 @@ function switchTab(tabId) {
         }, 1000);
     } else if (tabId === 'tab-research') {
         document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
-        // Trigger Deep Research logic when tab is activated to ensure data is present
+        // Trigger Market Analytic logic when tab is activated to ensure data is present
         if (typeof deepResearch === 'function') {
             deepResearch();
         }
@@ -794,7 +794,7 @@ function updateSearchTableRowWithResult(linkedinurl, result) {
         const lastCell = tr.querySelector('td:last-child') || tr.appendChild(document.createElement('td'));
         const total_score = result.total_score || (result.totalScore || '') || '0%';
         const starCount = typeof result.stars !== 'undefined' ? result.stars : (result.star || 0);
-        const assessmentLevel = result.assessment_level || (result.is_level2 ? 'L2 Assessment' : 'L1 Assessment');
+        const assessmentLevel = result.assessment_level || ('Assessment');
         // Generate visual star HTML (filled/unfilled)
         let starsHtml = '';
         for (let i = 0; i < 5; i++) {
@@ -1005,7 +1005,7 @@ function generateAssessmentHTML(data) {
     }
     
     const starCount = data.stars || 0;
-    const assessmentLevel = data.assessment_level || (data.is_level2 ? 'L2 Assessment' : 'L1 Assessment');
+    const assessmentLevel = data.assessment_level || ('Assessment');
     const totalScore = data.total_score || '0%';
     const combinedHeader = `${assessmentLevel}: ${totalScore}`;
     
@@ -1279,7 +1279,7 @@ function renderAssessmentReviewTable(rows) {
             for (let i = 0; i < 5; i++) {
                 starsHtml += `<span class="${i < starCount ? 'filled' : ''}">★</span>`;
             }
-            const levelText = level === 'L2' ? 'L2 Assessment' : 'L1 Assessment';
+            const levelText = 'Assessment';
             tdScore.innerHTML = `<div style="font-size:11px;color:#6b7280;">${levelText}: <b>${score}%</b></div><div class="assessment-stars">${starsHtml}</div>`;
         } else if (r.rating) {
             try {
@@ -1291,7 +1291,7 @@ function renderAssessmentReviewTable(rows) {
                     for (let i = 0; i < 5; i++) {
                         starsHtml += `<span class="${i < starCount ? 'filled' : ''}">★</span>`;
                     }
-                    const assessmentLevel = robj.assessment_level || 'L1 Assessment';
+                    const assessmentLevel = robj.assessment_level || 'Assessment';
                     tdScore.innerHTML = `<div style="font-size:11px;color:#6b7280;">${assessmentLevel}: <b>${robj.total_score}</b></div><div class="assessment-stars">${starsHtml}</div>`;
                 } else {
                     tdScore.innerHTML = '<span style="color:#999; font-size:11px;">(Assessment pending)</span>';
@@ -3527,7 +3527,7 @@ function buildRow(row) {
     for (let i = 0; i < 5; i++) {
       starsHtml += `<span class="${i < starCount ? 'filled' : ''}">★</span>`;
     }
-    const levelText = level === 'L2' ? 'L2 Assessment' : 'L1 Assessment';
+    const levelText = 'Assessment';
     matchingLevelCell.innerHTML = `<div class="assessment-badge"><div style="font-size:11px;color:#6b7280;">${levelText}: <b>${score}%</b></div><div class="assessment-stars">${starsHtml}</div></div>`;
     tr.classList.add('assessment-complete');
     // Store rating data in dataset for later use
@@ -3546,7 +3546,7 @@ function buildRow(row) {
         for (let i = 0; i < 5; i++) {
           starsHtml += `<span class="${i < starCount ? 'filled' : ''}">★</span>`;
         }
-        const assessmentLevel = robj.assessment_level || 'L1 Assessment';
+        const assessmentLevel = robj.assessment_level || 'Assessment';
         matchingLevelCell.innerHTML = `<div class="assessment-badge"><div style="font-size:11px;color:#6b7280;">${assessmentLevel}: <b>${robj.total_score}</b></div><div class="assessment-stars">${starsHtml}</div></div>`;
         tr.classList.add('assessment-complete');
         try { 
@@ -3745,7 +3745,7 @@ async function triggerLevel1Assessment(tr, anchor) {
         
         // Use assessment_level from backend data (authoritative source)
         // Fallback to is_level2 flag only for legacy data
-        const headerText = data.assessment_level || (data.is_level2 ? "L2 Assessment" : "L1 Assessment");
+        const headerText = data.assessment_level || ("Assessment");
         /* AFFECTED: Combine Level and Score for main display */
         const combinedHeader = `${headerText}: ${data.total_score || '0%'}`;
         
@@ -3999,7 +3999,7 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         // Use assessment_level from backend data (authoritative source)
         // Fallback to is_level2 flag only for legacy data compatibility
         const isLevel2 = !!data.is_level2; // Used for styling only
-        const headerText = data.assessment_level || (isLevel2 ? "L2 Assessment" : "L1 Assessment");
+        const headerText = data.assessment_level || ("Assessment");
         const combinedHeader = `${headerText}: ${data.total_score || '0%'}`;
         
         // Build Category Appraisals HTML if available
@@ -6171,7 +6171,7 @@ async function deepResearch() {
 
   try {
     btn.disabled = true;
-    setStatus('Deep Research: preparing process-table payload…');
+    setStatus('Market Analytic: preparing process-table payload…');
     const displayed = collectDisplayedRows();
     if (!displayed.length) {
       setStatus('No displayed rows to process.', 'error');
@@ -6193,15 +6193,15 @@ async function deepResearch() {
     };
     
     // Removed switchTab('tab-research') to avoid recursion (was causing stack overflow)
-    setStatus(`Deep Research: analyzing ${displayed.length} row(s)...`, 'info');
+    setStatus(`Market Analytic: analyzing ${displayed.length} row(s)...`, 'info');
 
     // Trigger analysis using embedded logic from data_sorter
     if (typeof clientInferFallback === 'function') {
         const result = clientInferFallback(payloadForDataSorter, performance.now());
         if (result) {
-            setStatus('Deep Research analysis complete.', 'success');
+            setStatus('Market Analytic analysis complete.', 'success');
         } else {
-            setStatus('Deep Research analysis returned no results.', 'error');
+            setStatus('Market Analytic analysis returned no results.', 'error');
         }
     } else {
         setStatus('Analysis engine not ready.', 'error');
@@ -6209,8 +6209,8 @@ async function deepResearch() {
     }
 
   } catch (e) {
-    console.error('Deep Research error', e);
-    setStatus('Deep Research error: ' + (e.message || e), 'error');
+    console.error('Market Analytic error', e);
+    setStatus('Market Analytic error: ' + (e.message || e), 'error');
   } finally {
     btn.disabled = false;
   }
