@@ -165,6 +165,9 @@
 
       <!-- Combined Bulk Assessment Button (Upload + Assessment) -->
       <button id="bulkAssessmentBtn" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Verify the directory settings before initiating bulk PDF upload and assessment.">Bulk Assessment</button>
+      <label id="forceReassessLabel" title="Re-run assessment even for profiles that already have a rating" style="font-size:12px; color:#64748b; margin-right:8px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+        <input type="checkbox" id="forceReassessChk"> Force re-assess
+      </label>
       <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
       
       <!-- Hidden file input for directory upload -->
@@ -1113,6 +1116,14 @@ function applyBulkAssessmentResults(results) {
             if (result.error && result.error.includes('Assessment pending')) {
                 // Update row to show "Assessment pending"
                 if (updateSearchTableRowWithPendingStatus(linkedinurl)) updatedCount++;
+            } else if (result._skipped) {
+                // Server skipped due to existing rating — treat as success with existing data
+                cacheAssessmentHTML(linkedinurl, result);
+                _syncAssessmentToRowsData(linkedinurl, result);
+                if (updateSearchTableRowWithResult(linkedinurl, result)) {
+                    updatedCount++;
+                    updateUploadButtonToView(linkedinurl);
+                }
             } else if (!result.error) {
                 // Generate and cache full assessment HTML with category breakdown
                 cacheAssessmentHTML(linkedinurl, result);
@@ -1155,7 +1166,7 @@ function applyBulkAssessmentResults(results) {
             return;
         }
         
-        if (!result || result.error) {
+        if (!result || (result.error && !result._skipped)) {
             console.log('[applyBulkAssessmentResults] Skipping result with error for', linkedinurl);
             return;
         }
@@ -1671,6 +1682,9 @@ function setSearchResultButtonsEnabled(enabled) {
 async function runBulkAssessmentFromSearch() {
     const uid = window.__SV_ACTIVE_USERID || '';
     if(!uid) return;
+
+    const forceReassessChk = document.getElementById('forceReassessChk');
+    const forceReassess = !!(forceReassessChk && forceReassessChk.checked);
     
     // Auto-detect all profiles in the table (no manual selection required)
     const allRows = document.querySelectorAll('#sourcingTable tbody tr');
@@ -1687,8 +1701,13 @@ async function runBulkAssessmentFromSearch() {
             
             if (hasAssessment) {
                 alreadyAssessedUrls.push(linkedinurl);
-                // Immediately transition button to View for already-assessed profiles
-                updateUploadButtonToView(linkedinurl);
+                if (!forceReassess) {
+                    // Immediately transition button to View for already-assessed profiles
+                    updateUploadButtonToView(linkedinurl);
+                } else {
+                    // Force re-assess: include in assessment batch
+                    linkedinurls.push(linkedinurl);
+                }
             } else {
                 linkedinurls.push(linkedinurl);
             }
@@ -1698,7 +1717,7 @@ async function runBulkAssessmentFromSearch() {
     // Check if there are any profiles to assess
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
-            alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
+            alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. Check "Force re-assess" to re-run them.`);
         } else {
             alert('No profiles found to assess');
         }
@@ -1715,14 +1734,15 @@ async function runBulkAssessmentFromSearch() {
     const useL2 = true;
     
     console.log(`[Bulk Assessment] Assessment Level: L2`);
-    console.log(`[Bulk Assessment] Profiles to assess: ${linkedinurls.length}, Already assessed: ${alreadyAssessedUrls.length}`);
+    console.log(`[Bulk Assessment] Profiles to assess: ${linkedinurls.length}, Already assessed (skipped): ${forceReassess ? 0 : alreadyAssessedUrls.length}, force_reassess: ${forceReassess}`);
     
     // Disable all buttons during bulk assessment
     setSearchResultButtonsEnabled(false);
     
     if (btn) btn.disabled = true;
-    const totalProfiles = linkedinurls.length + alreadyAssessedUrls.length;
-    const statusMsg = `Starting bulk L2 assessment (${linkedinurls.length}/${totalProfiles} profiles, ${alreadyAssessedUrls.length} already assessed)...`;
+    const totalProfiles = forceReassess ? linkedinurls.length : linkedinurls.length + alreadyAssessedUrls.length;
+    const skippedCount = forceReassess ? 0 : alreadyAssessedUrls.length;
+    const statusMsg = `Starting bulk L2 assessment (${linkedinurls.length}/${totalProfiles} profiles${skippedCount > 0 ? `, ${skippedCount} already assessed` : ''}${forceReassess ? ', force re-assess' : ''})...`;
     if(statusEl) setStatus(statusMsg, 'info');
     if(progressContainer) progressContainer.style.display = 'block';
     
@@ -1733,7 +1753,8 @@ async function runBulkAssessmentFromSearch() {
             linkedinurls: linkedinurls,
             async: true,
             custom_weights: getActiveWeights(),
-            assessment_level: 'L2'  // Always use L2 (inference mode)
+            assessment_level: 'L2',  // Always use L2 (inference mode)
+            force_reassess: forceReassess
         };
         
         console.log('[Bulk Assessment] Payload:', JSON.stringify(payload, null, 2));
