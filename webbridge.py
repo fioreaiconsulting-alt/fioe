@@ -7854,8 +7854,10 @@ def process_parse_cv_and_update():
         if not obj:
              return jsonify({"error": "Analysis returned no data"}), 500
              
-        # Trigger persistence in background
-        threading.Thread(target=analyze_cv_background, args=(linkedinurl, pdf_bytes)).start()
+        # Persist synchronously so DB fields are ready before bulk_assess runs.
+        # (Background thread approach caused a race: bulk_assess read empty fields
+        # because the thread hadn't finished writing when the next request arrived.)
+        analyze_cv_background(linkedinurl, pdf_bytes)
         
         return jsonify({
             "skillset": obj.get("skillset", []),
@@ -8100,6 +8102,24 @@ def process_bulk_assess():
                 LIMIT 1
             """, (linkedinurl,))
             row = cur.fetchone()
+
+            # Safe fetch of existing rating — check column existence first to avoid schema errors.
+            existing_rating_str = None
+            try:
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='process' AND column_name='rating'"
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        "SELECT rating FROM process WHERE linkedinurl=%s LIMIT 1",
+                        (linkedinurl,)
+                    )
+                    r_row = cur.fetchone()
+                    if r_row:
+                        existing_rating_str = r_row[0]
+            except Exception:
+                existing_rating_str = None
             
             # Default values if profile not found
             job_title = ""
@@ -8164,33 +8184,23 @@ def process_bulk_assess():
                         "error": "Assessment pending - No CV uploaded"
                     }
                 }
-            
-            # If CV data is present but key fields are still empty (background analysis thread
-            # has not yet finished persisting), run synchronous extraction inline so that
-            # seniority, sector, experience, skillset, and product are all available before
-            # assessment proceeds.  This prevents incomplete category breakdowns.
-            if cv_data and not (experience_text and seniority and sector):
-                logger.info(f"[BULK_ASSESS] Missing fields (exp={bool(experience_text)}, seniority='{seniority}', sector='{sector}') - running sync CV extraction for {linkedinurl[:50]}")
+
+            # Skip reassessment if rating already exists — preserve the prior score.
+            if existing_rating_str:
                 try:
-                    cv_bytes = cv_data if isinstance(cv_data, bytes) else bytes(cv_data)
-                    cv_obj = _analyze_cv_bytes_sync(cv_bytes)
-                    if cv_obj:
-                        if not experience_text:
-                            experience_text = "\n".join(cv_obj.get("experience", [])) or ""
-                        if not seniority:
-                            seniority = cv_obj.get("seniority", "")
-                        if not sector:
-                            sector = cv_obj.get("sector", "")
-                        if not candidate_skills:
-                            extracted_skills = cv_obj.get("skillset", [])
-                            candidate_skills = [str(s).strip() for s in extracted_skills if str(s).strip()]
-                        if not tenure:
-                            tenure = cv_obj.get("tenure")
-                        if not product:
-                            product = cv_obj.get("product_list", [])
-                        logger.info(f"[BULK_ASSESS] Sync extraction complete: exp={bool(experience_text)}, seniority='{seniority}', sector='{sector}', skills={len(candidate_skills)}")
-                except Exception as e_sync:
-                    logger.warning(f"[BULK_ASSESS] Inline CV extraction failed for {linkedinurl}: {e_sync}")
+                    existing_rating = json.loads(existing_rating_str)
+                    is_valid_rating = (
+                        existing_rating
+                        and isinstance(existing_rating, dict)
+                        and not existing_rating.get("error")
+                    )
+                    if is_valid_rating:
+                        logger.info(f"[BULK_ASSESS] Skipping {linkedinurl[:50]} - already assessed (score={existing_rating.get('score','?')})")
+                        cur.close()
+                        conn.close()
+                        return {"linkedinurl": linkedinurl, "result": existing_rating}
+                except Exception:
+                    pass  # Malformed rating — fall through and reassess
 
             # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
             if not role_tag:
