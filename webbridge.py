@@ -2143,6 +2143,39 @@ def gemini_assess_profile():
     assessment_level = (data.get("assessment_level") or "L1").strip().upper()  # L1 or L2
     tenure = data.get("tenure")  # Average tenure value
 
+    # Resolve role_tag: if not provided by client, look up from sourcing table (authoritative)
+    # then fallback to process table. Login table is no longer used for role-based assessment.
+    if not role_tag and (linkedinurl or username):
+        try:
+            import psycopg2 as _pg2
+            _pg_conn = _pg2.connect(
+                host=os.getenv("PGHOST","localhost"), port=int(os.getenv("PGPORT","5432")),
+                user=os.getenv("PGUSER","postgres"), password=os.getenv("PGPASSWORD","") or "orlha",
+                dbname=os.getenv("PGDATABASE","candidate_db")
+            )
+            _pg_cur = _pg_conn.cursor()
+            # Try sourcing by linkedinurl first, then by username
+            if linkedinurl:
+                _pg_cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
+                _r = _pg_cur.fetchone()
+                if _r and _r[0]: role_tag = _r[0]
+            if not role_tag and username:
+                _pg_cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+                _r = _pg_cur.fetchone()
+                if _r and _r[0]: role_tag = _r[0]
+            # Fallback to process table
+            if not role_tag and linkedinurl:
+                _pg_cur.execute("SELECT role_tag FROM process WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
+                _r = _pg_cur.fetchone()
+                if _r and _r[0]: role_tag = _r[0]
+            if not role_tag and username:
+                _pg_cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+                _r = _pg_cur.fetchone()
+                if _r and _r[0]: role_tag = _r[0]
+            _pg_cur.close(); _pg_conn.close()
+        except Exception as _e_rt:
+            logger.warning(f"[Assess] Failed to resolve role_tag from sourcing/process: {_e_rt}")
+
     # 1. Fetch Target Skillset (jskillset) from process table (cross-check source)
     # Per requirement: Cross-check against jskillset column in process table, not login table
     target_skills = []
@@ -2877,11 +2910,62 @@ def user_resolve():
         cur=conn.cursor()
         cur.execute("SELECT userid, fullname, role_tag, COALESCE(token,0) FROM login WHERE username=%s", (username,))
         row = cur.fetchone()
-        cur.close(); conn.close()
         if not row:
+            cur.close(); conn.close()
             return jsonify({"error":"not found"}), 404
-        return jsonify({"userid": row[0] or "", "fullname": row[1] or "", "role_tag": (row[2] or ""), "token": int(row[3] or 0)}), 200
+        userid, fullname, login_role_tag, token_val = row
+        # Prefer role_tag from sourcing table (authoritative source) over login table
+        resolved_role_tag = login_role_tag or ""
+        try:
+            cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+            src_row = cur.fetchone()
+            if src_row and src_row[0]:
+                resolved_role_tag = src_row[0]
+        except Exception:
+            pass
+        cur.close(); conn.close()
+        return jsonify({"userid": userid or "", "fullname": fullname or "", "role_tag": resolved_role_tag, "token": int(token_val or 0)}), 200
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ==================== Role Tag Update Endpoint ====================
+
+@app.route("/user/update_role_tag", methods=["POST", "GET"])
+def user_update_role_tag():
+    """
+    POST/GET /user/update_role_tag
+    Updates role_tag in both login and sourcing tables for the given username.
+    The sourcing table is the authoritative source for role-based job title assessment.
+    """
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        username = (data.get("username") or "").strip()
+        role_tag = (data.get("role_tag") or "").strip()
+    else:
+        username = (request.args.get("username") or "").strip()
+        role_tag = (request.args.get("role_tag") or "").strip()
+    if not username:
+        return jsonify({"error": "username required"}), 400
+    try:
+        import psycopg2
+        pg_host=os.getenv("PGHOST","localhost")
+        pg_port=int(os.getenv("PGPORT","5432"))
+        pg_user=os.getenv("PGUSER","postgres")
+        pg_password=os.getenv("PGPASSWORD","") or "orlha"
+        pg_db=os.getenv("PGDATABASE","candidate_db")
+        conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+        cur=conn.cursor()
+        cur.execute("UPDATE login SET role_tag=%s WHERE username=%s", (role_tag, username))
+        # Ensure role_tag column exists in sourcing table and update all records for this user
+        cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
+        cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag, username))
+        conn.commit()
+        cur.close(); conn.close()
+        logger.info(f"[UpdateRoleTag] Set role_tag='{role_tag}' for user='{username}' in login and sourcing tables")
+        return jsonify({"ok": True, "username": username, "role_tag": role_tag}), 200
+    except Exception as e:
+        logger.warning(f"[UpdateRoleTag] Failed: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ==================== VSkillset Integration Endpoints ====================
@@ -4342,8 +4426,23 @@ def _write_outputs(job_id, rows):
                         cur.executemany(insert_stmt, batch)
                         total_inserted+=len(batch)
                     conn.commit()
-                    cur.close(); conn.close()
                     logger.info(f"[Ingest] Inserted {total_inserted} rows into sourcing (userid='{active_userid}' username='{active_username}').")
+                    # Transfer role_tag from login table into sourcing table for this user
+                    if active_username:
+                        try:
+                            cur.execute("SELECT role_tag FROM login WHERE username=%s LIMIT 1", (active_username,))
+                            rt_row = cur.fetchone()
+                            login_role_tag = rt_row[0] if rt_row and rt_row[0] else ""
+                            if login_role_tag:
+                                cur.execute("""
+                                    ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''
+                                """)
+                                cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (login_role_tag, active_username))
+                                conn.commit()
+                                logger.info(f"[Ingest] Transferred role_tag='{login_role_tag}' from login to sourcing for user='{active_username}'.")
+                        except Exception as e_rt:
+                            logger.warning(f"[Ingest] Failed to transfer role_tag to sourcing: {e_rt}")
+                    cur.close(); conn.close()
                 else:
                     logger.info(f"[Ingest] No data rows to insert from {xlsx_name}.")
         except Exception as e:
@@ -4432,9 +4531,9 @@ def start_job():
     userid=(data.get('userid') or '').strip()
     username=(data.get('username') or '').strip()
 
-    # --- PATCH START: Automatically update role_tag in login table based on job_titles ---
-    # The requirement is that autosourcing.html search title must pass automatically to login.role_tag.
-    # While frontend calls updateRoleTagOnServer, doing it here guarantees it syncs with the actual search.
+    # --- PATCH START: Automatically update role_tag in login and sourcing tables based on job_titles ---
+    # The requirement is that autosourcing.html search title must pass automatically to login.role_tag
+    # and also be transferred to sourcing.role_tag for all records of this user.
     try:
         if username and job_titles:
             # Construct the tag string, same logic as frontend: joined by commas
@@ -4451,10 +4550,15 @@ def start_job():
                 cur_l = conn_l.cursor()
                 # Update login table
                 cur_l.execute("UPDATE login SET role_tag=%s WHERE username=%s", (role_tag_val, username))
+                # Transfer role_tag to sourcing table (authoritative source for assessments)
+                cur_l.execute("""
+                    ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''
+                """)
+                cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag_val, username))
                 conn_l.commit()
                 cur_l.close()
                 conn_l.close()
-                logger.info(f"[StartJob Auto-Update] Set role_tag='{role_tag_val}' for user='{username}'")
+                logger.info(f"[StartJob Auto-Update] Set role_tag='{role_tag_val}' for user='{username}' in login and sourcing tables")
     except Exception as e_rt:
         logger.warning(f"[StartJob Auto-Update role_tag] Failed: {e_rt}")
     # --- PATCH END ---
@@ -5165,19 +5269,26 @@ def sourcing_market_analysis():
         # PATCH: Check for pic column
         pic_col = 'pic' if 'pic' in cols else None
 
-        # Helper to lookup role_tag from login if missing
+        # Helper to lookup role_tag from sourcing (primary) or process (fallback) if missing
         def _get_role_tag_for_user(c, uname, uid):
             if not uname and not uid: return None
             try:
-                # We need a fresh cursor or reuse 'cur' carefully
-                if uid:
-                    c.execute("SELECT role_tag FROM login WHERE userid=%s LIMIT 1", (uid,))
+                # Try sourcing table first (authoritative source for assessments)
+                if uname:
+                    c.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (uname,))
                 else:
-                    c.execute("SELECT role_tag FROM login WHERE username=%s LIMIT 1", (uname,))
+                    c.execute("SELECT role_tag FROM sourcing WHERE userid=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (uid,))
+                r = c.fetchone()
+                if r and r[0]: return r[0]
+                # Fallback to process table
+                if uname:
+                    c.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (uname,))
+                else:
+                    c.execute("SELECT role_tag FROM process WHERE userid=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (uid,))
                 r = c.fetchone()
                 return r[0] if r and r[0] else None
             except Exception as e_rt:
-                logger.warning(f"Failed to lookup role_tag from login: {e_rt}")
+                logger.warning(f"Failed to lookup role_tag from sourcing/process: {e_rt}")
                 return None
 
         # Build list for INITIAL INSERT - strictly core identity fields only.
@@ -5964,8 +6075,12 @@ def process_upload_multiple_cvs():
                         u_name = matched_entry['username']
                         if u_name:
                             if u_name not in user_role_tags:
-                                cur.execute("SELECT role_tag FROM login WHERE username=%s", (u_name,))
+                                # Try sourcing table first (authoritative), fallback to process table
+                                cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (u_name,))
                                 rt = cur.fetchone()
+                                if not rt or not rt[0]:
+                                    cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (u_name,))
+                                    rt = cur.fetchone()
                                 user_role_tags[u_name] = rt[0] if rt else ""
                             r_tag = user_role_tags[u_name]
 
@@ -7459,9 +7574,13 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         if ctx_row:
             job_title_db, company_db, country_db, role_tag_db, userid_db, username_db, skillset_db = ctx_row
             if not role_tag_db and username_db:
-                cur.execute("SELECT role_tag FROM login WHERE username=%s", (username_db,))
+                # Try sourcing table first (authoritative), fallback to process table
+                cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
                 rt_row = cur.fetchone()
-                if rt_row: role_tag_db = rt_row[0]
+                if not rt_row or not rt_row[0]:
+                    cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
+                    rt_row = cur.fetchone()
+                if rt_row and rt_row[0]: role_tag_db = rt_row[0]
 
             # SOURCE OF TRUTH: CV Column - use extracted skillset exclusively
             # Gemini must exclusively reference the cv column in the process table (Postgres)
@@ -7879,12 +7998,17 @@ def process_bulk_assess():
                     }
                 }
             
-            # If role_tag not in process, try to fetch from login
+            # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
             if not role_tag and username_db:
-                cur.execute("SELECT role_tag FROM login WHERE username = %s LIMIT 1", (username_db,))
-                login_row = cur.fetchone()
-                if login_row and login_row[0]:
-                    role_tag = login_row[0]
+                cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
+                src_row = cur.fetchone()
+                if src_row and src_row[0]:
+                    role_tag = src_row[0]
+                else:
+                    cur.execute("SELECT role_tag FROM process WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
+                    proc_row = cur.fetchone()
+                    if proc_row and proc_row[0]:
+                        role_tag = proc_row[0]
             
             cur.close()
             conn.close()
