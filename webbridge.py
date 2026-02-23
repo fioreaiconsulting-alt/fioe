@@ -2729,6 +2729,31 @@ Return ONLY the JSON object, no other text."""
                 # Tries normalized_linkedin first, then LOWER/TRIM linkedinurl fallback to handle
                 # normalization mismatches.  Unconditional update overwrites stale values.
                 try:
+                    # Mirror bulk path: re-read role_tag from sourcing (authoritative source)
+                    # before syncing to process, ensuring process receives the stored sourcing
+                    # value rather than a potentially stale request-supplied value.
+                    try:
+                        _sourcing_rt = None
+                        if linkedinurl:
+                            cur.execute(
+                                "SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1",
+                                (linkedinurl,)
+                            )
+                            _sr = cur.fetchone()
+                            if _sr and _sr[0]:
+                                _sourcing_rt = _sr[0]
+                        if not _sourcing_rt and username:
+                            cur.execute(
+                                "SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1",
+                                (username,)
+                            )
+                            _sr = cur.fetchone()
+                            if _sr and _sr[0]:
+                                _sourcing_rt = _sr[0]
+                        if _sourcing_rt:
+                            role_tag = _sourcing_rt
+                    except Exception as _e_src_rt:
+                        logger.warning(f"[Assess] Failed to re-read role_tag from sourcing: {_e_src_rt}")
                     if not normalized:
                         try:
                             normalized = _normalize_linkedin_to_path(linkedinurl)
@@ -8123,12 +8148,18 @@ def process_bulk_assess():
                     logger.warning(f"[BULK_ASSESS] Inline CV extraction failed for {linkedinurl}: {e_sync}")
 
             # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
-            if not role_tag and username_db:
-                cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
-                src_row = cur.fetchone()
-                if src_row and src_row[0]:
-                    role_tag = src_row[0]
-                else:
+            if not role_tag:
+                if linkedinurl:
+                    cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
+                    src_row = cur.fetchone()
+                    if src_row and src_row[0]:
+                        role_tag = src_row[0]
+                if not role_tag and username_db:
+                    cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
+                    src_row = cur.fetchone()
+                    if src_row and src_row[0]:
+                        role_tag = src_row[0]
+                if not role_tag and username_db:
                     cur.execute("SELECT role_tag FROM process WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
                     proc_row = cur.fetchone()
                     if proc_row and proc_row[0]:
@@ -8327,21 +8358,45 @@ def process_bulk_assess():
                         if cur.fetchone():
                             cur.execute("UPDATE process SET jskill = %s WHERE linkedinurl = %s", (role_tag_val, linkedinurl))
 
-                    # Sync role_tag from sourcing → process so process table is kept up-to-date.
-                    # This mirrors the bulk path: sourcing is authoritative but process must also
-                    # carry the value for downstream steps that read from process directly.
-                    if role_tag:
-                        cur.execute("""
-                            SELECT column_name FROM information_schema.columns
-                            WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
-                        """)
-                        if cur.fetchone():
+                    conn.commit()
+
+                # Sync role_tag from sourcing → process (authoritative; unconditional).
+                # MUST be outside the rating-column check so it always executes regardless of schema.
+                if role_tag:
+                    try:
+                        # Re-read the authoritative value from sourcing before writing to process.
+                        _sr_rt = None
+                        cur.execute(
+                            "SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1",
+                            (linkedinurl,)
+                        )
+                        _sr = cur.fetchone()
+                        if _sr and _sr[0]:
+                            _sr_rt = _sr[0]
+                        if not _sr_rt and username_db:
                             cur.execute(
-                                "UPDATE process SET role_tag = %s WHERE linkedinurl = %s AND (role_tag IS NULL OR role_tag = '')",
-                                (role_tag, linkedinurl)
+                                "SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1",
+                                (username_db,)
                             )
-                            if cur.rowcount:
-                                logger.info(f"[BULK_PERSIST] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
+                            _sr = cur.fetchone()
+                            if _sr and _sr[0]:
+                                _sr_rt = _sr[0]
+                        if _sr_rt:
+                            role_tag = _sr_rt
+                    except Exception as _e_src:
+                        logger.warning(f"[BULK_PERSIST] Failed to re-read role_tag from sourcing: {_e_src}")
+                    cur.execute("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
+                    """)
+                    if not cur.fetchone():
+                        cur.execute("ALTER TABLE process ADD COLUMN role_tag TEXT DEFAULT ''")
+                    cur.execute(
+                        "UPDATE process SET role_tag = %s WHERE linkedinurl = %s",
+                        (role_tag, linkedinurl)
+                    )
+                    if cur.rowcount:
+                        logger.info(f"[BULK_PERSIST] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
                     conn.commit()
                 cur.close(); conn.close()
             except Exception as e_db:
