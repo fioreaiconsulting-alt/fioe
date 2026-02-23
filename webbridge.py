@@ -2202,7 +2202,16 @@ def gemini_assess_profile():
         except Exception as _e_rt:
             logger.warning(f"[Assess] Failed to resolve role_tag from sourcing/process: {_e_rt}")
 
-    # 1. Fetch Target Skillset (jskillset) from process table (cross-check source)
+    # 1. Sync jskillset from login → process (always, before fetch — mirrors bulk path).
+    # This ensures target_skills is always populated with up-to-date recruiter skills.
+    if username and linkedinurl:
+        try:
+            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
+            _sync_login_jskillset_to_process(username, linkedinurl, normalized_for_sync or "")
+        except Exception as e_jsk_sync:
+            logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
+
+    # 2. Fetch Target Skillset (jskillset) from process table (after sync)
     # Per requirement: Cross-check against jskillset column in process table, not login table
     target_skills = []
     if linkedinurl:
@@ -2352,22 +2361,7 @@ def gemini_assess_profile():
     except Exception as e:
         logger.warning(f"[Assess] Failed to fetch process_skills: {e}")
 
-    # Sync jskillset from login → process if target_skills still empty.
-    # This ensures the vskillset inference below is not skipped due to a missing jskillset.
-    if not target_skills and username and linkedinurl:
-        try:
-            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
-            _sync_login_jskillset_to_process(username, linkedinurl, normalized_for_sync or "")
-            # Re-fetch after sync
-            target_skills = _fetch_jskillset_from_process(linkedinurl) or []
-            if not target_skills:
-                target_skills = _fetch_jskillset(username) or []
-            if target_skills:
-                logger.info(f"[Gemini Assess] target_skills populated after jskillset sync: {len(target_skills)} skills")
-        except Exception as e_jsk_sync:
-            logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
-
-    # If still empty after sync, build a conservative fallback target_skills list from
+    # If target_skills is still empty, build a conservative fallback from
     # role_tag, job_title, and any skills provided in the request body.
     # This ensures the vskillset inference is never skipped even when jskillset columns
     # are missing or linkedin URL normalization didn't match the DB row.
@@ -2386,6 +2380,55 @@ def gemini_assess_profile():
         target_skills = dedupe([t for t in fallbacks if t])[:40]
         if target_skills:
             logger.info(f"[Assess] target_skills fallback built ({len(target_skills)}) from role_tag/job_title/request")
+
+    # Read missing assessment fields from process table to mirror _assess_and_persist (bulk path).
+    # The individual path frontend sends data from the UI table row / namecard cache, which may
+    # be incomplete.  Filling in from the DB ensures all criteria (especially product, seniority,
+    # sector, tenure) are evaluated — not just the ones the UI happened to have in cache.
+    product = []
+    if linkedinurl:
+        try:
+            import psycopg2 as _psycopg2_fill
+            _pg_fill = _psycopg2_fill.connect(
+                host=os.getenv("PGHOST","localhost"), port=int(os.getenv("PGPORT","5432")),
+                user=os.getenv("PGUSER","postgres"), password=os.getenv("PGPASSWORD","") or "orlha",
+                dbname=os.getenv("PGDATABASE","candidate_db")
+            )
+            try:
+                _cur_fill = _pg_fill.cursor()
+                _cur_fill.execute(
+                    "SELECT seniority, sector, experience, tenure, product FROM process WHERE linkedinurl=%s LIMIT 1",
+                    (linkedinurl,)
+                )
+                _row_fill = _cur_fill.fetchone()
+                if _row_fill:
+                    _db_seniority, _db_sector, _db_experience, _db_tenure, _db_product_raw = _row_fill
+                    if not seniority and _db_seniority:
+                        seniority = _db_seniority
+                    if not sector and _db_sector:
+                        sector = _db_sector
+                    if not experience_text and _db_experience:
+                        experience_text = (_db_experience or "").strip()
+                    if tenure is None and _db_tenure is not None:
+                        try:
+                            tenure = float(_db_tenure)
+                        except (ValueError, TypeError):
+                            pass
+                    if _db_product_raw:
+                        try:
+                            _p = json.loads(_db_product_raw) if isinstance(_db_product_raw, str) else None
+                            if isinstance(_p, list):
+                                product = _p
+                            else:
+                                product = [s.strip() for s in str(_db_product_raw).split(',') if s.strip()]
+                        except Exception:
+                            product = [s.strip() for s in str(_db_product_raw).split(',') if s.strip()]
+                    logger.info(f"[Assess] DB fallback: seniority='{seniority}' sector='{sector}' product={len(product)} tenure={tenure}")
+                _cur_fill.close()
+            finally:
+                _pg_fill.close()
+        except Exception as _e_fill:
+            logger.warning(f"[Assess] Failed to read fallback fields from process: {_e_fill}")
 
     # NEW: Trigger vskillset inference BEFORE assessment
     # This populates the vskillset column and MERGES confirmed skills with existing skillset
@@ -2413,7 +2456,8 @@ def gemini_assess_profile():
                 normalized = 'https://' + normalized
             
             # Fetch experience and existing skillset from process table
-            experience_text = ""
+            # Use a local variable to avoid overwriting the outer experience_text (from request)
+            _db_experience_text = ""
             existing_skillset = []
             
             cur.execute("""
@@ -2425,7 +2469,7 @@ def gemini_assess_profile():
             row = cur.fetchone()
             
             if row:
-                experience_text = (row[0] or "").strip()
+                _db_experience_text = (row[0] or "").strip()
                 # Parse existing skillset
                 if row[1]:
                     skillset_val = row[1]
@@ -2441,8 +2485,8 @@ def gemini_assess_profile():
                     elif isinstance(skillset_val, list):
                         existing_skillset = skillset_val
             
-            # Use experience as profile context
-            profile_context = experience_text
+            # Use experience as profile context; prefer DB value, fall back to request value
+            profile_context = _db_experience_text or experience_text
             
             if not profile_context:
                 logger.info(f"[Gemini Assess -> vskillset] Skipped: No experience data for linkedin='{linkedinurl}'")
@@ -2601,7 +2645,8 @@ Return ONLY the JSON object, no other text."""
         "linkedinurl": linkedinurl,
         "assessment_level": assessment_level,  # L1 = extractive only, L2 = contextual inference
         "tenure": tenure,  # Average tenure per employer
-        "vskillset_results": vskillset_results  # vskillset inference results for scoring
+        "vskillset_results": vskillset_results,  # vskillset inference results for scoring
+        "product": product,  # Product list from DB (mirrors _assess_and_persist)
     }
     
     # Log data completeness before assessment
@@ -8169,17 +8214,20 @@ def process_bulk_assess():
             conn.close()
             
             # Fetch target skills (jskillset/jskill)
-            # Sync from login to process first so the latest job skillset is available
+            # Sync from login to process first so the latest job skillset is available.
+            # IMPORTANT: use the recruiter's `username` from the request payload (outer scope),
+            # NOT username_db (which is the candidate's username from the process row).
             normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
-            if username_db:
+            recruiter_username = username or username_db
+            if recruiter_username:
                 try:
-                    _sync_login_jskillset_to_process(username_db, linkedinurl, normalized_for_sync or "")
+                    _sync_login_jskillset_to_process(recruiter_username, linkedinurl, normalized_for_sync or "")
                 except Exception as e_sync_jsk:
                     logger.warning(f"[BULK_ASSESS] jskillset sync failed for {linkedinurl}: {e_sync_jsk}")
 
             target_skills = _fetch_jskillset_from_process(linkedinurl) or []
-            if not target_skills and username_db:
-                target_skills = _fetch_jskillset(username_db) or []
+            if not target_skills and recruiter_username:
+                target_skills = _fetch_jskillset(recruiter_username) or []
 
             # Deterministic seniority fallback: derive from job_title keywords when model output is absent.
             # Note: we do not pass tenure (per-employer avg) as total_experience_years since they differ.
@@ -8320,6 +8368,10 @@ def process_bulk_assess():
             try:
                 result = _core_assess_profile(profile_data)
                 logger.info(f"[BULK_ASSESS] Assessment completed for {linkedinurl[:50]}: Score={result.get('total_score', 'N/A')}, Stars={result.get('stars', 0)}")
+                # Mirror gemini_assess_profile: include vskillset in result so the frontend
+                # can render the vskillset category breakdown (data.vskillset check in UI).
+                if vskillset_results and isinstance(result, dict):
+                    result["vskillset"] = vskillset_results
             except Exception as e:
                 logger.error(f"[BULK_ASSESS] Assessment error for {linkedinurl}: {e}")
                 result = {"error": f"assessment_error: {str(e)}"}
@@ -8334,8 +8386,10 @@ def process_bulk_assess():
                     WHERE table_schema='public' AND table_name='process' AND column_name='rating'
                 """)
                 if cur.fetchone():
-                    # store JSON as text
-                    rating_payload = json.dumps(result, ensure_ascii=False)
+                    # store JSON as text (exclude vskillset to keep rating payload compact,
+                    # mirroring gemini_assess_profile which strips vskillset before persisting)
+                    rating_obj = {k: v for k, v in result.items() if k != "vskillset"} if isinstance(result, dict) else result
+                    rating_payload = json.dumps(rating_obj, ensure_ascii=False)
                     logger.info(f"[BULK_PERSIST] Persisting rating for {linkedinurl[:50]}, payload size: {len(rating_payload)} bytes")
 
                     # Update by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
@@ -8398,6 +8452,48 @@ def process_bulk_assess():
                     if cur.rowcount:
                         logger.info(f"[BULK_PERSIST] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
                     conn.commit()
+
+                # Sync userid and username from sourcing → process (mirrors gemini_assess_profile owner update).
+                # Reads the recruiter's userid/username stored in the sourcing row for this candidate.
+                try:
+                    cur.execute(
+                        "SELECT userid, username FROM sourcing WHERE linkedinurl=%s AND (userid IS NOT NULL OR username IS NOT NULL) LIMIT 1",
+                        (linkedinurl,)
+                    )
+                    _src_owner = cur.fetchone()
+                    if _src_owner:
+                        _src_userid, _src_username = _src_owner
+                        # Build update: only set columns that exist and have values; don't overwrite existing
+                        cur.execute("""
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='process'
+                              AND column_name IN ('userid','username')
+                        """)
+                        _owner_cols = {r[0] for r in cur.fetchall()}
+                        _owner_parts = []
+                        _owner_vals = []
+                        if 'userid' in _owner_cols and _src_userid:
+                            _owner_parts.append("userid = COALESCE(NULLIF(userid, ''), %s)")
+                            _owner_vals.append(_src_userid)
+                        if 'username' in _owner_cols and _src_username:
+                            _owner_parts.append("username = COALESCE(NULLIF(username, ''), %s)")
+                            _owner_vals.append(_src_username)
+                        if _owner_parts:
+                            _owner_vals.append(linkedinurl)
+                            cur.execute(
+                                "UPDATE process SET " + ", ".join(_owner_parts) + " WHERE linkedinurl=%s",
+                                tuple(_owner_vals)
+                            )
+                            if cur.rowcount:
+                                logger.info(f"[BULK_PERSIST] Synced userid/username from sourcing→process for {linkedinurl[:50]}")
+                            conn.commit()
+                except Exception as _e_owner:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    logger.warning(f"[BULK_PERSIST] Failed to sync userid/username from sourcing: {_e_owner}")
+
                 cur.close(); conn.close()
             except Exception as e_db:
                 logger.warning(f"[BulkAssess->DB] Failed to write rating for {linkedinurl}: {e_db}")

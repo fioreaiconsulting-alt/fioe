@@ -1729,6 +1729,7 @@ async function runBulkAssessmentFromSearch() {
     try {
         const payload = {
             userid: uid,
+            username: window.__SV_ACTIVE_USERNAME || '',
             linkedinurls: linkedinurls,
             async: true,
             custom_weights: getActiveWeights(),
@@ -3821,6 +3822,16 @@ async function triggerLevel1Assessment(tr, anchor) {
             }
         } catch(e) { console.warn("Failed to cache assessment HTML", e); }
 
+        // Render vskillset from assessment response into UI (mirrors performCombinedAssessment)
+        try {
+            if (data.vskillset && Array.isArray(data.vskillset) && data.vskillset.length > 0
+                    && window.vskillset && typeof window.vskillset.renderVSkillsetToUI === 'function') {
+                const highSkills = data.vskillset.filter(i => i && i.category === 'High').map(i => i.skill);
+                window.vskillset.renderVSkillsetToUI(anchor, { vskillset: data.vskillset, skillset: highSkills });
+                console.log('[Assessment L1] vskillset rendered:', data.vskillset.length, 'skills,', highSkills.length, 'High');
+            }
+        } catch(e) { console.warn('[Assessment L1] Failed to render vskillset', e); }
+
         let totalScoreVal = 0;
         try {
             totalScoreVal = parseInt(data.total_score.replace('%', '')) || 0;
@@ -3961,6 +3972,7 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     const payload = {
         linkedinurls: [anchor],
         userid: window.__SV_ACTIVE_USERID || '',
+        username: window.__SV_ACTIVE_USERNAME || '',
         async: false,
         custom_weights: customWeights,
         assessment_level: 'L2'
