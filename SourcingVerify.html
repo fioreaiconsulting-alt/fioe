@@ -6146,7 +6146,7 @@ window.deleteBackendRow = async function(url) {
     try {
         await fetch(API_DELETE, {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ linkedinurls:[url] })
+            body:JSON.stringify({ linkedinurls:[url], include_process: true })
         });
     } catch(e) { console.error("Backend delete failed", e); throw e; }
 };
@@ -6432,7 +6432,8 @@ async function exportExcelXlsxAndPurge() {
       const res = await fetch(API_DELETE, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ linkedinurls: allUrls })
+        // preserve_appeal=true: retain sourcing rows that have an appeal value
+        body:JSON.stringify({ linkedinurls: allUrls, preserve_appeal: true })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Purge failed');
