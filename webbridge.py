@@ -2147,32 +2147,35 @@ def gemini_assess_profile():
     # then fallback to process table. Login table is no longer used for role-based assessment.
     if not role_tag and (linkedinurl or username):
         try:
-            import psycopg2 as _pg2
-            _pg_conn = _pg2.connect(
+            import psycopg2
+            _pg_conn = psycopg2.connect(
                 host=os.getenv("PGHOST","localhost"), port=int(os.getenv("PGPORT","5432")),
                 user=os.getenv("PGUSER","postgres"), password=os.getenv("PGPASSWORD","") or "orlha",
                 dbname=os.getenv("PGDATABASE","candidate_db")
             )
-            _pg_cur = _pg_conn.cursor()
-            # Try sourcing by linkedinurl first, then by username
-            if linkedinurl:
-                _pg_cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
-                _r = _pg_cur.fetchone()
-                if _r and _r[0]: role_tag = _r[0]
-            if not role_tag and username:
-                _pg_cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
-                _r = _pg_cur.fetchone()
-                if _r and _r[0]: role_tag = _r[0]
-            # Fallback to process table
-            if not role_tag and linkedinurl:
-                _pg_cur.execute("SELECT role_tag FROM process WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
-                _r = _pg_cur.fetchone()
-                if _r and _r[0]: role_tag = _r[0]
-            if not role_tag and username:
-                _pg_cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
-                _r = _pg_cur.fetchone()
-                if _r and _r[0]: role_tag = _r[0]
-            _pg_cur.close(); _pg_conn.close()
+            try:
+                _pg_cur = _pg_conn.cursor()
+                # Try sourcing by linkedinurl first, then by username
+                if linkedinurl:
+                    _pg_cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
+                    _r = _pg_cur.fetchone()
+                    if _r and _r[0]: role_tag = _r[0]
+                if not role_tag and username:
+                    _pg_cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+                    _r = _pg_cur.fetchone()
+                    if _r and _r[0]: role_tag = _r[0]
+                # Fallback to process table
+                if not role_tag and linkedinurl:
+                    _pg_cur.execute("SELECT role_tag FROM process WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
+                    _r = _pg_cur.fetchone()
+                    if _r and _r[0]: role_tag = _r[0]
+                if not role_tag and username:
+                    _pg_cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+                    _r = _pg_cur.fetchone()
+                    if _r and _r[0]: role_tag = _r[0]
+                _pg_cur.close()
+            finally:
+                _pg_conn.close()
         except Exception as _e_rt:
             logger.warning(f"[Assess] Failed to resolve role_tag from sourcing/process: {_e_rt}")
 
@@ -2957,8 +2960,10 @@ def user_update_role_tag():
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
         cur.execute("UPDATE login SET role_tag=%s WHERE username=%s", (role_tag, username))
-        # Ensure role_tag column exists in sourcing table and update all records for this user
-        cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
+        # Ensure role_tag column exists in sourcing table, then update all records for this user
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
+        if not cur.fetchone():
+            cur.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
         cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag, username))
         conn.commit()
         cur.close(); conn.close()
@@ -4434,9 +4439,9 @@ def _write_outputs(job_id, rows):
                             rt_row = cur.fetchone()
                             login_role_tag = rt_row[0] if rt_row and rt_row[0] else ""
                             if login_role_tag:
-                                cur.execute("""
-                                    ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''
-                                """)
+                                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
+                                if not cur.fetchone():
+                                    cur.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
                                 cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (login_role_tag, active_username))
                                 conn.commit()
                                 logger.info(f"[Ingest] Transferred role_tag='{login_role_tag}' from login to sourcing for user='{active_username}'.")
@@ -4551,9 +4556,9 @@ def start_job():
                 # Update login table
                 cur_l.execute("UPDATE login SET role_tag=%s WHERE username=%s", (role_tag_val, username))
                 # Transfer role_tag to sourcing table (authoritative source for assessments)
-                cur_l.execute("""
-                    ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''
-                """)
+                cur_l.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
+                if not cur_l.fetchone():
+                    cur_l.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
                 cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag_val, username))
                 conn_l.commit()
                 cur_l.close()
