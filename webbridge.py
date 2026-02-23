@@ -2329,6 +2329,21 @@ def gemini_assess_profile():
     except Exception as e:
         logger.warning(f"[Assess] Failed to fetch process_skills: {e}")
 
+    # Sync jskillset from login → process if target_skills still empty.
+    # This ensures the vskillset inference below is not skipped due to a missing jskillset.
+    if not target_skills and username and linkedinurl:
+        try:
+            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
+            _sync_login_jskillset_to_process(username, linkedinurl, normalized_for_sync or "")
+            # Re-fetch after sync
+            target_skills = _fetch_jskillset_from_process(linkedinurl) or []
+            if not target_skills:
+                target_skills = _fetch_jskillset(username) or []
+            if target_skills:
+                logger.info(f"[Gemini Assess] target_skills populated after jskillset sync: {len(target_skills)} skills")
+        except Exception as e_jsk_sync:
+            logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
+
     # NEW: Trigger vskillset inference BEFORE assessment
     # This populates the vskillset column and MERGES confirmed skills with existing skillset
     vskillset_results = None  # Initialize to avoid NameError later
