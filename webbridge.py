@@ -2724,7 +2724,32 @@ Return ONLY the JSON object, no other text."""
                     if js_updated == 0:
                         cur.execute("UPDATE process SET jskill=%s WHERE linkedinurl=%s", (role_tag, linkedinurl))
                     conn.commit()
-                
+
+                # Sync role_tag from sourcing → process (mirrors bulk path).
+                # process.role_tag must carry the same value as sourcing.role_tag so downstream
+                # steps that read from process directly get a consistent value.
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
+                """)
+                if cur.fetchone():
+                    rt_updated = 0
+                    if normalized:
+                        cur.execute(
+                            "UPDATE process SET role_tag=%s WHERE normalized_linkedin=%s AND (role_tag IS NULL OR role_tag='')",
+                            (role_tag, normalized)
+                        )
+                        rt_updated = cur.rowcount
+                    if rt_updated == 0:
+                        cur.execute(
+                            "UPDATE process SET role_tag=%s WHERE linkedinurl=%s AND (role_tag IS NULL OR role_tag='')",
+                            (role_tag, linkedinurl)
+                        )
+                        rt_updated = cur.rowcount
+                    if rt_updated:
+                        logger.info(f"[Assess] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
+                    conn.commit()
+
                 # Now trigger jskillset sync from login to process
                 _sync_login_jskillset_to_process(username, linkedinurl, normalized)
 
@@ -8290,6 +8315,22 @@ def process_bulk_assess():
                         """)
                         if cur.fetchone():
                             cur.execute("UPDATE process SET jskill = %s WHERE linkedinurl = %s", (role_tag_val, linkedinurl))
+
+                    # Sync role_tag from sourcing → process so process table is kept up-to-date.
+                    # This mirrors the bulk path: sourcing is authoritative but process must also
+                    # carry the value for downstream steps that read from process directly.
+                    if role_tag:
+                        cur.execute("""
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
+                        """)
+                        if cur.fetchone():
+                            cur.execute(
+                                "UPDATE process SET role_tag = %s WHERE linkedinurl = %s AND (role_tag IS NULL OR role_tag = '')",
+                                (role_tag, linkedinurl)
+                            )
+                            if cur.rowcount:
+                                logger.info(f"[BULK_PERSIST] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
                     conn.commit()
                 cur.close(); conn.close()
             except Exception as e_db:
