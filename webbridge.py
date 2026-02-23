@@ -2413,7 +2413,8 @@ def gemini_assess_profile():
                 normalized = 'https://' + normalized
             
             # Fetch experience and existing skillset from process table
-            experience_text = ""
+            # Use a local variable to avoid overwriting the outer experience_text (from request)
+            _db_experience_text = ""
             existing_skillset = []
             
             cur.execute("""
@@ -2425,7 +2426,7 @@ def gemini_assess_profile():
             row = cur.fetchone()
             
             if row:
-                experience_text = (row[0] or "").strip()
+                _db_experience_text = (row[0] or "").strip()
                 # Parse existing skillset
                 if row[1]:
                     skillset_val = row[1]
@@ -2441,8 +2442,8 @@ def gemini_assess_profile():
                     elif isinstance(skillset_val, list):
                         existing_skillset = skillset_val
             
-            # Use experience as profile context
-            profile_context = experience_text
+            # Use experience as profile context; prefer DB value, fall back to request value
+            profile_context = _db_experience_text or experience_text
             
             if not profile_context:
                 logger.info(f"[Gemini Assess -> vskillset] Skipped: No experience data for linkedin='{linkedinurl}'")
