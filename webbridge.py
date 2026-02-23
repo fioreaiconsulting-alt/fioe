@@ -2725,30 +2725,41 @@ Return ONLY the JSON object, no other text."""
                         cur.execute("UPDATE process SET jskill=%s WHERE linkedinurl=%s", (role_tag, linkedinurl))
                     conn.commit()
 
-                # Sync role_tag from sourcing → process (mirrors bulk path).
-                # process.role_tag must carry the same value as sourcing.role_tag so downstream
-                # steps that read from process directly get a consistent value.
-                cur.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
-                """)
-                if cur.fetchone():
-                    rt_updated = 0
-                    if normalized:
-                        cur.execute(
-                            "UPDATE process SET role_tag=%s WHERE normalized_linkedin=%s AND (role_tag IS NULL OR role_tag='')",
-                            (role_tag, normalized)
-                        )
-                        rt_updated = cur.rowcount
-                    if rt_updated == 0:
-                        cur.execute(
-                            "UPDATE process SET role_tag=%s WHERE linkedinurl=%s AND (role_tag IS NULL OR role_tag='')",
-                            (role_tag, linkedinurl)
-                        )
-                        rt_updated = cur.rowcount
-                    if rt_updated:
-                        logger.info(f"[Assess] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
-                    conn.commit()
+                # Robust role_tag → process sync (sourcing is authoritative; mirrors bulk path).
+                # Tries normalized_linkedin first, then LOWER/TRIM linkedinurl fallback to handle
+                # normalization mismatches.  Unconditional update overwrites stale values.
+                try:
+                    if not normalized:
+                        try:
+                            normalized = _normalize_linkedin_to_path(linkedinurl)
+                        except Exception:
+                            normalized = None
+                    cur.execute("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
+                    """)
+                    if cur.fetchone():
+                        rt_updated = 0
+                        if normalized:
+                            cur.execute(
+                                "UPDATE process SET role_tag = %s WHERE normalized_linkedin = %s",
+                                (role_tag, normalized)
+                            )
+                            rt_updated = cur.rowcount
+                        if rt_updated == 0:
+                            cur.execute(
+                                "UPDATE process SET role_tag = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR linkedinurl = %s",
+                                (role_tag, linkedinurl.lower().rstrip('/'), linkedinurl)
+                            )
+                            rt_updated = cur.rowcount
+                        conn.commit()
+                        if rt_updated:
+                            logger.info(f"[Assess] Synced role_tag='{role_tag}' into process for linkedin='{linkedinurl[:80]}' updated_rows={rt_updated}")
+                        else:
+                            logger.info(f"[Assess] role_tag sync attempted but no matching process row found for linkedin='{linkedinurl[:80]}' (normalized='{normalized}')")
+                except Exception as e_up:
+                    conn.rollback()
+                    logger.warning(f"[Assess] Failed to update process.role_tag for {linkedinurl}: {e_up}")
 
                 # Now trigger jskillset sync from login to process
                 _sync_login_jskillset_to_process(username, linkedinurl, normalized)
