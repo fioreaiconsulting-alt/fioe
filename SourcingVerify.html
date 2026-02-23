@@ -1729,6 +1729,7 @@ async function runBulkAssessmentFromSearch() {
     try {
         const payload = {
             userid: uid,
+            username: window.__SV_ACTIVE_USERNAME || '',
             linkedinurls: linkedinurls,
             async: true,
             custom_weights: getActiveWeights(),
@@ -3971,6 +3972,7 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     const payload = {
         linkedinurls: [anchor],
         userid: window.__SV_ACTIVE_USERID || '',
+        username: window.__SV_ACTIVE_USERNAME || '',
         async: false,
         custom_weights: customWeights,
         assessment_level: 'L2'

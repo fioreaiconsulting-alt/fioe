@@ -8214,17 +8214,20 @@ def process_bulk_assess():
             conn.close()
             
             # Fetch target skills (jskillset/jskill)
-            # Sync from login to process first so the latest job skillset is available
+            # Sync from login to process first so the latest job skillset is available.
+            # IMPORTANT: use the recruiter's `username` from the request payload (outer scope),
+            # NOT username_db (which is the candidate's username from the process row).
             normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
-            if username_db:
+            recruiter_username = username or username_db
+            if recruiter_username:
                 try:
-                    _sync_login_jskillset_to_process(username_db, linkedinurl, normalized_for_sync or "")
+                    _sync_login_jskillset_to_process(recruiter_username, linkedinurl, normalized_for_sync or "")
                 except Exception as e_sync_jsk:
                     logger.warning(f"[BULK_ASSESS] jskillset sync failed for {linkedinurl}: {e_sync_jsk}")
 
             target_skills = _fetch_jskillset_from_process(linkedinurl) or []
-            if not target_skills and username_db:
-                target_skills = _fetch_jskillset(username_db) or []
+            if not target_skills and recruiter_username:
+                target_skills = _fetch_jskillset(recruiter_username) or []
 
             # Deterministic seniority fallback: derive from job_title keywords when model output is absent.
             # Note: we do not pass tenure (per-employer avg) as total_experience_years since they differ.
