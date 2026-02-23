@@ -5163,15 +5163,20 @@ def sourcing_update():
 def sourcing_delete():
     data=request.get_json(force=True, silent=True) or {}
     arr=data.get("linkedinurls")
-    if not isinstance(arr,list) or not arr:
-        return jsonify({"error":"linkedinurls list required"}), 400
-    cleaned=[(x or "").strip() for x in arr if (x or "").strip()]
-    if not cleaned:
-        return jsonify({"error":"No valid linkedinurls"}), 400
+    userid=(data.get("userid") or "").strip()
     # include_process=True  → also delete matching rows from the process table (used by rebate)
     include_process = bool(data.get("include_process", False))
-    # preserve_appeal=True  → skip sourcing rows that have a non-empty appeal value
-    preserve_appeal = bool(data.get("preserve_appeal", False))
+    # Appeal safeguard: records with a non-empty appeal value are NEVER deleted regardless of caller.
+    APPEAL_GUARD = "(appeal IS NULL OR appeal = '')"
+
+    # Require at least one of: linkedinurls list or userid
+    if not userid and (not isinstance(arr, list) or not arr):
+        return jsonify({"error":"linkedinurls list or userid required"}), 400
+
+    cleaned = []
+    if isinstance(arr, list):
+        cleaned = [(x or "").strip() for x in arr if (x or "").strip()]
+
     try:
         import psycopg2
         pg_host=os.getenv("PGHOST","localhost")
@@ -5182,18 +5187,26 @@ def sourcing_delete():
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
 
-        if preserve_appeal:
-            # Only delete sourcing rows where appeal is null or empty
+        if userid and not cleaned:
+            # User-scoped purge: delete all sourcing rows for this user (appeal rows protected)
             cur.execute(
-                "DELETE FROM sourcing WHERE linkedinurl = ANY(%s) AND (appeal IS NULL OR appeal = '')",
-                (cleaned,)
+                f"DELETE FROM sourcing WHERE userid = %s AND {APPEAL_GUARD}",
+                (userid,)
             )
         else:
-            cur.execute("DELETE FROM sourcing WHERE linkedinurl = ANY(%s)", (cleaned,))
+            # URL-list delete: appeal rows are always protected
+            cur.execute(
+                f"DELETE FROM sourcing WHERE linkedinurl = ANY(%s) AND {APPEAL_GUARD}",
+                (cleaned,)
+            )
         deleted=cur.rowcount
 
         if include_process:
-            cur.execute("DELETE FROM process WHERE linkedinurl = ANY(%s)", (cleaned,))
+            # For rebate: also remove from process table (no appeal guard needed there)
+            if userid and not cleaned:
+                cur.execute("DELETE FROM process WHERE userid = %s", (userid,))
+            else:
+                cur.execute("DELETE FROM process WHERE linkedinurl = ANY(%s)", (cleaned,))
 
         conn.commit()
         cur.close(); conn.close()

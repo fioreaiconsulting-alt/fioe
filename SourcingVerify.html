@@ -6439,17 +6439,14 @@ async function exportExcelXlsxAndPurge() {
 
   setStatus('Excel downloaded. Purging sourcing table…');
   try {
-    const allUrls = allRows.map(r => r.linkedinurl).filter(Boolean);
-    if (allUrls.length) {
-      const res = await fetch(API_DELETE, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        // preserve_appeal=true: retain sourcing rows that have an appeal value
-        body:JSON.stringify({ linkedinurls: allUrls, preserve_appeal: true })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Purge failed');
-    }
+    // Delete all sourcing rows for this user; appeal records are always protected server-side.
+    const res = await fetch(API_DELETE, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ userid: uid })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Purge failed');
     rowsData = [];
     totalRowCount = 0;
     renderTable();
