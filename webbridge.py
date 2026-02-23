@@ -8004,6 +8004,33 @@ def process_bulk_assess():
                     }
                 }
             
+            # If CV data is present but key fields are still empty (background analysis thread
+            # has not yet finished persisting), run synchronous extraction inline so that
+            # seniority, sector, experience, skillset, and product are all available before
+            # assessment proceeds.  This prevents incomplete category breakdowns.
+            if cv_data and not (experience_text and seniority and sector):
+                logger.info(f"[BULK_ASSESS] Missing fields (exp={bool(experience_text)}, seniority='{seniority}', sector='{sector}') - running sync CV extraction for {linkedinurl[:50]}")
+                try:
+                    cv_bytes = cv_data if isinstance(cv_data, bytes) else bytes(cv_data)
+                    cv_obj = _analyze_cv_bytes_sync(cv_bytes)
+                    if cv_obj:
+                        if not experience_text:
+                            experience_text = "\n".join(cv_obj.get("experience", [])) or ""
+                        if not seniority:
+                            seniority = cv_obj.get("seniority", "")
+                        if not sector:
+                            sector = cv_obj.get("sector", "")
+                        if not candidate_skills:
+                            extracted_skills = cv_obj.get("skillset", [])
+                            candidate_skills = [str(s).strip() for s in extracted_skills if str(s).strip()]
+                        if not tenure:
+                            tenure = cv_obj.get("tenure")
+                        if not product:
+                            product = cv_obj.get("product_list", [])
+                        logger.info(f"[BULK_ASSESS] Sync extraction complete: exp={bool(experience_text)}, seniority='{seniority}', sector='{sector}', skills={len(candidate_skills)}")
+                except Exception as e_sync:
+                    logger.warning(f"[BULK_ASSESS] Inline CV extraction failed for {linkedinurl}: {e_sync}")
+
             # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
             if not role_tag and username_db:
                 cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
