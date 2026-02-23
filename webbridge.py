@@ -8096,12 +8096,30 @@ def process_bulk_assess():
             
             # Fetch by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
             cur.execute("""
-                SELECT jobtitle, company, country, seniority, sector, experience, skillset, username, role_tag, cv, tenure, product, rating
+                SELECT jobtitle, company, country, seniority, sector, experience, skillset, username, role_tag, cv, tenure, product
                 FROM process 
                 WHERE linkedinurl = %s
                 LIMIT 1
             """, (linkedinurl,))
             row = cur.fetchone()
+
+            # Safe fetch of existing rating — check column existence first to avoid schema errors.
+            existing_rating_str = None
+            try:
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='process' AND column_name='rating'"
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        "SELECT rating FROM process WHERE linkedinurl=%s LIMIT 1",
+                        (linkedinurl,)
+                    )
+                    r_row = cur.fetchone()
+                    if r_row:
+                        existing_rating_str = r_row[0]
+            except Exception:
+                existing_rating_str = None
             
             # Default values if profile not found
             job_title = ""
@@ -8116,7 +8134,6 @@ def process_bulk_assess():
             cv_data = None
             tenure = None
             product = []
-            existing_rating_str = None
             
             if row:
                 job_title = row[0] or ""
@@ -8133,12 +8150,10 @@ def process_bulk_assess():
                     cv_data = row[9] if len(row) >= 10 else None
                     tenure = row[10] if len(row) >= 11 else None
                     product_str = row[11] if len(row) >= 12 else ""
-                    existing_rating_str = row[12] if len(row) >= 13 else None
                 except (IndexError, TypeError):
                     cv_data = None
                     tenure = None
                     product_str = ""
-                    existing_rating_str = None
                 
                 # Parse skillset
                 if skillset_str:
