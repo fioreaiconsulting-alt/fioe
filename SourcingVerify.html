@@ -165,9 +165,6 @@
 
       <!-- Combined Bulk Assessment Button (Upload + Assessment) -->
       <button id="bulkAssessmentBtn" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Verify the directory settings before initiating bulk PDF upload and assessment.">Bulk Assessment</button>
-      <label id="forceReassessLabel" title="Re-run assessment even for profiles that already have a rating" style="font-size:12px; color:#64748b; margin-right:8px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
-        <input type="checkbox" id="forceReassessChk"> Force re-assess
-      </label>
       <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
       
       <!-- Hidden file input for directory upload -->
@@ -1717,7 +1714,7 @@ async function runBulkAssessmentFromSearch() {
     // Check if there are any profiles to assess
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
-            alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. Check "Force re-assess" to re-run them.`);
+            alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
         } else {
             alert('No profiles found to assess');
         }
@@ -3919,11 +3916,17 @@ async function triggerLevel1Assessment(tr, anchor) {
                         if(typeof openAppealModal === 'function') {
                             openAppealModal({ finalJob: jobTitle, roleTag: roleTag, anchor: anchor });
                         } else {
-                            // Fallback simple appeal prompt
+                            // Fallback simple appeal prompt — saves to sourcing.appeal
                             const reason = prompt("Enter justification for appeal:");
                             if(reason) {
-                                // Assuming appeal saving logic
-                                setStatus("Appeal submitted (mock).", "success"); 
+                                fetch(APPEAL_SAVE_API, {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ linkedinurl: anchor, field: 'appeal', value: reason })
+                                }).then(r => r.json()).then(d => {
+                                    if (d.updated) setStatus("Appeal saved.", "success");
+                                    else setStatus("Appeal save failed: " + (d.error || 'unknown'), "error");
+                                }).catch(e => setStatus("Appeal save error: " + e.message, "error"));
                             }
                         }
                     },
@@ -4841,8 +4844,14 @@ function renderTable(){
                     const anchor = content.dataset.anchor;
                     const justification = prompt("Please enter your justification for appeal:");
                     if (justification) {
-                        alert("Appeal submitted for review.");
-                        // Here you would typically call an API to save the appeal
+                        fetch(APPEAL_SAVE_API, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ linkedinurl: anchor, field: 'appeal', value: justification })
+                        }).then(r => r.json()).then(d => {
+                            if (d.updated) { alert("Appeal saved successfully."); }
+                            else { alert("Appeal save failed: " + (d.error || 'unknown error')); }
+                        }).catch(e => { alert("Appeal save error: " + e.message); });
                     }
                 };
                 assessmentActionContainer.appendChild(appealBtn);
@@ -6149,7 +6158,7 @@ window.deleteBackendRow = async function(url) {
     try {
         await fetch(API_DELETE, {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ linkedinurls:[url] })
+            body:JSON.stringify({ linkedinurls:[url], include_process: true })
         });
     } catch(e) { console.error("Backend delete failed", e); throw e; }
 };
@@ -6435,7 +6444,8 @@ async function exportExcelXlsxAndPurge() {
       const res = await fetch(API_DELETE, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ linkedinurls: allUrls })
+        // preserve_appeal=true: retain sourcing rows that have an appeal value
+        body:JSON.stringify({ linkedinurls: allUrls, preserve_appeal: true })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Purge failed');
