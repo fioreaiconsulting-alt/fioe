@@ -2344,6 +2344,26 @@ def gemini_assess_profile():
         except Exception as e_jsk_sync:
             logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
 
+    # If still empty after sync, build a conservative fallback target_skills list from
+    # role_tag, job_title, and any skills provided in the request body.
+    # This ensures the vskillset inference is never skipped even when jskillset columns
+    # are missing or linkedin URL normalization didn't match the DB row.
+    if not target_skills:
+        fallbacks = []
+        if role_tag:
+            fallbacks += [s.strip() for s in re.split(r'[,;/|]+', role_tag) if s.strip()]
+        if job_title:
+            fallbacks += [s.strip() for s in re.split(r'[,;/|]+', job_title) if s.strip()]
+        parsed_sk = data.get('skills') or data.get('skillset')
+        if parsed_sk:
+            if isinstance(parsed_sk, list):
+                fallbacks += [s.strip() for s in parsed_sk if isinstance(s, str) and s.strip()]
+            elif isinstance(parsed_sk, str):
+                fallbacks += [s.strip() for s in re.split(r'[,;/|]+', parsed_sk) if s.strip()]
+        target_skills = dedupe([t for t in fallbacks if t])[:40]
+        if target_skills:
+            logger.info(f"[Assess] target_skills fallback built ({len(target_skills)}) from role_tag/job_title/request")
+
     # NEW: Trigger vskillset inference BEFORE assessment
     # This populates the vskillset column and MERGES confirmed skills with existing skillset
     vskillset_results = None  # Initialize to avoid NameError later
