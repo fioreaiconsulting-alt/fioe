@@ -7854,8 +7854,10 @@ def process_parse_cv_and_update():
         if not obj:
              return jsonify({"error": "Analysis returned no data"}), 500
              
-        # Trigger persistence in background
-        threading.Thread(target=analyze_cv_background, args=(linkedinurl, pdf_bytes)).start()
+        # Persist synchronously so DB fields are ready before bulk_assess runs.
+        # (Background thread approach caused a race: bulk_assess read empty fields
+        # because the thread hadn't finished writing when the next request arrived.)
+        analyze_cv_background(linkedinurl, pdf_bytes)
         
         return jsonify({
             "skillset": obj.get("skillset", []),
