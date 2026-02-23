@@ -2387,6 +2387,55 @@ def gemini_assess_profile():
         if target_skills:
             logger.info(f"[Assess] target_skills fallback built ({len(target_skills)}) from role_tag/job_title/request")
 
+    # Read missing assessment fields from process table to mirror _assess_and_persist (bulk path).
+    # The individual path frontend sends data from the UI table row / namecard cache, which may
+    # be incomplete.  Filling in from the DB ensures all criteria (especially product, seniority,
+    # sector, tenure) are evaluated — not just the ones the UI happened to have in cache.
+    product = []
+    if linkedinurl:
+        try:
+            import psycopg2 as _psycopg2_fill
+            _pg_fill = _psycopg2_fill.connect(
+                host=os.getenv("PGHOST","localhost"), port=int(os.getenv("PGPORT","5432")),
+                user=os.getenv("PGUSER","postgres"), password=os.getenv("PGPASSWORD","") or "orlha",
+                dbname=os.getenv("PGDATABASE","candidate_db")
+            )
+            try:
+                _cur_fill = _pg_fill.cursor()
+                _cur_fill.execute(
+                    "SELECT seniority, sector, experience, tenure, product FROM process WHERE linkedinurl=%s LIMIT 1",
+                    (linkedinurl,)
+                )
+                _row_fill = _cur_fill.fetchone()
+                if _row_fill:
+                    _db_seniority, _db_sector, _db_experience, _db_tenure, _db_product_raw = _row_fill
+                    if not seniority and _db_seniority:
+                        seniority = _db_seniority
+                    if not sector and _db_sector:
+                        sector = _db_sector
+                    if not experience_text and _db_experience:
+                        experience_text = (_db_experience or "").strip()
+                    if tenure is None and _db_tenure is not None:
+                        try:
+                            tenure = float(_db_tenure)
+                        except (ValueError, TypeError):
+                            pass
+                    if _db_product_raw:
+                        try:
+                            _p = json.loads(_db_product_raw) if isinstance(_db_product_raw, str) else None
+                            if isinstance(_p, list):
+                                product = _p
+                            else:
+                                product = [s.strip() for s in str(_db_product_raw).split(',') if s.strip()]
+                        except Exception:
+                            product = [s.strip() for s in str(_db_product_raw).split(',') if s.strip()]
+                    logger.info(f"[Assess] DB fallback: seniority='{seniority}' sector='{sector}' product={len(product)} tenure={tenure}")
+                _cur_fill.close()
+            finally:
+                _pg_fill.close()
+        except Exception as _e_fill:
+            logger.warning(f"[Assess] Failed to read fallback fields from process: {_e_fill}")
+
     # NEW: Trigger vskillset inference BEFORE assessment
     # This populates the vskillset column and MERGES confirmed skills with existing skillset
     vskillset_results = None  # Initialize to avoid NameError later
@@ -2602,7 +2651,8 @@ Return ONLY the JSON object, no other text."""
         "linkedinurl": linkedinurl,
         "assessment_level": assessment_level,  # L1 = extractive only, L2 = contextual inference
         "tenure": tenure,  # Average tenure per employer
-        "vskillset_results": vskillset_results  # vskillset inference results for scoring
+        "vskillset_results": vskillset_results,  # vskillset inference results for scoring
+        "product": product,  # Product list from DB (mirrors _assess_and_persist)
     }
     
     # Log data completeness before assessment
