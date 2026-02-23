@@ -2143,8 +2143,8 @@ def gemini_assess_profile():
     assessment_level = (data.get("assessment_level") or "L2").strip().upper()  # L2 by default
     tenure = data.get("tenure")  # Average tenure value
 
-    # Resolve role_tag: if not provided by client, look up from sourcing table (authoritative)
-    # then fallback to process table. Login table is no longer used for role-based assessment.
+    # Resolve role_tag: sourcing table is authoritative; fallback to process, then login.
+    # After resolution, write back to sourcing table so it is available for future assessments.
     if not role_tag and (linkedinurl or username):
         try:
             import psycopg2
@@ -2155,7 +2155,7 @@ def gemini_assess_profile():
             )
             try:
                 _pg_cur = _pg_conn.cursor()
-                # Try sourcing by linkedinurl first, then by username
+                # 1. Try sourcing by linkedinurl first, then by username (authoritative source)
                 if linkedinurl:
                     _pg_cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
                     _r = _pg_cur.fetchone()
@@ -2164,7 +2164,7 @@ def gemini_assess_profile():
                     _pg_cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
                     _r = _pg_cur.fetchone()
                     if _r and _r[0]: role_tag = _r[0]
-                # Fallback to process table
+                # 2. Fallback to process table
                 if not role_tag and linkedinurl:
                     _pg_cur.execute("SELECT role_tag FROM process WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
                     _r = _pg_cur.fetchone()
@@ -2173,6 +2173,29 @@ def gemini_assess_profile():
                     _pg_cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
                     _r = _pg_cur.fetchone()
                     if _r and _r[0]: role_tag = _r[0]
+                # 3. Fallback to login table
+                if not role_tag and username:
+                    _pg_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='login' AND column_name='role_tag'")
+                    if _pg_cur.fetchone():
+                        _pg_cur.execute("SELECT role_tag FROM login WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+                        _r = _pg_cur.fetchone()
+                        if _r and _r[0]: role_tag = _r[0]
+                # 4. Persist resolved role_tag into sourcing table so it is available for future assessments.
+                # This mirrors the bulk path and eliminates the discrepancy where individual assessments
+                # could not find role_tag in sourcing even though it existed in login.
+                if role_tag and username:
+                    try:
+                        _pg_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
+                        if not _pg_cur.fetchone():
+                            _pg_cur.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
+                        _pg_cur.execute(
+                            "UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')",
+                            (role_tag, username)
+                        )
+                        _pg_conn.commit()
+                        logger.info(f"[Assess] Synced role_tag='{role_tag}' from login→sourcing for user='{username}'")
+                    except Exception as _e_sync_rt:
+                        logger.warning(f"[Assess] Failed to sync role_tag to sourcing: {_e_sync_rt}")
                 _pg_cur.close()
             finally:
                 _pg_conn.close()
