@@ -3916,11 +3916,17 @@ async function triggerLevel1Assessment(tr, anchor) {
                         if(typeof openAppealModal === 'function') {
                             openAppealModal({ finalJob: jobTitle, roleTag: roleTag, anchor: anchor });
                         } else {
-                            // Fallback simple appeal prompt
+                            // Fallback simple appeal prompt — saves to sourcing.appeal
                             const reason = prompt("Enter justification for appeal:");
                             if(reason) {
-                                // Assuming appeal saving logic
-                                setStatus("Appeal submitted (mock).", "success"); 
+                                fetch(APPEAL_SAVE_API, {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ linkedinurl: anchor, field: 'appeal', value: reason })
+                                }).then(r => r.json()).then(d => {
+                                    if (d.updated) setStatus("Appeal saved.", "success");
+                                    else setStatus("Appeal save failed: " + (d.error || 'unknown'), "error");
+                                }).catch(e => setStatus("Appeal save error: " + e.message, "error"));
                             }
                         }
                     },
@@ -4838,8 +4844,14 @@ function renderTable(){
                     const anchor = content.dataset.anchor;
                     const justification = prompt("Please enter your justification for appeal:");
                     if (justification) {
-                        alert("Appeal submitted for review.");
-                        // Here you would typically call an API to save the appeal
+                        fetch(APPEAL_SAVE_API, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ linkedinurl: anchor, field: 'appeal', value: justification })
+                        }).then(r => r.json()).then(d => {
+                            if (d.updated) { alert("Appeal saved successfully."); }
+                            else { alert("Appeal save failed: " + (d.error || 'unknown error')); }
+                        }).catch(e => { alert("Appeal save error: " + e.message); });
                     }
                 };
                 assessmentActionContainer.appendChild(appealBtn);
