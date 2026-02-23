@@ -3929,14 +3929,9 @@ async function triggerLevel1Assessment(tr, anchor) {
 async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Request = false) {
     if(!tr) return;
     
-    // L1 vs L2 Assessment:
-    // L1 (Level 1): CV-only, strictly extractive, no inference
-    // L2 (Level 2): Contextual inference allowed based on job title, company, domain
-    // 
-    // SOURCE OF TRUTH for L1: CV Column exclusively
-    // analyzeData comes from /process/parse_cv_and_update which uses cv column from process table
-    // Employment history format: "Job Title, Company, StartYear to EndYear"
-    // OR "Job Title, Company, StartYear to present" (for current positions)
+    // All assessments use the bulk workflow: the backend fetches all profile data from DB,
+    // runs vskillset generation, and performs L2 (inference) assessment.
+    // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
     
     // GUARD
     if (window.__sv_assessment_in_flight && window.__sv_assessment_in_flight.has(anchor)) {
@@ -3959,76 +3954,24 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
        container.style.opacity = '0.5';
     }
 
-    // Build rich payload
-    const jobTitle = analyzeData.job_title || analyzeData.jobtitle || (tr.querySelector('td[data-field="jobtitle"]')?.textContent || '').trim();
-    const roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-    const company = analyzeData.company || (tr.querySelector('td[data-field="company"]')?.textContent || '').trim();
-    const country = analyzeData.country || (tr.querySelector('td[data-field="country"]')?.textContent || '').trim();
-    
-    // Attempt to get seniority/sector from existing cache or assume analysis didn't extract them separately
-    let seniority = "";
-    let sector = "";
-    const cache = window.__sv_namecard.getCardCache(anchor);
-    if(cache) {
-        if(cache.seniority) seniority = cache.seniority;
-        if(cache.sector) sector = cache.sector;
-    }
-
-    // Use analyzed skillset
-    let candidateSkillset = analyzeData.skillset || [];
-    
-    // Use analyzed experience text
-    const experienceText = analyzeData.experience_text || analyzeData.experience || '';
-
     const customWeights = getActiveWeights();
 
-    // Compute tenure: prefer analyzeData.tenure, else use exp from Process (Postgres) if available
-    let tenureVal = null;
-    try {
-      if (typeof analyzeData.tenure !== 'undefined' && analyzeData.tenure !== null && !Number.isNaN(Number(analyzeData.tenure))) {
-        tenureVal = analyzeData.tenure;
-      } else {
-        // Get exp value from analyzeData or cache if available
-        let expVal = null;
-        if (analyzeData.exp) {
-          expVal = analyzeData.exp;
-        } else if (cache && cache.exp) {
-          expVal = cache.exp;
-        }
-        
-        // Priority: Use exp from Process table if available, otherwise compute from experience text
-        if (expVal && experienceText) {
-          const computed = computeTenureFromTotalExperience(expVal, experienceText);
-          if (computed !== null) tenureVal = computed;
-        } else if (experienceText) {
-          const computed = computeTenureFromExperienceText(experienceText);
-          if (computed !== null) tenureVal = computed;
-        }
-      }
-    } catch(e) { tenureVal = null; }
-
+    // Use the same workflow as bulk assessment: send only linkedinurl to the backend,
+    // which fetches all profile data from DB, runs vskillset generation, and performs assessment.
     const payload = {
-        linkedinurl: anchor,
-        job_title: jobTitle,
-        role_tag: roleTag,
-        company: company,
-        country: country,
-        seniority: seniority,
-        sector: sector,
-        skillset: candidateSkillset,
-        experience_text: experienceText,
-        username: window.__SV_ACTIVE_USERNAME || '',
+        linkedinurls: [anchor],
         userid: window.__SV_ACTIVE_USERID || '',
+        async: false,
         custom_weights: customWeights,
-        tenure: tenureVal,
-        assessment_level: isLevel2Request ? 'L2' : 'L1'  // L1 = extractive only, L2 = contextual inference
+        assessment_level: 'L2'
     };
     
     try {
-        const res = await fetch('/gemini/assess_profile', {
+        const res = await fetch('/process/bulk_assess', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            credentials: 'same-origin'
         });
         
         if(!res.ok) {
@@ -4037,7 +3980,15 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
             throw new Error(`Assessment API failed: ${errorMsg}`);
         }
         
-        const data = await res.json();
+        const response = await res.json();
+
+        // Bulk (sync) returns { ok, results: [{linkedinurl, result}] }
+        const resultEntry = response.results && response.results[0];
+        if (!resultEntry || resultEntry.error || (resultEntry.result && resultEntry.result.error)) {
+            const errMsg = (resultEntry && resultEntry.error) || (resultEntry && resultEntry.result && resultEntry.result.error) || 'Assessment failed';
+            throw new Error(errMsg);
+        }
+        const data = resultEntry.result;
         
         let starsHtml = '';
         const starCount = data.stars || 0;
@@ -4171,9 +4122,9 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
                         setStatus('Processing transfer (retaining sourcing row)...');
                         const ok = await transferSingleRecordViaMarketNoDelete({
                             name: (tr.querySelector('td[data-field="name"]')?.textContent || '').trim(),
-                            company: company,
-                            role: jobTitle,
-                            country: country,
+                            company: (tr.querySelector('td[data-field="company"]')?.textContent || '').trim(),
+                            role: (tr.querySelector('td[data-field="jobtitle"]')?.textContent || '').trim(),
+                            country: (tr.querySelector('td[data-field="country"]')?.textContent || '').trim(),
                             linkedinurl: anchor,
                             experience: '',
                             rating: ratingString 
