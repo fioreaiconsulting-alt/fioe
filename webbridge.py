@@ -8320,6 +8320,10 @@ def process_bulk_assess():
             try:
                 result = _core_assess_profile(profile_data)
                 logger.info(f"[BULK_ASSESS] Assessment completed for {linkedinurl[:50]}: Score={result.get('total_score', 'N/A')}, Stars={result.get('stars', 0)}")
+                # Mirror gemini_assess_profile: include vskillset in result so the frontend
+                # can render the vskillset category breakdown (data.vskillset check in UI).
+                if vskillset_results and isinstance(result, dict):
+                    result["vskillset"] = vskillset_results
             except Exception as e:
                 logger.error(f"[BULK_ASSESS] Assessment error for {linkedinurl}: {e}")
                 result = {"error": f"assessment_error: {str(e)}"}
@@ -8334,8 +8338,10 @@ def process_bulk_assess():
                     WHERE table_schema='public' AND table_name='process' AND column_name='rating'
                 """)
                 if cur.fetchone():
-                    # store JSON as text
-                    rating_payload = json.dumps(result, ensure_ascii=False)
+                    # store JSON as text (exclude vskillset to keep rating payload compact,
+                    # mirroring gemini_assess_profile which strips vskillset before persisting)
+                    rating_obj = {k: v for k, v in result.items() if k != "vskillset"} if isinstance(result, dict) else result
+                    rating_payload = json.dumps(rating_obj, ensure_ascii=False)
                     logger.info(f"[BULK_PERSIST] Persisting rating for {linkedinurl[:50]}, payload size: {len(rating_payload)} bytes")
 
                     # Update by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
