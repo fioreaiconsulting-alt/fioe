@@ -165,9 +165,6 @@
 
       <!-- Combined Bulk Assessment Button (Upload + Assessment) -->
       <button id="bulkAssessmentBtn" style="background:linear-gradient(180deg,#3b82f6,#2563eb); border:1px solid #1d4ed8; color:white; margin-right:8px;" title="Verify the directory settings before initiating bulk PDF upload and assessment.">Bulk Assessment</button>
-      <label id="forceReassessLabel" title="Re-run assessment even for profiles that already have a rating" style="font-size:12px; color:#64748b; margin-right:8px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
-        <input type="checkbox" id="forceReassessChk"> Force re-assess
-      </label>
       <button id="exportExcelBtn" title="Download Excel and purge sourcing table">Download Excel</button>
       
       <!-- Hidden file input for directory upload -->
@@ -1717,7 +1714,7 @@ async function runBulkAssessmentFromSearch() {
     // Check if there are any profiles to assess
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
-            alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. Check "Force re-assess" to re-run them.`);
+            alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
         } else {
             alert('No profiles found to assess');
         }

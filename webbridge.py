@@ -5178,12 +5178,9 @@ def sourcing_delete():
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
         
-        # Delete from sourcing
+        # Delete from sourcing only (process table is preserved)
         cur.execute("DELETE FROM sourcing WHERE linkedinurl = ANY(%s)", (cleaned,))
         deleted=cur.rowcount
-        
-        # Data Consistency: Delete from process as well (rebated/deleted)
-        cur.execute("DELETE FROM process WHERE linkedinurl = ANY(%s)", (cleaned,))
         
         conn.commit()
         cur.close(); conn.close()
