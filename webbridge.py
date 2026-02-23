@@ -2126,6 +2126,60 @@ def gemini_experience_format():
         logger.warning(f"[Gemini Experience Format] {e}")
         return jsonify({"error": str(e)}), 500
 
+def _should_overwrite_existing(existing_meta, incoming_level="L2", force=False):
+    """
+    Decide whether a new assessment should overwrite an existing one.
+    existing_meta: dict with keys: level (str "L1"/"L2" or ""), updated_at, version; or None.
+    incoming_level: "L1" or "L2"
+    force: caller explicitly requests overwrite
+    Returns: (bool, reason_str)
+    """
+    try:
+        if force:
+            return True, "force_reassess=True"
+        if not existing_meta:
+            return True, "no existing rating"
+        existing_level = (existing_meta.get("level") or "").upper()
+        if not existing_level:
+            return True, "no existing level metadata"
+        if incoming_level == "L2" and existing_level == "L1":
+            return True, "upgrade L1 -> L2"
+        if incoming_level == existing_level:
+            return False, "same level existing"
+        if incoming_level == "L1" and existing_level == "L2":
+            return False, "incoming L1 would downgrade existing L2"
+        return True, "default-allow"
+    except Exception:
+        return True, "error-eval-allow"
+
+
+def _ensure_rating_metadata_columns(cur, conn):
+    """Add rating_level, rating_updated_at, rating_version columns to process table if absent."""
+    try:
+        cur.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='process'
+              AND column_name IN ('rating_level','rating_updated_at','rating_version')
+        """)
+        existing = {r[0] for r in cur.fetchall()}
+        stmts = []
+        if 'rating_level' not in existing:
+            stmts.append("ADD COLUMN IF NOT EXISTS rating_level TEXT")
+        if 'rating_updated_at' not in existing:
+            stmts.append("ADD COLUMN IF NOT EXISTS rating_updated_at TIMESTAMPTZ")
+        if 'rating_version' not in existing:
+            stmts.append("ADD COLUMN IF NOT EXISTS rating_version INTEGER DEFAULT 1")
+        if stmts:
+            cur.execute("ALTER TABLE process " + ", ".join(stmts))
+        conn.commit()
+    except Exception as e_mig:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[RatingMeta] Column migration failed (non-fatal): {e_mig}")
+
+
 @app.post("/gemini/assess_profile")
 def gemini_assess_profile():
     data = request.get_json(force=True, silent=True) or {}
@@ -2142,6 +2196,59 @@ def gemini_assess_profile():
     custom_weights = data.get("custom_weights") or {}
     assessment_level = (data.get("assessment_level") or "L2").strip().upper()  # L2 by default
     tenure = data.get("tenure")  # Average tenure value
+    force_reassess = bool(data.get("force_reassess") or False)
+
+    # --- Idempotency pre-check: skip assessment if a rating already exists and policy forbids overwrite ---
+    if linkedinurl:
+        try:
+            import psycopg2 as _psycopg2_idem
+            _idem_conn = _psycopg2_idem.connect(
+                host=os.getenv("PGHOST","localhost"), port=int(os.getenv("PGPORT","5432")),
+                user=os.getenv("PGUSER","postgres"), password=os.getenv("PGPASSWORD","") or "orlha",
+                dbname=os.getenv("PGDATABASE","candidate_db")
+            )
+            try:
+                _idem_cur = _idem_conn.cursor()
+                _ensure_rating_metadata_columns(_idem_cur, _idem_conn)
+                _normalized_idem = None
+                try:
+                    _normalized_idem = _normalize_linkedin_to_path(linkedinurl)
+                except Exception:
+                    pass
+                _idem_cur.execute("""
+                    SELECT rating, rating_level, rating_updated_at, rating_version
+                    FROM process
+                    WHERE linkedinurl = %s OR (%s IS NOT NULL AND normalized_linkedin = %s)
+                    LIMIT 1
+                """, (linkedinurl, _normalized_idem, _normalized_idem))
+                _row_idem = _idem_cur.fetchone()
+                _existing_meta = None
+                if _row_idem and _row_idem[0]:
+                    _existing_meta = {
+                        "rating": _row_idem[0],
+                        "level": (_row_idem[1] or "").upper(),
+                        "updated_at": _row_idem[2],
+                        "version": _row_idem[3],
+                    }
+                _idem_cur.close()
+            finally:
+                _idem_conn.close()
+            _allow, _reason = _should_overwrite_existing(_existing_meta, assessment_level, force_reassess)
+            if not _allow:
+                logger.info(f"[Assess] Skipping assessment for {linkedinurl}: {_reason}")
+                _existing_obj = _existing_meta.get("rating") if _existing_meta else None
+                if isinstance(_existing_obj, str):
+                    try:
+                        _existing_obj = json.loads(_existing_obj)
+                    except Exception:
+                        _existing_obj = {"raw": _existing_obj}
+                if isinstance(_existing_obj, dict):
+                    _existing_obj["_skipped"] = True
+                    _existing_obj["_note"] = f"skipped - existing rating present ({_reason})"
+                    return jsonify(_existing_obj), 200
+                return jsonify({"_skipped": True, "error": "assessment skipped - existing rating", "reason": _reason}), 200
+        except Exception as _e_idem:
+            logger.warning(f"[Assess] Idempotency pre-check failed (continuing): {_e_idem}")
 
     # Resolve role_tag: sourcing table is authoritative; fallback to process, then login.
     # After resolution, write back to sourcing table so it is available for future assessments.
@@ -2732,10 +2839,17 @@ Return ONLY the JSON object, no other text."""
             except Exception:
                 normalized = None
 
+            # Ensure metadata columns exist before writing
+            _ensure_rating_metadata_columns(cur, conn)
+
             updated = 0
             if normalized:
                 try:
-                    cur.execute("UPDATE process SET rating = %s WHERE normalized_linkedin = %s", (rating_payload, normalized))
+                    cur.execute(
+                        "UPDATE process SET rating = %s, rating_level = %s, rating_updated_at = NOW(), "
+                        "rating_version = COALESCE(rating_version, 0) + 1 WHERE normalized_linkedin = %s",
+                        (rating_payload, assessment_level, normalized)
+                    )
                     updated = cur.rowcount
                     conn.commit()
                 except Exception:
@@ -2743,13 +2857,17 @@ Return ONLY the JSON object, no other text."""
                     updated = 0
             if updated == 0:
                 try:
-                    cur.execute("UPDATE process SET rating = %s WHERE linkedinurl = %s", (rating_payload, linkedinurl))
+                    cur.execute(
+                        "UPDATE process SET rating = %s, rating_level = %s, rating_updated_at = NOW(), "
+                        "rating_version = COALESCE(rating_version, 0) + 1 WHERE linkedinurl = %s",
+                        (rating_payload, assessment_level, linkedinurl)
+                    )
                     updated = cur.rowcount
                     conn.commit()
                 except Exception:
                     conn.rollback()
                     updated = 0
-            logger.info(f"[Gemini Assess -> DB rating] Updated rating for linkedin='{linkedinurl}' normalized='{normalized}' updated_rows={updated}")
+            logger.info(f"[Gemini Assess -> DB rating] Updated rating for linkedin='{linkedinurl}' normalized='{normalized}' updated_rows={updated} level={assessment_level}")
         
         # --- NEW: Trigger role_tag -> jskill sync during assessment ---
         # If we successfully assessed, ensure process.jskill is updated with role_tag
@@ -7780,12 +7898,39 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
                     "candidate_skills": c_skills_list,
                     "linkedinurl": linkedinurl
                 }
-                assessment_result = _core_assess_profile(profile_data)
+
+                # Idempotency check: background auto-assessment is L1; skip if rating already exists
+                _bg_skip = False
                 if 'rating' in cols:
-                    rating_json = json.dumps(assessment_result, ensure_ascii=False)
-                    upd_sql = f"UPDATE process SET rating = %s WHERE {where_clause}"
-                    cur.execute(upd_sql, (rating_json, *params))
-                    conn.commit()
+                    try:
+                        _ensure_rating_metadata_columns(cur, conn)
+                        cur.execute(
+                            "SELECT rating, rating_level FROM process WHERE " + where_clause,
+                            tuple(params)
+                        )
+                        _bg_meta_row = cur.fetchone()
+                        if _bg_meta_row and _bg_meta_row[0]:
+                            _bg_existing_meta = {"level": (_bg_meta_row[1] or "").upper()}
+                            _bg_allow, _bg_reason = _should_overwrite_existing(_bg_existing_meta, "L1", False)
+                            if not _bg_allow:
+                                logger.info(f"[CV BG] Skipping auto-assessment for {linkedinurl[:60]}: {_bg_reason}")
+                                _bg_skip = True
+                    except Exception as _e_bg_idem:
+                        logger.warning(f"[CV BG] Idempotency check failed (continuing): {_e_bg_idem}")
+
+                if not _bg_skip:
+                    assessment_result = _core_assess_profile(profile_data)
+                    if 'rating' in cols:
+                        _ensure_rating_metadata_columns(cur, conn)
+                        rating_json = json.dumps(assessment_result, ensure_ascii=False)
+                        upd_sql = (
+                            f"UPDATE process SET rating = %s, rating_level = %s, "
+                            f"rating_updated_at = NOW(), "
+                            f"rating_version = COALESCE(rating_version, 0) + 1 "
+                            f"WHERE {where_clause}"
+                        )
+                        cur.execute(upd_sql, (rating_json, "L1", *params))
+                        conn.commit()
                 
                 # --- NEW: Trigger role_tag -> jskill sync during background CV analysis ---
                 if role_tag_db and "jskill" in cols:
@@ -8072,6 +8217,7 @@ def process_bulk_assess():
     custom_weights = payload.get("custom_weights") or {}
     assessment_level = (payload.get("assessment_level") or payload.get("assessmentLevel") or "L2").strip().upper()
     username = (payload.get("username") or "").strip()
+    force_reassess = bool(payload.get("force_reassess") or False)
 
     # helper for single assess + persist
     def _assess_and_persist(linkedinurl):
@@ -8166,6 +8312,40 @@ def process_bulk_assess():
                         "error": "Assessment pending - No CV uploaded"
                     }
                 }
+
+            # --- Idempotency pre-check: read existing rating metadata from DB ---
+            try:
+                _ensure_rating_metadata_columns(cur, conn)
+                cur.execute("""
+                    SELECT rating, rating_level, rating_updated_at, rating_version
+                    FROM process WHERE linkedinurl = %s LIMIT 1
+                """, (linkedinurl,))
+                _bulk_row_meta = cur.fetchone()
+                _bulk_existing_meta = None
+                if _bulk_row_meta and _bulk_row_meta[0]:
+                    _bulk_existing_meta = {
+                        "rating": _bulk_row_meta[0],
+                        "level": (_bulk_row_meta[1] or "").upper(),
+                        "updated_at": _bulk_row_meta[2],
+                        "version": _bulk_row_meta[3],
+                    }
+                _bulk_allow, _bulk_reason = _should_overwrite_existing(_bulk_existing_meta, assessment_level, force_reassess)
+                if not _bulk_allow:
+                    logger.info(f"[BULK_ASSESS] Skipping {linkedinurl[:50]}: {_bulk_reason}")
+                    _bulk_existing_obj = _bulk_existing_meta.get("rating") if _bulk_existing_meta else None
+                    if isinstance(_bulk_existing_obj, str):
+                        try:
+                            _bulk_existing_obj = json.loads(_bulk_existing_obj)
+                        except Exception:
+                            _bulk_existing_obj = {"raw": _bulk_existing_obj}
+                    cur.close(); conn.close()
+                    if isinstance(_bulk_existing_obj, dict):
+                        _bulk_existing_obj["_skipped"] = True
+                        _bulk_existing_obj["_note"] = f"skipped - existing rating present ({_bulk_reason})"
+                        return {"linkedinurl": linkedinurl, "result": _bulk_existing_obj}
+                    return {"linkedinurl": linkedinurl, "result": {"_skipped": True, "error": "assessment skipped - existing rating", "reason": _bulk_reason}}
+            except Exception as _e_bulk_idem:
+                logger.warning(f"[BULK_ASSESS] Idempotency pre-check failed for {linkedinurl[:50]} (continuing): {_e_bulk_idem}")
 
             # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
             if not role_tag:
@@ -8367,8 +8547,13 @@ def process_bulk_assess():
                     rating_payload = json.dumps(rating_obj, ensure_ascii=False)
                     logger.info(f"[BULK_PERSIST] Persisting rating for {linkedinurl[:50]}, payload size: {len(rating_payload)} bytes")
 
-                    # Update by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
-                    cur.execute("UPDATE process SET rating = %s WHERE linkedinurl = %s", (rating_payload, linkedinurl))
+                    # Ensure metadata columns exist then persist rating + metadata atomically
+                    _ensure_rating_metadata_columns(cur, conn)
+                    cur.execute(
+                        "UPDATE process SET rating = %s, rating_level = %s, rating_updated_at = NOW(), "
+                        "rating_version = COALESCE(rating_version, 0) + 1 WHERE linkedinurl = %s",
+                        (rating_payload, assessment_level, linkedinurl)
+                    )
                     updated = cur.rowcount
                     logger.info(f"[BULK_PERSIST] Updated {updated} rows by linkedinurl: {linkedinurl[:50]}")
 
