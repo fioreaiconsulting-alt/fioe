@@ -8096,7 +8096,7 @@ def process_bulk_assess():
             
             # Fetch by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
             cur.execute("""
-                SELECT jobtitle, company, country, seniority, sector, experience, skillset, username, role_tag, cv, tenure, product
+                SELECT jobtitle, company, country, seniority, sector, experience, skillset, username, role_tag, cv, tenure, product, rating
                 FROM process 
                 WHERE linkedinurl = %s
                 LIMIT 1
@@ -8116,6 +8116,7 @@ def process_bulk_assess():
             cv_data = None
             tenure = None
             product = []
+            existing_rating_str = None
             
             if row:
                 job_title = row[0] or ""
@@ -8132,10 +8133,12 @@ def process_bulk_assess():
                     cv_data = row[9] if len(row) >= 10 else None
                     tenure = row[10] if len(row) >= 11 else None
                     product_str = row[11] if len(row) >= 12 else ""
+                    existing_rating_str = row[12] if len(row) >= 13 else None
                 except (IndexError, TypeError):
                     cv_data = None
                     tenure = None
                     product_str = ""
+                    existing_rating_str = None
                 
                 # Parse skillset
                 if skillset_str:
@@ -8166,6 +8169,23 @@ def process_bulk_assess():
                         "error": "Assessment pending - No CV uploaded"
                     }
                 }
+
+            # Skip reassessment if rating already exists — preserve the prior score.
+            if existing_rating_str:
+                try:
+                    existing_rating = json.loads(existing_rating_str)
+                    is_valid_rating = (
+                        existing_rating
+                        and isinstance(existing_rating, dict)
+                        and not existing_rating.get("error")
+                    )
+                    if is_valid_rating:
+                        logger.info(f"[BULK_ASSESS] Skipping {linkedinurl[:50]} - already assessed (score={existing_rating.get('score','?')})")
+                        cur.close()
+                        conn.close()
+                        return {"linkedinurl": linkedinurl, "result": existing_rating}
+                except Exception:
+                    pass  # Malformed rating — fall through and reassess
 
             # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
             if not role_tag:
