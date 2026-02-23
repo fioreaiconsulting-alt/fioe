@@ -7898,12 +7898,39 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
                     "candidate_skills": c_skills_list,
                     "linkedinurl": linkedinurl
                 }
-                assessment_result = _core_assess_profile(profile_data)
+
+                # Idempotency check: background auto-assessment is L1; skip if rating already exists
+                _bg_skip = False
                 if 'rating' in cols:
-                    rating_json = json.dumps(assessment_result, ensure_ascii=False)
-                    upd_sql = f"UPDATE process SET rating = %s WHERE {where_clause}"
-                    cur.execute(upd_sql, (rating_json, *params))
-                    conn.commit()
+                    try:
+                        _ensure_rating_metadata_columns(cur, conn)
+                        cur.execute(
+                            "SELECT rating, rating_level FROM process WHERE " + where_clause,
+                            tuple(params)
+                        )
+                        _bg_meta_row = cur.fetchone()
+                        if _bg_meta_row and _bg_meta_row[0]:
+                            _bg_existing_meta = {"level": (_bg_meta_row[1] or "").upper()}
+                            _bg_allow, _bg_reason = _should_overwrite_existing(_bg_existing_meta, "L1", False)
+                            if not _bg_allow:
+                                logger.info(f"[CV BG] Skipping auto-assessment for {linkedinurl[:60]}: {_bg_reason}")
+                                _bg_skip = True
+                    except Exception as _e_bg_idem:
+                        logger.warning(f"[CV BG] Idempotency check failed (continuing): {_e_bg_idem}")
+
+                if not _bg_skip:
+                    assessment_result = _core_assess_profile(profile_data)
+                    if 'rating' in cols:
+                        _ensure_rating_metadata_columns(cur, conn)
+                        rating_json = json.dumps(assessment_result, ensure_ascii=False)
+                        upd_sql = (
+                            f"UPDATE process SET rating = %s, rating_level = %s, "
+                            f"rating_updated_at = NOW(), "
+                            f"rating_version = COALESCE(rating_version, 0) + 1 "
+                            f"WHERE {where_clause}"
+                        )
+                        cur.execute(upd_sql, (rating_json, "L1", *params))
+                        conn.commit()
                 
                 # --- NEW: Trigger role_tag -> jskill sync during background CV analysis ---
                 if role_tag_db and "jskill" in cols:
