@@ -5168,6 +5168,10 @@ def sourcing_delete():
     cleaned=[(x or "").strip() for x in arr if (x or "").strip()]
     if not cleaned:
         return jsonify({"error":"No valid linkedinurls"}), 400
+    # include_process=True  → also delete matching rows from the process table (used by rebate)
+    include_process = bool(data.get("include_process", False))
+    # preserve_appeal=True  → skip sourcing rows that have a non-empty appeal value
+    preserve_appeal = bool(data.get("preserve_appeal", False))
     try:
         import psycopg2
         pg_host=os.getenv("PGHOST","localhost")
@@ -5177,14 +5181,20 @@ def sourcing_delete():
         pg_db=os.getenv("PGDATABASE","candidate_db")
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
-        
-        # Delete from sourcing
-        cur.execute("DELETE FROM sourcing WHERE linkedinurl = ANY(%s)", (cleaned,))
+
+        if preserve_appeal:
+            # Only delete sourcing rows where appeal is null or empty
+            cur.execute(
+                "DELETE FROM sourcing WHERE linkedinurl = ANY(%s) AND (appeal IS NULL OR appeal = '')",
+                (cleaned,)
+            )
+        else:
+            cur.execute("DELETE FROM sourcing WHERE linkedinurl = ANY(%s)", (cleaned,))
         deleted=cur.rowcount
-        
-        # Data Consistency: Delete from process as well (rebated/deleted)
-        cur.execute("DELETE FROM process WHERE linkedinurl = ANY(%s)", (cleaned,))
-        
+
+        if include_process:
+            cur.execute("DELETE FROM process WHERE linkedinurl = ANY(%s)", (cleaned,))
+
         conn.commit()
         cur.close(); conn.close()
         return jsonify({"deleted":deleted})
