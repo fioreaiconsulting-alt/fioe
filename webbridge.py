@@ -2729,6 +2729,31 @@ Return ONLY the JSON object, no other text."""
                 # Tries normalized_linkedin first, then LOWER/TRIM linkedinurl fallback to handle
                 # normalization mismatches.  Unconditional update overwrites stale values.
                 try:
+                    # Mirror bulk path: re-read role_tag from sourcing (authoritative source)
+                    # before syncing to process, ensuring process receives the stored sourcing
+                    # value rather than a potentially stale request-supplied value.
+                    try:
+                        _sourcing_rt = None
+                        if linkedinurl:
+                            cur.execute(
+                                "SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1",
+                                (linkedinurl,)
+                            )
+                            _sr = cur.fetchone()
+                            if _sr and _sr[0]:
+                                _sourcing_rt = _sr[0]
+                        if not _sourcing_rt and username:
+                            cur.execute(
+                                "SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1",
+                                (username,)
+                            )
+                            _sr = cur.fetchone()
+                            if _sr and _sr[0]:
+                                _sourcing_rt = _sr[0]
+                        if _sourcing_rt:
+                            role_tag = _sourcing_rt
+                    except Exception as _e_src_rt:
+                        logger.warning(f"[Assess] Failed to re-read role_tag from sourcing: {_e_src_rt}")
                     if not normalized:
                         try:
                             normalized = _normalize_linkedin_to_path(linkedinurl)
