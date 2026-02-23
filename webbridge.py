@@ -2140,7 +2140,7 @@ def gemini_assess_profile():
     username = (data.get("username") or "").strip()
     userid = (data.get("userid") or "").strip()
     custom_weights = data.get("custom_weights") or {}
-    assessment_level = (data.get("assessment_level") or "L1").strip().upper()  # L1 or L2
+    assessment_level = (data.get("assessment_level") or "L2").strip().upper()  # L2 by default
     tenure = data.get("tenure")  # Average tenure value
 
     # Resolve role_tag: if not provided by client, look up from sourcing table (authoritative)
@@ -3017,7 +3017,7 @@ def vskillset_infer():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurl = (data.get("linkedinurl") or "").strip()
     skills = data.get("skills", [])
-    assessment_level = (data.get("assessment_level") or "L1").upper()
+    assessment_level = (data.get("assessment_level") or "L2").upper()
     username = (data.get("username") or "").strip()
     
     if not linkedinurl or not skills:
@@ -6698,7 +6698,7 @@ def _core_assess_profile(data):
     process_skills = data.get("process_skills", []) or []
     custom_weights = data.get("custom_weights", {}) or {}
     linkedinurl = data.get("linkedinurl", "")
-    assessment_level = data.get("assessment_level", "L1").upper()  # L1 or L2
+    assessment_level = data.get("assessment_level", "L2").upper()  # L2 by default
     tenure = data.get("tenure")  # Average tenure per employer
     vskillset_results = data.get("vskillset_results")  # vskillset inference results for scoring
     product = data.get("product", []) or []  # Product list from CV analysis
@@ -7907,7 +7907,7 @@ def process_bulk_assess():
 
     async_flag = bool(payload.get("async"))
     custom_weights = payload.get("custom_weights") or {}
-    assessment_level = (payload.get("assessment_level") or payload.get("assessmentLevel") or "L1").strip().upper()
+    assessment_level = (payload.get("assessment_level") or payload.get("assessmentLevel") or "L2").strip().upper()
     username = (payload.get("username") or "").strip()
 
     # helper for single assess + persist

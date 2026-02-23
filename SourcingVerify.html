@@ -152,16 +152,6 @@
       
       <!-- Snipper UI removed as requested -->
 
-      <!-- L1/L2 Assessment Mode Toggle - MOVED TO FAR LEFT -->
-      <div style="display:inline-flex; align-items:center; gap:10px; margin-right:16px; padding:8px 12px; background:white; border:1px solid #e5e7eb; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-        <span style="font-weight:600; font-size:13px; color:#374151;">Mode:</span>
-        <label class="toggle-switch" style="position:relative; display:inline-block; width:50px; height:24px; cursor:pointer;">
-          <input type="checkbox" id="searchBulkL2Toggle" checked style="opacity:0; width:0; height:0;">
-          <span class="toggle-slider" style="position:absolute; top:0; left:0; right:0; bottom:0; background-color:#d1d5db; border-radius:24px; transition:0.3s;"></span>
-        </label>
-        <span id="searchModeLabel" style="font-weight:500; font-size:13px; color:#374151; min-width:140px;">Inference Mode</span>
-      </div>
-
       <!-- Status and Metrics -->
       <span id="status" style="margin-right:12px;"></span>
       <div class="metrics" id="metricsBox" aria-live="polite" style="margin-right:12px;">
@@ -1435,22 +1425,21 @@ async function runBulkAssessment() {
     const statusEl = document.getElementById('reviewStatus');
     const btn = document.getElementById('runBulkBtn');
     
-    // Check L2 toggle state
-    const l2Toggle = document.getElementById('bulkL2Toggle');
-    const useL2 = l2Toggle && l2Toggle.checked;
+    // All assessments use L2 (inference mode) by default
+    const useL2 = true;
     
     // Gather pending linkedinurls (or send empty list to let server find all)
     // Here we'll let server find all pending for the user to ensure sync
     
     btn.disabled = true;
-    if(statusEl) statusEl.textContent = useL2 ? 'Starting bulk L2 assessment...' : 'Starting bulk L1 assessment...';
+    if(statusEl) statusEl.textContent = 'Starting bulk L2 assessment...';
     
     try {
         const payload = {
             userid: uid,
             async: true,
             custom_weights: getActiveWeights(), // Send current weights
-            assessment_level: useL2 ? 'L2' : 'L1'  // Include assessment level based on toggle
+            assessment_level: 'L2'  // Always use L2 (inference mode)
         };
         
         const res = await fetch('/process/bulk_assess', {
@@ -1722,13 +1711,10 @@ async function runBulkAssessmentFromSearch() {
     const progressBar = document.getElementById('searchBulkProgressBar');
     const progressPercent = document.getElementById('searchBulkProgressPercent');
     
-    // Check L2 toggle state
-    // Toggle OFF (unchecked) = Extractive Mode
-    // Toggle ON (checked) = Inference Mode (default)
-    const l2Toggle = document.getElementById('searchBulkL2Toggle');
-    const useL2 = l2Toggle && l2Toggle.checked;
+    // All assessments use L2 (inference mode) by default
+    const useL2 = true;
     
-    console.log(`[Bulk Assessment] Toggle state: ${l2Toggle?.checked}, Assessment Level: ${useL2 ? 'L2' : 'L1'}`);
+    console.log(`[Bulk Assessment] Assessment Level: L2`);
     console.log(`[Bulk Assessment] Profiles to assess: ${linkedinurls.length}, Already assessed: ${alreadyAssessedUrls.length}`);
     
     // Disable all buttons during bulk assessment
@@ -1736,9 +1722,7 @@ async function runBulkAssessmentFromSearch() {
     
     if (btn) btn.disabled = true;
     const totalProfiles = linkedinurls.length + alreadyAssessedUrls.length;
-    const statusMsg = useL2 ? 
-        `Starting bulk L2 assessment (${linkedinurls.length}/${totalProfiles} profiles, ${alreadyAssessedUrls.length} already assessed)...` :
-        `Starting bulk L1 assessment (${linkedinurls.length}/${totalProfiles} profiles, ${alreadyAssessedUrls.length} already assessed)...`;
+    const statusMsg = `Starting bulk L2 assessment (${linkedinurls.length}/${totalProfiles} profiles, ${alreadyAssessedUrls.length} already assessed)...`;
     if(statusEl) setStatus(statusMsg, 'info');
     if(progressContainer) progressContainer.style.display = 'block';
     
@@ -1748,7 +1732,7 @@ async function runBulkAssessmentFromSearch() {
             linkedinurls: linkedinurls,
             async: true,
             custom_weights: getActiveWeights(),
-            assessment_level: useL2 ? 'L2' : 'L1'  // Explicitly set based on toggle
+            assessment_level: 'L2'  // Always use L2 (inference mode)
         };
         
         console.log('[Bulk Assessment] Payload:', JSON.stringify(payload, null, 2));
@@ -2056,18 +2040,6 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
         if(statusEl) setStatus(`Error: ${e.message}`, 'error');
     }
 }
-
-// Add event listener for toggle label update
-document.addEventListener('DOMContentLoaded', function() {
-    const searchL2Toggle = document.getElementById('searchBulkL2Toggle');
-    const searchModeLabel = document.getElementById('searchModeLabel');
-    
-    if (searchL2Toggle && searchModeLabel) {
-        searchL2Toggle.addEventListener('change', () => {
-            searchModeLabel.textContent = searchL2Toggle.checked ? 'Inference Mode' : 'Extractive Mode';
-        });
-    }
-});
 
 </script>
 
@@ -3282,9 +3254,8 @@ function buildRow(row) {
                                 if (newJob) { const jCell = tr.querySelector('td[data-field="jobtitle"]'); if(jCell) { jCell.textContent = newJob; markDirty(jCell); flushImmediate(value, 'jobtitle', newJob, jCell); } }
                                 if (newCountry) { const cntCell = tr.querySelector('td[data-field="country"]'); if(cntCell) { cntCell.textContent = newCountry; markDirty(cntCell); flushImmediate(value, 'country', newCountry, cntCell); } }
                                 
-                                // Check L1/L2 toggle state for assessment mode
-                                const l2Toggle = document.getElementById('searchBulkL2Toggle');
-                                const useL2 = l2Toggle && l2Toggle.checked;
+                                // All assessments use L2 (inference mode) by default
+                                const useL2 = true;
                                 
                                 // Set button to Processing state before assessment
                                 browseBtn.textContent = 'Processing...';
@@ -4988,13 +4959,12 @@ function renderTable(){
         }
         
         const profileAnchor = tr.dataset.linkedinurl || linkedinurl || '';
-        const l2Toggle = document.getElementById('searchBulkL2Toggle');
-        const currentMode = (l2Toggle && l2Toggle.checked) ? 'L2' : 'L1';
+        const currentMode = 'L2';  // Always use L2 (inference mode)
         
         if (assessState[profileAnchor] && assessState[profileAnchor].completed) {
             const storedMode = assessState[profileAnchor].mode || 'L2'; // Default to L2 for old data
             
-            // Only show as "Assessed" if mode matches current toggle state
+            // Only show as "Assessed" if mode matches current mode
             if (storedMode === currentMode) {
                 assessBtn2.textContent = 'Assessed';
                 assessBtn2.disabled = true;
@@ -5011,10 +4981,9 @@ function renderTable(){
         const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
         if(!anchor) return;
         
-        // Read current toggle state
-        const l2Toggle = document.getElementById('searchBulkL2Toggle');
-        const useL2 = l2Toggle && l2Toggle.checked;
-        const assessmentMode = useL2 ? 'L2' : 'L1';
+        // All assessments use L2 (inference mode) by default
+        const useL2 = true;
+        const assessmentMode = 'L2';
         
         assessBtn2.disabled = true;
         assessBtn2.textContent = 'Preparing...';
@@ -5198,9 +5167,8 @@ function renderTable(){
                     flushImmediate(anchor, 'experience', analyzeData.experience_text, expTd);
                 }
 
-                // Check L1/L2 toggle state for assessment mode
-                const l2Toggle = document.getElementById('searchBulkL2Toggle');
-                const useL2 = l2Toggle && l2Toggle.checked;
+                // All assessments use L2 (inference mode) by default
+                const useL2 = true;
 
                 // Trigger Assessment immediately after parsing with toggle state
                 try {
@@ -6014,15 +5982,6 @@ function refreshCurrentProfile() {
 /* New functionality: Listen to toggle change to start/stop snipper API removed */
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Add toggle label update for L1/L2 mode
-    const l2Toggle = document.getElementById('bulkL2Toggle');
-    const modeLabel = document.getElementById('modeLabel');
-    if (l2Toggle && modeLabel) {
-        l2Toggle.addEventListener('change', () => {
-            modeLabel.textContent = l2Toggle.checked ? 'Inference Mode' : 'Extractive Mode';
-        });
-    }
-    
     // Add Match Level header click listener for sorting with toggle states
     const matchLevelHeader = document.getElementById('matchLevelHeader');
     let __sortState = 'none'; // Track current sort state: 'none', 'descending', 'ascending'
