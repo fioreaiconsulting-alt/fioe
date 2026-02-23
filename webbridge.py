@@ -2140,11 +2140,11 @@ def gemini_assess_profile():
     username = (data.get("username") or "").strip()
     userid = (data.get("userid") or "").strip()
     custom_weights = data.get("custom_weights") or {}
-    assessment_level = (data.get("assessment_level") or "L1").strip().upper()  # L1 or L2
+    assessment_level = (data.get("assessment_level") or "L2").strip().upper()  # L2 by default
     tenure = data.get("tenure")  # Average tenure value
 
-    # Resolve role_tag: if not provided by client, look up from sourcing table (authoritative)
-    # then fallback to process table. Login table is no longer used for role-based assessment.
+    # Resolve role_tag: sourcing table is authoritative; fallback to process, then login.
+    # After resolution, write back to sourcing table so it is available for future assessments.
     if not role_tag and (linkedinurl or username):
         try:
             import psycopg2
@@ -2155,7 +2155,7 @@ def gemini_assess_profile():
             )
             try:
                 _pg_cur = _pg_conn.cursor()
-                # Try sourcing by linkedinurl first, then by username
+                # 1. Try sourcing by linkedinurl first, then by username (authoritative source)
                 if linkedinurl:
                     _pg_cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
                     _r = _pg_cur.fetchone()
@@ -2164,7 +2164,7 @@ def gemini_assess_profile():
                     _pg_cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
                     _r = _pg_cur.fetchone()
                     if _r and _r[0]: role_tag = _r[0]
-                # Fallback to process table
+                # 2. Fallback to process table
                 if not role_tag and linkedinurl:
                     _pg_cur.execute("SELECT role_tag FROM process WHERE linkedinurl=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
                     _r = _pg_cur.fetchone()
@@ -2173,6 +2173,29 @@ def gemini_assess_profile():
                     _pg_cur.execute("SELECT role_tag FROM process WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
                     _r = _pg_cur.fetchone()
                     if _r and _r[0]: role_tag = _r[0]
+                # 3. Fallback to login table
+                if not role_tag and username:
+                    _pg_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='login' AND column_name='role_tag'")
+                    if _pg_cur.fetchone():
+                        _pg_cur.execute("SELECT role_tag FROM login WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
+                        _r = _pg_cur.fetchone()
+                        if _r and _r[0]: role_tag = _r[0]
+                # 4. Persist resolved role_tag into sourcing table so it is available for future assessments.
+                # This mirrors the bulk path and eliminates the discrepancy where individual assessments
+                # could not find role_tag in sourcing even though it existed in login.
+                if role_tag and username:
+                    try:
+                        _pg_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
+                        if not _pg_cur.fetchone():
+                            _pg_cur.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
+                        _pg_cur.execute(
+                            "UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')",
+                            (role_tag, username)
+                        )
+                        _pg_conn.commit()
+                        logger.info(f"[Assess] Synced role_tag='{role_tag}' from login→sourcing for user='{username}'")
+                    except Exception as _e_sync_rt:
+                        logger.warning(f"[Assess] Failed to sync role_tag to sourcing: {_e_sync_rt}")
                 _pg_cur.close()
             finally:
                 _pg_conn.close()
@@ -2328,6 +2351,41 @@ def gemini_assess_profile():
             cur.close(); conn.close()
     except Exception as e:
         logger.warning(f"[Assess] Failed to fetch process_skills: {e}")
+
+    # Sync jskillset from login → process if target_skills still empty.
+    # This ensures the vskillset inference below is not skipped due to a missing jskillset.
+    if not target_skills and username and linkedinurl:
+        try:
+            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
+            _sync_login_jskillset_to_process(username, linkedinurl, normalized_for_sync or "")
+            # Re-fetch after sync
+            target_skills = _fetch_jskillset_from_process(linkedinurl) or []
+            if not target_skills:
+                target_skills = _fetch_jskillset(username) or []
+            if target_skills:
+                logger.info(f"[Gemini Assess] target_skills populated after jskillset sync: {len(target_skills)} skills")
+        except Exception as e_jsk_sync:
+            logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
+
+    # If still empty after sync, build a conservative fallback target_skills list from
+    # role_tag, job_title, and any skills provided in the request body.
+    # This ensures the vskillset inference is never skipped even when jskillset columns
+    # are missing or linkedin URL normalization didn't match the DB row.
+    if not target_skills:
+        fallbacks = []
+        if role_tag:
+            fallbacks += [s.strip() for s in re.split(r'[,;/|]+', role_tag) if s.strip()]
+        if job_title:
+            fallbacks += [s.strip() for s in re.split(r'[,;/|]+', job_title) if s.strip()]
+        parsed_sk = data.get('skills') or data.get('skillset')
+        if parsed_sk:
+            if isinstance(parsed_sk, list):
+                fallbacks += [s.strip() for s in parsed_sk if isinstance(s, str) and s.strip()]
+            elif isinstance(parsed_sk, str):
+                fallbacks += [s.strip() for s in re.split(r'[,;/|]+', parsed_sk) if s.strip()]
+        target_skills = dedupe([t for t in fallbacks if t])[:40]
+        if target_skills:
+            logger.info(f"[Assess] target_skills fallback built ({len(target_skills)}) from role_tag/job_title/request")
 
     # NEW: Trigger vskillset inference BEFORE assessment
     # This populates the vskillset column and MERGES confirmed skills with existing skillset
@@ -2666,7 +2724,43 @@ Return ONLY the JSON object, no other text."""
                     if js_updated == 0:
                         cur.execute("UPDATE process SET jskill=%s WHERE linkedinurl=%s", (role_tag, linkedinurl))
                     conn.commit()
-                
+
+                # Robust role_tag → process sync (sourcing is authoritative; mirrors bulk path).
+                # Tries normalized_linkedin first, then LOWER/TRIM linkedinurl fallback to handle
+                # normalization mismatches.  Unconditional update overwrites stale values.
+                try:
+                    if not normalized:
+                        try:
+                            normalized = _normalize_linkedin_to_path(linkedinurl)
+                        except Exception:
+                            normalized = None
+                    cur.execute("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
+                    """)
+                    if cur.fetchone():
+                        rt_updated = 0
+                        if normalized:
+                            cur.execute(
+                                "UPDATE process SET role_tag = %s WHERE normalized_linkedin = %s",
+                                (role_tag, normalized)
+                            )
+                            rt_updated = cur.rowcount
+                        if rt_updated == 0:
+                            cur.execute(
+                                "UPDATE process SET role_tag = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR linkedinurl = %s",
+                                (role_tag, linkedinurl.lower().rstrip('/'), linkedinurl)
+                            )
+                            rt_updated = cur.rowcount
+                        conn.commit()
+                        if rt_updated:
+                            logger.info(f"[Assess] Synced role_tag='{role_tag}' into process for linkedin='{linkedinurl[:80]}' updated_rows={rt_updated}")
+                        else:
+                            logger.info(f"[Assess] role_tag sync attempted but no matching process row found for linkedin='{linkedinurl[:80]}' (normalized='{normalized}')")
+                except Exception as e_up:
+                    conn.rollback()
+                    logger.warning(f"[Assess] Failed to update process.role_tag for {linkedinurl}: {e_up}")
+
                 # Now trigger jskillset sync from login to process
                 _sync_login_jskillset_to_process(username, linkedinurl, normalized)
 
@@ -3017,7 +3111,7 @@ def vskillset_infer():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurl = (data.get("linkedinurl") or "").strip()
     skills = data.get("skills", [])
-    assessment_level = (data.get("assessment_level") or "L1").upper()
+    assessment_level = (data.get("assessment_level") or "L2").upper()
     username = (data.get("username") or "").strip()
     
     if not linkedinurl or not skills:
@@ -6698,7 +6792,7 @@ def _core_assess_profile(data):
     process_skills = data.get("process_skills", []) or []
     custom_weights = data.get("custom_weights", {}) or {}
     linkedinurl = data.get("linkedinurl", "")
-    assessment_level = data.get("assessment_level", "L1").upper()  # L1 or L2
+    assessment_level = data.get("assessment_level", "L2").upper()  # L2 by default
     tenure = data.get("tenure")  # Average tenure per employer
     vskillset_results = data.get("vskillset_results")  # vskillset inference results for scoring
     product = data.get("product", []) or []  # Product list from CV analysis
@@ -7366,10 +7460,7 @@ def _core_assess_profile(data):
         overall_comment = overall_comment[:COMMENT_TRUNCATE_LENGTH] + "..."
     
     # Determine assessment level display
-    if assessment_level == "L2":
-        level_display = "L2 Assessment"
-    else:
-        level_display = "L1 Assessment"
+    level_display = "Assessment"
     
     # DIAGNOSTIC LOGGING - Log assessment inputs and output
     logger.info(f"[CORE_ASSESS] LinkedIn: {linkedinurl[:50] if linkedinurl else 'N/A'}")
@@ -7907,7 +7998,7 @@ def process_bulk_assess():
 
     async_flag = bool(payload.get("async"))
     custom_weights = payload.get("custom_weights") or {}
-    assessment_level = (payload.get("assessment_level") or payload.get("assessmentLevel") or "L1").strip().upper()
+    assessment_level = (payload.get("assessment_level") or payload.get("assessmentLevel") or "L2").strip().upper()
     username = (payload.get("username") or "").strip()
 
     # helper for single assess + persist
@@ -8004,6 +8095,33 @@ def process_bulk_assess():
                     }
                 }
             
+            # If CV data is present but key fields are still empty (background analysis thread
+            # has not yet finished persisting), run synchronous extraction inline so that
+            # seniority, sector, experience, skillset, and product are all available before
+            # assessment proceeds.  This prevents incomplete category breakdowns.
+            if cv_data and not (experience_text and seniority and sector):
+                logger.info(f"[BULK_ASSESS] Missing fields (exp={bool(experience_text)}, seniority='{seniority}', sector='{sector}') - running sync CV extraction for {linkedinurl[:50]}")
+                try:
+                    cv_bytes = cv_data if isinstance(cv_data, bytes) else bytes(cv_data)
+                    cv_obj = _analyze_cv_bytes_sync(cv_bytes)
+                    if cv_obj:
+                        if not experience_text:
+                            experience_text = "\n".join(cv_obj.get("experience", [])) or ""
+                        if not seniority:
+                            seniority = cv_obj.get("seniority", "")
+                        if not sector:
+                            sector = cv_obj.get("sector", "")
+                        if not candidate_skills:
+                            extracted_skills = cv_obj.get("skillset", [])
+                            candidate_skills = [str(s).strip() for s in extracted_skills if str(s).strip()]
+                        if not tenure:
+                            tenure = cv_obj.get("tenure")
+                        if not product:
+                            product = cv_obj.get("product_list", [])
+                        logger.info(f"[BULK_ASSESS] Sync extraction complete: exp={bool(experience_text)}, seniority='{seniority}', sector='{sector}', skills={len(candidate_skills)}")
+                except Exception as e_sync:
+                    logger.warning(f"[BULK_ASSESS] Inline CV extraction failed for {linkedinurl}: {e_sync}")
+
             # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
             if not role_tag and username_db:
                 cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
@@ -8019,22 +8137,131 @@ def process_bulk_assess():
             cur.close()
             conn.close()
             
-            # Fetch target skills
+            # Fetch target skills (jskillset/jskill)
+            # Sync from login to process first so the latest job skillset is available
+            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
+            if username_db:
+                try:
+                    _sync_login_jskillset_to_process(username_db, linkedinurl, normalized_for_sync or "")
+                except Exception as e_sync_jsk:
+                    logger.warning(f"[BULK_ASSESS] jskillset sync failed for {linkedinurl}: {e_sync_jsk}")
+
             target_skills = _fetch_jskillset_from_process(linkedinurl) or []
             if not target_skills and username_db:
                 target_skills = _fetch_jskillset(username_db) or []
-            
-            # NEW: For L2 assessment, generate vskillset if target_skills exist
+
+            # Deterministic seniority fallback: derive from job_title keywords when model output is absent.
+            # Note: we do not pass tenure (per-employer avg) as total_experience_years since they differ.
+            if not seniority:
+                try:
+                    seniority = _normalize_seniority_to_8_levels(job_title or "")
+                    if seniority:
+                        logger.info(f"[BULK_ASSESS] Seniority derived from job title: '{seniority}' for {linkedinurl[:50]}")
+                except Exception as e_sen:
+                    logger.warning(f"[BULK_ASSESS] Seniority derivation failed: {e_sen}")
+
+            # Robust sector resolution: if still empty, try keyword + token fallback
+            if not sector and (job_title or role_tag or experience_text):
+                try:
+                    for probe in [job_title, role_tag, experience_text[:200]]:
+                        if probe:
+                            mapped = _find_best_sector_match_for_text(probe) or _map_keyword_to_sector_label(probe)
+                            if mapped:
+                                sector = mapped
+                                logger.info(f"[BULK_ASSESS] Sector resolved via fallback for {linkedinurl[:50]}: '{sector}'")
+                                break
+                except Exception as e_sec:
+                    logger.warning(f"[BULK_ASSESS] Sector fallback failed: {e_sec}")
+
+            # For L2 assessment, run full extractive-confirm + inference vskillset generation
             vskillset_results = None  # Initialize to None for passing to profile_data
             if assessment_level == "L2" and target_skills and len(target_skills) > 0:
-                logger.info(f"[BULK_ASSESS] L2 mode - generating vskillset for {linkedinurl[:50]}")
+                logger.info(f"[BULK_ASSESS] L2 mode - generating vskillset (extractive+inference) for {linkedinurl[:50]}")
                 try:
-                    # Call vskillset inference logic inline
-                    vskillset_results = _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text, cv_data)
-                    if vskillset_results:
-                        # Update candidate_skills to use High probability skills from vskillset
-                        candidate_skills = [item["skill"] for item in vskillset_results if item.get("category") == "High"]
-                        logger.info(f"[BULK_ASSESS] vskillset generated: {len(candidate_skills)} High skills")
+                    profile_context = experience_text
+                    if not profile_context and cv_data:
+                        cv_bytes_ctx = cv_data if isinstance(cv_data, bytes) else bytes(cv_data)
+                        try:
+                            from pypdf import PdfReader
+                            import io
+                            reader = PdfReader(io.BytesIO(cv_bytes_ctx))
+                            profile_context = "".join(
+                                (p.extract_text() or "") + "\n" for p in reader.pages
+                            )[:3000]
+                        except Exception:
+                            pass
+
+                    if profile_context and target_skills:
+                        # Step 1: Extractive confirm (fast, no Gemini call)
+                        confirmed_skills = _extract_confirmed_skills(profile_context, target_skills)
+                        confirmed_set = set(s.lower() for s in confirmed_skills)
+                        vskillset_results = [
+                            {"skill": s, "probability": 100, "category": "High",
+                             "reason": "Explicitly mentioned in experience text", "source": "confirmed"}
+                            for s in confirmed_skills
+                        ]
+
+                        # Step 2: Gemini inference for remaining skills
+                        unconfirmed = [s for s in target_skills if s.lower() not in confirmed_set]
+                        if unconfirmed and genai and GEMINI_API_KEY:
+                            try:
+                                model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+                                prompt = (
+                                    "SYSTEM: You are an expert technical recruiter evaluating candidate skillsets.\n"
+                                    "For each skill below evaluate the candidate's likely proficiency from their experience.\n"
+                                    "These skills were NOT found explicitly, so use contextual inference from job titles, companies, products.\n"
+                                    "Assign a probability score (0-100) and categorize as Low (<40), Medium (40-74), or High (75-100).\n\n"
+                                    f"CANDIDATE PROFILE:\n{profile_context[:3000]}\n\n"
+                                    f"SKILLS TO INFER:\n{json.dumps(unconfirmed, ensure_ascii=False)}\n\n"
+                                    "OUTPUT FORMAT (JSON):\n"
+                                    '{"evaluations": [{"skill": "skill_name", "probability": 0-100, "category": "Low|Medium|High", "reason": "..."}]}\n'
+                                    "Return ONLY the JSON object."
+                                )
+                                resp = model.generate_content(prompt)
+                                parsed = _extract_json_object((resp.text or "").strip())
+                                if parsed and "evaluations" in parsed:
+                                    for item in parsed["evaluations"]:
+                                        item.setdefault("probability", 50)
+                                        item.setdefault("reason", "Inferred from context")
+                                        item.setdefault("source", "inferred")
+                                        prob = item["probability"]
+                                        item["category"] = "High" if prob >= 75 else ("Medium" if prob >= 40 else "Low")
+                                    vskillset_results += parsed["evaluations"]
+                            except Exception as e_inf:
+                                logger.warning(f"[BULK_ASSESS] vskillset inference step failed for {linkedinurl}: {e_inf}")
+
+                        # Persist vskillset to DB
+                        if vskillset_results:
+                            try:
+                                conn_vsk = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+                                cur_vsk = conn_vsk.cursor()
+                                cur_vsk.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='process' AND column_name IN ('vskillset','skillset')")
+                                avail_cols = {r[0] for r in cur_vsk.fetchall()}
+                                vsk_json = json.dumps(vskillset_results, ensure_ascii=False)
+                                high_skills_str = ", ".join(
+                                    i["skill"] for i in vskillset_results if i.get("category") == "High"
+                                )
+                                updates, vals = [], []
+                                if 'vskillset' in avail_cols:
+                                    updates.append("vskillset = %s"); vals.append(vsk_json)
+                                if 'skillset' in avail_cols and high_skills_str:
+                                    updates.append("skillset = %s"); vals.append(high_skills_str)
+                                if updates:
+                                    vals.append(linkedinurl)
+                                    cur_vsk.execute(f"UPDATE process SET {', '.join(updates)} WHERE linkedinurl = %s", tuple(vals))
+                                    conn_vsk.commit()
+                                cur_vsk.close(); conn_vsk.close()
+                            except Exception as e_vdb:
+                                logger.warning(f"[BULK_ASSESS] vskillset persist failed for {linkedinurl}: {e_vdb}")
+
+                        # Update candidate_skills from High vskillset results
+                        candidate_skills = [i["skill"] for i in vskillset_results if i.get("category") == "High"]
+                        logger.info(f"[BULK_ASSESS] vskillset: {len(confirmed_skills)} confirmed, {len(vskillset_results)-len(confirmed_skills)} inferred, {len(candidate_skills)} High total")
+                    else:
+                        # Fallback to _generate_vskillset_for_profile when no profile context
+                        vskillset_results = _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text, cv_data)
+                        if vskillset_results:
+                            candidate_skills = [i["skill"] for i in vskillset_results if i.get("category") == "High"]
                 except Exception as e_vsk:
                     logger.warning(f"[BULK_ASSESS] vskillset generation failed for {linkedinurl}: {e_vsk}")
             
@@ -8099,6 +8326,22 @@ def process_bulk_assess():
                         """)
                         if cur.fetchone():
                             cur.execute("UPDATE process SET jskill = %s WHERE linkedinurl = %s", (role_tag_val, linkedinurl))
+
+                    # Sync role_tag from sourcing → process so process table is kept up-to-date.
+                    # This mirrors the bulk path: sourcing is authoritative but process must also
+                    # carry the value for downstream steps that read from process directly.
+                    if role_tag:
+                        cur.execute("""
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='process' AND column_name='role_tag'
+                        """)
+                        if cur.fetchone():
+                            cur.execute(
+                                "UPDATE process SET role_tag = %s WHERE linkedinurl = %s AND (role_tag IS NULL OR role_tag = '')",
+                                (role_tag, linkedinurl)
+                            )
+                            if cur.rowcount:
+                                logger.info(f"[BULK_PERSIST] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
                     conn.commit()
                 cur.close(); conn.close()
             except Exception as e_db:
