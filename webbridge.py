@@ -2202,7 +2202,16 @@ def gemini_assess_profile():
         except Exception as _e_rt:
             logger.warning(f"[Assess] Failed to resolve role_tag from sourcing/process: {_e_rt}")
 
-    # 1. Fetch Target Skillset (jskillset) from process table (cross-check source)
+    # 1. Sync jskillset from login → process (always, before fetch — mirrors bulk path).
+    # This ensures target_skills is always populated with up-to-date recruiter skills.
+    if username and linkedinurl:
+        try:
+            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
+            _sync_login_jskillset_to_process(username, linkedinurl, normalized_for_sync or "")
+        except Exception as e_jsk_sync:
+            logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
+
+    # 2. Fetch Target Skillset (jskillset) from process table (after sync)
     # Per requirement: Cross-check against jskillset column in process table, not login table
     target_skills = []
     if linkedinurl:
@@ -2352,22 +2361,7 @@ def gemini_assess_profile():
     except Exception as e:
         logger.warning(f"[Assess] Failed to fetch process_skills: {e}")
 
-    # Sync jskillset from login → process if target_skills still empty.
-    # This ensures the vskillset inference below is not skipped due to a missing jskillset.
-    if not target_skills and username and linkedinurl:
-        try:
-            normalized_for_sync = _normalize_linkedin_to_path(linkedinurl)
-            _sync_login_jskillset_to_process(username, linkedinurl, normalized_for_sync or "")
-            # Re-fetch after sync
-            target_skills = _fetch_jskillset_from_process(linkedinurl) or []
-            if not target_skills:
-                target_skills = _fetch_jskillset(username) or []
-            if target_skills:
-                logger.info(f"[Gemini Assess] target_skills populated after jskillset sync: {len(target_skills)} skills")
-        except Exception as e_jsk_sync:
-            logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
-
-    # If still empty after sync, build a conservative fallback target_skills list from
+    # If target_skills is still empty, build a conservative fallback from
     # role_tag, job_title, and any skills provided in the request body.
     # This ensures the vskillset inference is never skipped even when jskillset columns
     # are missing or linkedin URL normalization didn't match the DB row.
