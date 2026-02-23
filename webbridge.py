@@ -8452,6 +8452,48 @@ def process_bulk_assess():
                     if cur.rowcount:
                         logger.info(f"[BULK_PERSIST] Synced role_tag='{role_tag}' from sourcing→process for {linkedinurl[:50]}")
                     conn.commit()
+
+                # Sync userid and username from sourcing → process (mirrors gemini_assess_profile owner update).
+                # Reads the recruiter's userid/username stored in the sourcing row for this candidate.
+                try:
+                    cur.execute(
+                        "SELECT userid, username FROM sourcing WHERE linkedinurl=%s AND (userid IS NOT NULL OR username IS NOT NULL) LIMIT 1",
+                        (linkedinurl,)
+                    )
+                    _src_owner = cur.fetchone()
+                    if _src_owner:
+                        _src_userid, _src_username = _src_owner
+                        # Build update: only set columns that exist and have values; don't overwrite existing
+                        cur.execute("""
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='process'
+                              AND column_name IN ('userid','username')
+                        """)
+                        _owner_cols = {r[0] for r in cur.fetchall()}
+                        _owner_parts = []
+                        _owner_vals = []
+                        if 'userid' in _owner_cols and _src_userid:
+                            _owner_parts.append("userid = COALESCE(NULLIF(userid, ''), %s)")
+                            _owner_vals.append(_src_userid)
+                        if 'username' in _owner_cols and _src_username:
+                            _owner_parts.append("username = COALESCE(NULLIF(username, ''), %s)")
+                            _owner_vals.append(_src_username)
+                        if _owner_parts:
+                            _owner_vals.append(linkedinurl)
+                            cur.execute(
+                                "UPDATE process SET " + ", ".join(_owner_parts) + " WHERE linkedinurl=%s",
+                                tuple(_owner_vals)
+                            )
+                            if cur.rowcount:
+                                logger.info(f"[BULK_PERSIST] Synced userid/username from sourcing→process for {linkedinurl[:50]}")
+                            conn.commit()
+                except Exception as _e_owner:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    logger.warning(f"[BULK_PERSIST] Failed to sync userid/username from sourcing: {_e_owner}")
+
                 cur.close(); conn.close()
             except Exception as e_db:
                 logger.warning(f"[BulkAssess->DB] Failed to write rating for {linkedinurl}: {e_db}")
