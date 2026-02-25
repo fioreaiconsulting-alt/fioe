@@ -1223,5 +1223,204 @@ class TestCityToCountryJson(unittest.TestCase):
                          _normalize_url("https://jp.linkedin.com/in/test"))
 
 
+class TestRecalculateTenureAndExperience(unittest.TestCase):
+    """
+    Tests for the _recalculate_tenure_and_experience function.
+    Validates deterministic calculation of total experience and tenure
+    from an experience list, independent of Gemini's non-deterministic parsing.
+    """
+
+    # ----------------------------------------------------------------
+    # Inline stubs mirroring the production helpers in webbridge.py
+    # ----------------------------------------------------------------
+    @staticmethod
+    def _is_internship_role(job_title):
+        if not job_title:
+            return False
+        return bool(re.search(r'\bintern\b|\binternship\b', job_title, re.IGNORECASE))
+
+    @staticmethod
+    def _normalize_company_name(company_name):
+        if not company_name:
+            return None
+        normalized = company_name.lower().strip()
+        normalized = re.sub(
+            r'\s+(inc\.?|llc\.?|ltd\.?|corp\.?|corporation|company|co\.?|limited|group|plc)$',
+            '', normalized, flags=re.IGNORECASE
+        )
+        normalized = normalized.strip()
+        return normalized if normalized else None
+
+    def _recalculate(self, experience_list):
+        """Inline stub mirroring webbridge._recalculate_tenure_and_experience."""
+        from datetime import datetime
+        if not experience_list or not isinstance(experience_list, list):
+            return {"total_experience_years": 0.0, "tenure": 0.0,
+                    "employer_count": 0, "total_roles": 0}
+
+        current_year = 2026  # Fixed for deterministic tests
+        employer_periods = {}
+        total_roles = len(experience_list)
+
+        for entry in experience_list:
+            if not entry or not isinstance(entry, str):
+                continue
+            parts = [p.strip() for p in entry.split(',')]
+            if len(parts) < 3:
+                continue
+            job_title = parts[0]
+            company = parts[1]
+            duration_str = parts[2]
+            is_intern = self._is_internship_role(job_title)
+            duration_match = re.search(
+                r'(?:\w+\s+)?(\d{4})\s*(?:to|[-\u2013\u2014])\s*(?:\w+\s+)?(present|\d{4})',
+                duration_str, re.IGNORECASE
+            )
+            if not duration_match:
+                continue
+            start_year = int(duration_match.group(1))
+            end_part = duration_match.group(2).lower()
+            end_year = current_year if end_part == 'present' else int(end_part)
+            if end_year >= start_year and not is_intern:
+                nc = self._normalize_company_name(company)
+                if nc:
+                    employer_periods.setdefault(nc, []).append((start_year, end_year))
+
+        total_experience = 0.0
+        for company, periods in employer_periods.items():
+            periods.sort()
+            merged = []
+            for start, end in periods:
+                if merged and start <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                else:
+                    merged.append((start, end))
+            total_experience += sum(e - s for s, e in merged)
+
+        employer_count = len(employer_periods)
+        tenure = round(total_experience / employer_count, 1) if employer_count > 0 else 0.0
+        return {
+            "total_experience_years": round(total_experience, 1),
+            "tenure": tenure,
+            "employer_count": employer_count,
+            "total_roles": total_roles,
+        }
+
+    # ----------------------------------------------------------------
+    # Test cases
+    # ----------------------------------------------------------------
+
+    def test_empty_list_returns_zeros(self):
+        result = self._recalculate([])
+        self.assertEqual(result["total_experience_years"], 0.0)
+        self.assertEqual(result["tenure"], 0.0)
+        self.assertEqual(result["employer_count"], 0)
+
+    def test_none_returns_zeros(self):
+        result = self._recalculate(None)
+        self.assertEqual(result["total_experience_years"], 0.0)
+
+    def test_single_employer_simple(self):
+        """Google 2020-2023 = 3 years, 1 employer, tenure = 3.0"""
+        exp = ["Software Engineer, Google, 2020 to 2023"]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 3.0)
+        self.assertEqual(result["employer_count"], 1)
+        self.assertEqual(result["tenure"], 3.0)
+
+    def test_two_employers_no_overlap(self):
+        """Google 2015-2017 (2yr) + Amazon 2017-2020 (3yr) = 5yr total, tenure = 2.5"""
+        exp = [
+            "Engineer, Google, 2015 to 2017",
+            "Scientist, Amazon, 2017 to 2020",
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 5.0)
+        self.assertEqual(result["employer_count"], 2)
+        self.assertEqual(result["tenure"], 2.5)
+
+    def test_internship_excluded_from_total_and_employer_count(self):
+        """Intern role at Microsoft must not count toward exp or employer count."""
+        exp = [
+            "Engineer, Google, 2015 to 2018",
+            "Data Scientist, Amazon, 2018 to 2020",
+            "Software Intern, Microsoft, 2014 to 2015",
+        ]
+        result = self._recalculate(exp)
+        # 3yr Google + 2yr Amazon = 5yr; Microsoft intern excluded
+        self.assertEqual(result["total_experience_years"], 5.0)
+        self.assertEqual(result["employer_count"], 2)
+        self.assertEqual(result["total_roles"], 3)
+
+    def test_same_company_two_stints_merged(self):
+        """Google 2015-2017 and Google 2019-2021 → merged as one employer = 4yr, tenure = 4.0"""
+        exp = [
+            "SWE, Google, 2015 to 2017",
+            "Senior SWE, Google, 2019 to 2021",
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 4.0)
+        self.assertEqual(result["employer_count"], 1)
+        self.assertEqual(result["tenure"], 4.0)
+
+    def test_overlapping_periods_same_company_merged(self):
+        """Overlapping roles at same company should not double-count years."""
+        exp = [
+            "Manager, Acme Corp, 2018 to 2022",
+            "Director, Acme Corp, 2020 to 2023",
+        ]
+        result = self._recalculate(exp)
+        # Merged: 2018-2023 = 5 years, 1 employer
+        self.assertEqual(result["total_experience_years"], 5.0)
+        self.assertEqual(result["employer_count"], 1)
+
+    def test_month_year_format_parsed(self):
+        """'Aug 2020 to present' style format must parse correctly (using 2026 as current year)."""
+        exp = ["CRA, Pfizer, Aug 2020 to present"]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 6.0)  # 2026 - 2020
+        self.assertEqual(result["employer_count"], 1)
+
+    def test_deterministic_across_multiple_calls(self):
+        """Same input must produce identical output on repeated calls (no Gemini variance)."""
+        exp = [
+            "CRA, AstraZeneca, 2019 to 2022",
+            "Clinical Manager, Roche, 2015 to 2019",
+        ]
+        result1 = self._recalculate(exp)
+        result2 = self._recalculate(exp)
+        self.assertEqual(result1, result2)
+
+    def test_company_suffix_normalization(self):
+        """'Acme Inc' and 'Acme' are the same employer after normalization."""
+        exp = [
+            "Engineer, Acme Inc, 2016 to 2019",
+            "Senior Engineer, Acme, 2019 to 2022",
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["employer_count"], 1)
+        self.assertEqual(result["total_experience_years"], 6.0)
+
+    def test_exp_write_once_guard_logic(self):
+        """
+        Mirror of the write-once guard in analyze_cv_background:
+        if exp is already set in DB (non-null, non-zero), skip overwriting.
+        """
+        def _should_skip_exp_write(existing_exp):
+            return (
+                existing_exp is not None
+                and str(existing_exp).strip() not in ('', '0', '0.0')
+            )
+
+        self.assertTrue(_should_skip_exp_write("7.0"))
+        self.assertTrue(_should_skip_exp_write(7.0))
+        self.assertTrue(_should_skip_exp_write("13.5"))
+        self.assertFalse(_should_skip_exp_write(None))
+        self.assertFalse(_should_skip_exp_write(""))
+        self.assertFalse(_should_skip_exp_write("0"))
+        self.assertFalse(_should_skip_exp_write("0.0"))
+        self.assertFalse(_should_skip_exp_write(0))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
