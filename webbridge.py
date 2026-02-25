@@ -7361,11 +7361,68 @@ def _core_assess_profile(data):
         """
         Assess country using binary match logic.
         Country must match; any mismatch yields 'unrelated' (not 'related').
+        Recognises major cities as belonging to their countries so that,
+        e.g., "Tokyo" matches required "Japan".
         """
+        _CITY_TO_COUNTRY = {
+            # Japan
+            "tokyo": "japan", "osaka": "japan", "kyoto": "japan", "yokohama": "japan",
+            # China
+            "beijing": "china", "shanghai": "china", "shenzhen": "china",
+            "guangzhou": "china", "chengdu": "china", "hong kong": "china",
+            # South Korea
+            "seoul": "south korea", "busan": "south korea",
+            # India
+            "mumbai": "india", "delhi": "india", "bangalore": "india",
+            "hyderabad": "india", "chennai": "india", "kolkata": "india",
+            # Singapore (city-state — already resolves itself)
+            # Thailand
+            "bangkok": "thailand",
+            # Indonesia
+            "jakarta": "indonesia",
+            # Malaysia
+            "kuala lumpur": "malaysia",
+            # Philippines
+            "manila": "philippines",
+            # Vietnam
+            "hanoi": "vietnam", "ho chi minh city": "vietnam",
+            # Taiwan
+            "taipei": "taiwan",
+            # Australia
+            "sydney": "australia", "melbourne": "australia", "brisbane": "australia",
+            "perth": "australia",
+            # United Kingdom
+            "london": "united kingdom", "manchester": "united kingdom",
+            "birmingham": "united kingdom",
+            # Germany
+            "berlin": "germany", "munich": "germany", "frankfurt": "germany",
+            "hamburg": "germany",
+            # France
+            "paris": "france", "lyon": "france",
+            # USA
+            "new york": "united states", "los angeles": "united states",
+            "san francisco": "united states", "chicago": "united states",
+            "seattle": "united states", "boston": "united states",
+            "austin": "united states", "houston": "united states",
+            # Canada
+            "toronto": "canada", "vancouver": "canada", "montreal": "canada",
+            # UAE
+            "dubai": "united arab emirates", "abu dhabi": "united arab emirates",
+        }
+        _COUNTRY_ALIASES = {
+            "uk": "united kingdom", "usa": "united states", "us": "united states",
+            "uae": "united arab emirates",
+        }
+
+        def _resolve(val):
+            v = str(val).lower().strip()
+            v = _COUNTRY_ALIASES.get(v, v)
+            return _CITY_TO_COUNTRY.get(v, v)
+
         if not candidate_country: return "not_assessed", ""
         if not required_country: return "not_assessed", ""
-        cc = str(candidate_country).lower().strip()
-        rc = str(required_country).lower().strip()
+        cc = _resolve(candidate_country)
+        rc = _resolve(required_country)
         if cc == rc or cc in rc or rc in cc:
             return "match", f"Country match: {candidate_country}"
         return "unrelated", f"Country mismatch: candidate={candidate_country}, required={required_country}"
@@ -7707,8 +7764,11 @@ def _core_assess_profile(data):
         descriptor = status_to_descriptor(st)
         weight_percent = int(round(final_weights[c]))
         
-        # Generate star string
-        star_string = "★" * category_stars + "☆" * (5 - category_stars)
+        # Generate star string — "Unable to Access" when data was unavailable
+        if st == "not_assessed":
+            star_string = "Unable to Access"
+        else:
+            star_string = "★" * category_stars + "☆" * (5 - category_stars)
         
         category_appraisals[display_name] = {
             "rating": descriptor,

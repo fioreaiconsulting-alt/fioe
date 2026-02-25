@@ -504,16 +504,60 @@ def _seniority_heuristic_stub(candidate_seniority, required_seniority):
 
 
 def _country_heuristic_stub(candidate_country, required_country):
-    """Mirror of country_heuristic in webbridge.py."""
+    """Mirror of country_heuristic in webbridge.py — including city-to-country mapping."""
+    _CITY_TO_COUNTRY = {
+        "tokyo": "japan", "osaka": "japan", "kyoto": "japan", "yokohama": "japan",
+        "beijing": "china", "shanghai": "china", "shenzhen": "china",
+        "guangzhou": "china", "chengdu": "china", "hong kong": "china",
+        "seoul": "south korea", "busan": "south korea",
+        "mumbai": "india", "delhi": "india", "bangalore": "india",
+        "hyderabad": "india", "chennai": "india", "kolkata": "india",
+        "bangkok": "thailand",
+        "jakarta": "indonesia",
+        "kuala lumpur": "malaysia",
+        "manila": "philippines",
+        "hanoi": "vietnam", "ho chi minh city": "vietnam",
+        "taipei": "taiwan",
+        "sydney": "australia", "melbourne": "australia", "brisbane": "australia",
+        "perth": "australia",
+        "london": "united kingdom", "manchester": "united kingdom",
+        "birmingham": "united kingdom",
+        "berlin": "germany", "munich": "germany", "frankfurt": "germany",
+        "hamburg": "germany",
+        "paris": "france", "lyon": "france",
+        "new york": "united states", "los angeles": "united states",
+        "san francisco": "united states", "chicago": "united states",
+        "seattle": "united states", "boston": "united states",
+        "austin": "united states", "houston": "united states",
+        "toronto": "canada", "vancouver": "canada", "montreal": "canada",
+        "dubai": "united arab emirates", "abu dhabi": "united arab emirates",
+    }
+    _COUNTRY_ALIASES = {
+        "uk": "united kingdom", "usa": "united states", "us": "united states",
+        "uae": "united arab emirates",
+    }
+
+    def _resolve(val):
+        v = str(val).lower().strip()
+        v = _COUNTRY_ALIASES.get(v, v)
+        return _CITY_TO_COUNTRY.get(v, v)
+
     if not candidate_country:
         return "not_assessed", ""
     if not required_country:
         return "not_assessed", ""
-    cc = str(candidate_country).lower().strip()
-    rc = str(required_country).lower().strip()
+    cc = _resolve(candidate_country)
+    rc = _resolve(required_country)
     if cc == rc or cc in rc or rc in cc:
         return "match", f"Country match: {candidate_country}"
     return "unrelated", f"Country mismatch: candidate={candidate_country}, required={required_country}"
+
+
+def _star_string_stub(status, category_stars):
+    """Mirror of star_string generation in webbridge.py."""
+    if status == "not_assessed":
+        return "Unable to Access"
+    return "★" * category_stars + "☆" * (5 - category_stars)
 
 
 def _tenure_heuristic_stub(tenure):
@@ -771,6 +815,88 @@ class TestTenureHeuristic(unittest.TestCase):
         st, _ = _tenure_heuristic_stub(5.0)
         factor = _scoring_factor_stub("tenure", st)
         self.assertEqual(factor, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for city-to-country recognition in country assessment
+# ---------------------------------------------------------------------------
+
+class TestCityToCountryMapping(unittest.TestCase):
+    def test_tokyo_maps_to_japan(self):
+        st, _ = _country_heuristic_stub("Tokyo", "Japan")
+        self.assertEqual(st, "match")
+
+    def test_beijing_maps_to_china(self):
+        st, _ = _country_heuristic_stub("Beijing", "China")
+        self.assertEqual(st, "match")
+
+    def test_london_maps_to_uk(self):
+        st, _ = _country_heuristic_stub("London", "United Kingdom")
+        self.assertEqual(st, "match")
+
+    def test_london_maps_to_uk_alias(self):
+        st, _ = _country_heuristic_stub("London", "UK")
+        self.assertEqual(st, "match")
+
+    def test_new_york_maps_to_usa(self):
+        st, _ = _country_heuristic_stub("New York", "United States")
+        self.assertEqual(st, "match")
+
+    def test_dubai_maps_to_uae(self):
+        st, _ = _country_heuristic_stub("Dubai", "UAE")
+        self.assertEqual(st, "match")
+
+    def test_city_in_wrong_country_is_unrelated(self):
+        # Tokyo is in Japan, not Singapore
+        st, _ = _country_heuristic_stub("Tokyo", "Singapore")
+        self.assertEqual(st, "unrelated")
+
+    def test_beijing_vs_singapore_is_unrelated(self):
+        st, _ = _country_heuristic_stub("Beijing", "Singapore")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_city_country_same_country_match(self):
+        # Both resolve to the same country
+        st, _ = _country_heuristic_stub("Tokyo", "Japan")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 1.0)
+
+    def test_seoul_maps_to_south_korea(self):
+        st, _ = _country_heuristic_stub("Seoul", "South Korea")
+        self.assertEqual(st, "match")
+
+    def test_sydney_maps_to_australia(self):
+        st, _ = _country_heuristic_stub("Sydney", "Australia")
+        self.assertEqual(st, "match")
+
+
+# ---------------------------------------------------------------------------
+# Tests for "Unable to Access" star_string when status is not_assessed
+# ---------------------------------------------------------------------------
+
+class TestStarStringNotAssessed(unittest.TestCase):
+    def test_not_assessed_yields_unable_to_access(self):
+        result = _star_string_stub("not_assessed", 0)
+        self.assertEqual(result, "Unable to Access")
+
+    def test_match_yields_star_string(self):
+        result = _star_string_stub("match", 5)
+        self.assertEqual(result, "★★★★★")
+
+    def test_unrelated_yields_empty_stars(self):
+        result = _star_string_stub("unrelated", 0)
+        self.assertEqual(result, "☆☆☆☆☆")
+
+    def test_related_yields_partial_stars(self):
+        result = _star_string_stub("related", 3)
+        self.assertEqual(result, "★★★☆☆")
+
+    def test_not_assessed_never_shows_stars(self):
+        result = _star_string_stub("not_assessed", 5)
+        self.assertNotIn("★", result)
+        self.assertNotIn("☆", result)
+        self.assertEqual(result, "Unable to Access")
 
 
 if __name__ == "__main__":
