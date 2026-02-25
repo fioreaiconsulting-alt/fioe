@@ -233,7 +233,7 @@
 <div id="tab-details" class="tab-pane">
     <div style="margin-bottom: 20px; display: flex; gap: 12px; align-items: center;">
         <button onclick="switchTab('tab-search')" class="btn-secondary" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328;">&larr; Back to Search Results</button>
-        <button id="viewDetailsRefreshBtn" class="btn-secondary" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Hover or click to refresh current profile data">🔄 Refresh</button>
+        <button id="viewDetailsRefreshBtn" class="btn-secondary" onclick="refreshCurrentProfile()" style="background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1;" title="Click to refresh current profile data">🔄 Refresh</button>
         <span id="refreshStatus" role="status" aria-live="polite" style="display:none; font-size:13px; color:#0369a1;"></span>
     </div>
     <div id="details-container">
@@ -1030,11 +1030,13 @@ function generateAssessmentHTML(data) {
             categories.forEach(([category, details]) => {
                 const weightPercent = details.weight_percent || 0;
                 const starString = details.star_string || '';
+                const isUnable = details.status === 'not_assessed';
+                const ratingStyle = isUnable ? ' style="color:#9ca3af; font-size:11px;"' : '';
                 categoryAppraisalsHtml += `
                     <tr>
                         <td class="category-name">${escapeHtml(category)}</td>
                         <td class="category-weight">${weightPercent}%</td>
-                        <td class="category-rating">${starString}</td>
+                        <td class="category-rating"${ratingStyle}>${isUnable ? escapeHtml(starString) : starString}</td>
                     </tr>
                 `;
             });
@@ -3783,11 +3785,13 @@ async function triggerLevel1Assessment(tr, anchor) {
                 categories.forEach(([category, details]) => {
                     const weightPercent = details.weight_percent || 0;
                     const starString = details.star_string || '';
+                    const isUnable = details.status === 'not_assessed';
+                    const ratingStyle = isUnable ? ' style="color:#9ca3af; font-size:11px;"' : '';
                     categoryAppraisalsHtml += `
                         <tr>
                             <td class="category-name">${escapeHtml(category)}</td>
                             <td class="category-weight">${weightPercent}%</td>
-                            <td class="category-rating">${starString}</td>
+                            <td class="category-rating"${ratingStyle}>${isUnable ? escapeHtml(starString) : starString}</td>
                         </tr>
                     `;
                 });
@@ -4053,11 +4057,13 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
                 categories.forEach(([category, details]) => {
                     const weightPercent = details.weight_percent || 0;
                     const starString = details.star_string || '';
+                    const isUnable = details.status === 'not_assessed';
+                    const ratingStyle = isUnable ? ' style="color:#9ca3af; font-size:11px;"' : '';
                     categoryAppraisalsHtml += `
                         <tr>
                             <td class="category-name">${escapeHtml(category)}</td>
                             <td class="category-weight">${weightPercent}%</td>
-                            <td class="category-rating">${starString}</td>
+                            <td class="category-rating"${ratingStyle}>${isUnable ? escapeHtml(starString) : starString}</td>
                         </tr>
                     `;
                 });
@@ -4528,25 +4534,60 @@ function renderTable(){
     if (!cardOrContainer) return null;
     let col = cardOrContainer.querySelector('.sv-product-col');
     if (!col) {
+      // Outer section wrapper — identical structure and styling to vskillset-section
       col = document.createElement('div');
-      col.className = 'sv-skillset-col sv-product-col';
-      
+      col.className = 'sv-product-col product-section';
+      col.style.cssText = 'margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;';
+
+      // Header — identical styling to vskillset-header
       const head = document.createElement('div');
-      head.className = 'sv-skillset-head';
-      head.textContent = 'Product';
-      
+      head.className = 'product-header';
+      head.style.cssText = 'display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 8px; background: #f9fafb; border-radius: 6px; margin-bottom: 8px;';
+
+      // Title — identical styling to vskillset-title
+      const productTitleSpan = document.createElement('span');
+      productTitleSpan.textContent = 'Product';
+      productTitleSpan.style.cssText = 'font-weight: 600; font-size: 13px; color: #374151;';
+
+      // Arrow — same class pattern as vskillset-arrow, default collapsed (▶)
+      const productArrow = document.createElement('span');
+      productArrow.className = 'product-arrow';
+      productArrow.textContent = '▶';
+      productArrow.style.cssText = 'color: #6b7280; font-size: 12px;';
+
+      head.appendChild(productTitleSpan);
+      head.appendChild(productArrow);
+
+      // Content wrapper — hidden by default (collapsed)
+      const productContent = document.createElement('div');
+      productContent.className = 'product-content';
+      productContent.style.display = 'none'; // default state: collapsed
+
+      head.onclick = function() {
+        const arrow = this.querySelector('.product-arrow');
+        if (productContent.style.display === 'none') {
+          productContent.style.display = '';
+          arrow.textContent = '▼';
+        } else {
+          productContent.style.display = 'none';
+          arrow.textContent = '▶';
+        }
+      };
+
       const list = document.createElement('div');
       list.className = 'sv-skillset-list';
-      
+      list.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; min-height: 24px;';
+
       // Add loading spinner initially
       const loadingSpinner = document.createElement('div');
       loadingSpinner.className = 'product-loading-spinner';
       loadingSpinner.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px; color: #6b7280;';
       loadingSpinner.innerHTML = '<span class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></span><span style="font-size: 12px;">Loading product...</span>';
       list.appendChild(loadingSpinner);
-      
+
+      productContent.appendChild(list);
       col.appendChild(head);
-      col.appendChild(list);
+      col.appendChild(productContent);
 
       if (cardOrContainer.classList.contains('sv-right-col')) {
           const exp = cardOrContainer.querySelector('.sv-experience');
@@ -4877,29 +4918,39 @@ function renderTable(){
     if (linkedinurl) {
       assessBtn.dataset.linkedin = linkedinurl;
       assessBtn.addEventListener('click', (e) => {
-        try {
-          // AFFECTED: Save JSON before opening
-          const uid = window.__SV_ACTIVE_USERID || '';
-          fetch('/sourcing/save_profile_json', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ linkedinurl: linkedinurl, userid: uid })
-          }).catch(err => console.warn('JSON save failed', err));
+        // Save JSON before opening (fire-and-forget)
+        const uid = window.__SV_ACTIVE_USERID || '';
+        fetch('/sourcing/save_profile_json', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ linkedinurl: linkedinurl, userid: uid })
+        }).catch(err => console.warn('JSON save failed', err));
 
-          const url = assessBtn.dataset.linkedin;
-          if (!url) {
-            alert('No LinkedIn URL available');
-            return;
-          }
-          
-          // Validate LinkedIn URL before rendering to avoid broken links
-          let validatedUrl = url;
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            validatedUrl = 'https://' + url;
-          }
-          
-          window.open(validatedUrl, '_blank', 'noopener');
-        } catch (_) {}
+        const url = assessBtn.dataset.linkedin || linkedinurl || '';
+        if (!url) {
+          alert('No LinkedIn URL available');
+          return;
+        }
+
+        // Resolve URL to an absolute https link
+        let validatedUrl;
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+          validatedUrl = url;
+        } else if (url.startsWith('/')) {
+          // Path-only (e.g. /in/username) — resolve against linkedin.com
+          validatedUrl = 'https://www.linkedin.com' + url;
+        } else {
+          validatedUrl = 'https://' + url;
+        }
+
+        // Use anchor element click — bypasses popup-blocker restrictions
+        const a = document.createElement('a');
+        a.href = validatedUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
       });
     } else {
       // Even without URL, keep button enabled but show alert on click
@@ -5226,8 +5277,13 @@ function renderTable(){
     if (linkedinurl) {
       downloadBtn.addEventListener('click', () => {
         const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
-        if(anchor){
-           window.open(API_DOWNLOAD_CV + '?linkedin=' + encodeURIComponent(anchor), '_blank');
+        if (anchor) {
+          const a = document.createElement('a');
+          a.href = API_DOWNLOAD_CV + '?linkedin=' + encodeURIComponent(anchor);
+          a.download = '';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         }
       });
     }
