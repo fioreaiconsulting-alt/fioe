@@ -3544,21 +3544,29 @@ Return ONLY the JSON object, no other text."""
         updates = []
         if 'vskillset' in available_cols:
             updates.append("vskillset = %s")
-        if 'skillset' in available_cols:
-            updates.append("skillset = %s")
         
         if updates:
             update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s"
-            
             update_values = []
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
-            if 'skillset' in available_cols:
-                update_values.append(skillset_str)
             update_values.extend([normalized, normalized])
-            
             cur.execute(update_sql, tuple(update_values))
-            conn.commit()
+        
+        # Skillset guardrail: only write if currently empty (never overwrite an existing value)
+        if 'skillset' in available_cols and skillset_str:
+            cur.execute(
+                "UPDATE process SET skillset = %s"
+                " WHERE (LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s)"
+                " AND (skillset IS NULL OR TRIM(skillset) = '')",
+                (skillset_str, normalized, normalized)
+            )
+            if cur.rowcount:
+                logger.info(f"[vskillset_infer] Persisted {len(high_skills)} High skills to skillset for {linkedinurl[:50]}")
+            else:
+                logger.info(f"[vskillset_infer] Skillset already set for {linkedinurl[:50]} — skipping overwrite")
+        
+        conn.commit()
         
         cur.close()
         conn.close()
@@ -7107,14 +7115,20 @@ def _core_assess_profile(data):
             _cv = _ctc_aliases.get(_cv, _cv).lower()
         else:
             _cv = _ctc_fallback_aliases.get(_cv, _cv)
-        # City lookup: try full value first, then the first comma-separated token
-        # (handles "Tokyo, Japan" → "tokyo" → "Japan")
+        # City lookup: try full value, first comma-separated token, then last token
+        # (handles "Tokyo" → "Japan", "Tokyo, Japan" → "Japan", "Yokohama, Kanagawa, Japan" → "Japan")
         if _ctc_cities:
-            _resolved = _ctc_cities.get(_cv) or _ctc_cities.get(_cv.split(",")[0].strip())
+            _cv_parts = [p.strip() for p in _cv.split(",")]
+            _resolved = _ctc_cities.get(_cv) or _ctc_cities.get(_cv_parts[0])
+            if not _resolved and len(_cv_parts) > 1:
+                _resolved = _ctc_cities.get(_cv_parts[-1])
             if _resolved:
                 country = _resolved
         else:
-            _resolved = _ctc_fallback_cities.get(_cv) or _ctc_fallback_cities.get(_cv.split(",")[0].strip())
+            _cv_parts = [p.strip() for p in _cv.split(",")]
+            _resolved = _ctc_fallback_cities.get(_cv) or _ctc_fallback_cities.get(_cv_parts[0])
+            if not _resolved and len(_cv_parts) > 1:
+                _resolved = _ctc_fallback_cities.get(_cv_parts[-1])
             if _resolved:
                 country = _resolved
     
@@ -7508,13 +7522,21 @@ def _core_assess_profile(data):
             else:
                 v = _FALLBACK_ALIASES.get(v, v)
             # Resolve city to country (JSON cities values are capitalised; lower for comparison)
-            # Also try the first comma-separated token to handle "Tokyo, Japan" style values
+            # Try full value, first comma-separated token, then last token
+            # (handles "Tokyo" → "Japan", "Tokyo, JP" → "Japan", "Unknown City, Japan" → "Japan")
             if _json_cities:
-                resolved = _json_cities.get(v) or _json_cities.get(v.split(",")[0].strip())
+                _v_parts = [p.strip() for p in v.split(",")]
+                resolved = _json_cities.get(v) or _json_cities.get(_v_parts[0])
+                if not resolved and len(_v_parts) > 1:
+                    resolved = _json_cities.get(_v_parts[-1])
                 if resolved:
                     return resolved.lower()
             else:
-                v = _FALLBACK_CITIES.get(v) or _FALLBACK_CITIES.get(v.split(",")[0].strip()) or v
+                _v_parts = [p.strip() for p in v.split(",")]
+                v = _FALLBACK_CITIES.get(v) or _FALLBACK_CITIES.get(_v_parts[0])
+                if not v and len(_v_parts) > 1:
+                    v = _FALLBACK_CITIES.get(_v_parts[-1])
+                v = v or str(val).lower().strip()
             return v
 
         if not candidate_country: return "not_assessed", ""
@@ -7579,7 +7601,13 @@ def _core_assess_profile(data):
                 st, cm = jobtitle_heuristic(job_title, role_tag)
                 assessment_results[c] = {"status": st, "comment": cm}
             elif c == "country":
-                st, cm = country_heuristic(country, required_country)
+                if required_country:
+                    st, cm = country_heuristic(country, required_country)
+                elif country:
+                    # No required country specified; candidate has a location → no restriction, treat as match
+                    st, cm = "match", "No country requirement; candidate location accepted"
+                else:
+                    st, cm = "not_assessed", ""
                 assessment_results[c] = {"status": st, "comment": cm}
             elif c == "company":
                  assessment_results[c] = {"status": "match", "comment": "Present"}
@@ -8135,13 +8163,20 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
             final_skillset_str = skillset_str
             
             try:
-                # Persist CV-extracted skillset to process table (no reconciliation)
-                if 'skillset' in cols:
+                # Persist CV-extracted skillset to process table only if not already populated.
+                # Guardrail: skillset must not overwrite an existing value — assessment sets it authoritatively.
+                if 'skillset' in cols and final_skillset_str:
                     up_where = where_clause
                     up_params = list(params)
-                    cur.execute(f"UPDATE process SET skillset = %s WHERE {up_where}", tuple([final_skillset_str] + up_params))
-                    conn.commit()
-                    logger.info(f"[CV BG] CV-extracted skillset saved for linkedin='{linkedinurl}' (exclusive source)")
+                    cur.execute(
+                        f"UPDATE process SET skillset = %s WHERE {up_where} AND (skillset IS NULL OR TRIM(skillset) = '')",
+                        tuple([final_skillset_str] + up_params)
+                    )
+                    if cur.rowcount:
+                        conn.commit()
+                        logger.info(f"[CV BG] CV-extracted skillset saved for linkedin='{linkedinurl}' (exclusive source)")
+                    else:
+                        logger.info(f"[CV BG] Skillset already set for linkedin='{linkedinurl}' — skipping CV overwrite")
             except Exception as e_save:
                 logger.warning(f"[CV BG] Failed to persist CV skillset: {e_save}")
 
@@ -8318,6 +8353,7 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
     """
     Generate vskillset for a profile using Gemini inference.
     Returns list of skill evaluation results or None if failed.
+    Idempotent: returns existing vskillset from DB without regenerating if already populated.
     """
     if not (genai and GEMINI_API_KEY):
         return None
@@ -8332,6 +8368,33 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
         pg_user = os.getenv("PGUSER", "postgres")
         pg_password = os.getenv("PGPASSWORD", "") or "orlha"
         pg_db = os.getenv("PGDATABASE", "candidate_db")
+
+        # --- Idempotency guard: if vskillset already exists in DB, return it without re-running Gemini ---
+        if linkedinurl:
+            try:
+                _norm_gen = linkedinurl.lower().strip().rstrip('/')
+                _conn_idem = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+                _cur_idem = _conn_idem.cursor()
+                _cur_idem.execute("""
+                    SELECT vskillset FROM process
+                    WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                       OR normalized_linkedin = %s
+                    LIMIT 1
+                """, (_norm_gen, _norm_gen))
+                _idem_row = _cur_idem.fetchone()
+                _cur_idem.close(); _conn_idem.close()
+                if _idem_row and _idem_row[0]:
+                    _vs_existing = _idem_row[0]
+                    if isinstance(_vs_existing, str):
+                        try:
+                            _vs_existing = json.loads(_vs_existing)
+                        except Exception:
+                            _vs_existing = []
+                    if isinstance(_vs_existing, list) and len(_vs_existing) > 0:
+                        logger.info(f"[vskillset_gen] Returning existing vskillset ({len(_vs_existing)} items) for {linkedinurl[:50]} — skipping Gemini re-inference")
+                        return _vs_existing
+            except Exception as _e_idem_gen:
+                logger.warning(f"[vskillset_gen] Idempotency check failed ({_e_idem_gen}); proceeding with generation")
         
         # Use experience as primary context, cv as fallback
         profile_context = experience_text if experience_text else ""
@@ -8431,15 +8494,28 @@ Return ONLY the JSON object, no other text."""
             """)
             available_cols = {r[0] for r in cur.fetchall()}
             
+            # Use normalized URL for consistent match with idempotency checks elsewhere
+            _norm_persist = linkedinurl.lower().strip().rstrip('/')
             # Update vskillset if column exists
             if 'vskillset' in available_cols:
-                cur.execute("UPDATE process SET vskillset = %s WHERE linkedinurl = %s", (vskillset_json, linkedinurl))
+                cur.execute(
+                    "UPDATE process SET vskillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (vskillset_json, _norm_persist)
+                )
                 logger.info(f"[vskillset_gen] Persisted vskillset for {linkedinurl[:50]}")
             
-            # Update skillset with High skills only as comma-separated string
-            if 'skillset' in available_cols:
-                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_str, linkedinurl))
-                logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
+            # Update skillset with High skills only as comma-separated string,
+            # but only if skillset is not already populated (guardrail).
+            if 'skillset' in available_cols and skillset_str:
+                cur.execute(
+                    "UPDATE process SET skillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s"
+                    " AND (skillset IS NULL OR TRIM(skillset) = '')",
+                    (skillset_str, _norm_persist)
+                )
+                if cur.rowcount:
+                    logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
+                else:
+                    logger.info(f"[vskillset_gen] Skillset already set for {linkedinurl[:50]} — skipping overwrite")
             
             conn.commit()
             cur.close()
@@ -8679,9 +8755,14 @@ def process_bulk_assess():
                     try:
                         conn_vsk_idem = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
                         cur_vsk_idem = conn_vsk_idem.cursor()
+                        # Use normalized URL comparison to handle trailing slash / case differences
+                        _norm_vsk = linkedinurl.lower().strip().rstrip('/')
                         cur_vsk_idem.execute("""
-                            SELECT vskillset FROM process WHERE linkedinurl = %s LIMIT 1
-                        """, (linkedinurl,))
+                            SELECT vskillset FROM process
+                            WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                               OR normalized_linkedin = %s
+                            LIMIT 1
+                        """, (_norm_vsk, _norm_vsk))
                         _vs_idem_row = cur_vsk_idem.fetchone()
                         if _vs_idem_row and _vs_idem_row[0]:
                             _vs_idem_val = _vs_idem_row[0]
@@ -8768,12 +8849,21 @@ def process_bulk_assess():
                                     updates, vals = [], []
                                     if 'vskillset' in avail_cols:
                                         updates.append("vskillset = %s"); vals.append(vsk_json)
-                                    if 'skillset' in avail_cols and high_skills_str:
-                                        updates.append("skillset = %s"); vals.append(high_skills_str)
                                     if updates:
                                         vals.append(linkedinurl)
                                         cur_vsk.execute(f"UPDATE process SET {', '.join(updates)} WHERE linkedinurl = %s", tuple(vals))
-                                        conn_vsk.commit()
+                                    # Skillset guardrail: only write if currently empty (never overwrite existing value)
+                                    if 'skillset' in avail_cols and high_skills_str:
+                                        cur_vsk.execute(
+                                            "UPDATE process SET skillset = %s WHERE linkedinurl = %s"
+                                            " AND (skillset IS NULL OR TRIM(skillset) = '')",
+                                            (high_skills_str, linkedinurl)
+                                        )
+                                        if cur_vsk.rowcount:
+                                            logger.info(f"[BULK_ASSESS] Persisted High skills to skillset for {linkedinurl[:50]}")
+                                        else:
+                                            logger.info(f"[BULK_ASSESS] Skillset already set for {linkedinurl[:50]} — skipping overwrite")
+                                    conn_vsk.commit()
                                     cur_vsk.close(); conn_vsk.close()
                                 except Exception as e_vdb:
                                     logger.warning(f"[BULK_ASSESS] vskillset persist failed for {linkedinurl}: {e_vdb}")
