@@ -3544,21 +3544,29 @@ Return ONLY the JSON object, no other text."""
         updates = []
         if 'vskillset' in available_cols:
             updates.append("vskillset = %s")
-        if 'skillset' in available_cols:
-            updates.append("skillset = %s")
         
         if updates:
             update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s"
-            
             update_values = []
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
-            if 'skillset' in available_cols:
-                update_values.append(skillset_str)
             update_values.extend([normalized, normalized])
-            
             cur.execute(update_sql, tuple(update_values))
-            conn.commit()
+        
+        # Skillset guardrail: only write if currently empty (never overwrite an existing value)
+        if 'skillset' in available_cols and skillset_str:
+            cur.execute(
+                "UPDATE process SET skillset = %s"
+                " WHERE (LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s)"
+                " AND (skillset IS NULL OR TRIM(skillset) = '')",
+                (skillset_str, normalized, normalized)
+            )
+            if cur.rowcount:
+                logger.info(f"[vskillset_infer] Persisted {len(high_skills)} High skills to skillset for {linkedinurl[:50]}")
+            else:
+                logger.info(f"[vskillset_infer] Skillset already set for {linkedinurl[:50]} — skipping overwrite")
+        
+        conn.commit()
         
         cur.close()
         conn.close()
@@ -8155,13 +8163,20 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
             final_skillset_str = skillset_str
             
             try:
-                # Persist CV-extracted skillset to process table (no reconciliation)
-                if 'skillset' in cols:
+                # Persist CV-extracted skillset to process table only if not already populated.
+                # Guardrail: skillset must not overwrite an existing value — assessment sets it authoritatively.
+                if 'skillset' in cols and final_skillset_str:
                     up_where = where_clause
                     up_params = list(params)
-                    cur.execute(f"UPDATE process SET skillset = %s WHERE {up_where}", tuple([final_skillset_str] + up_params))
-                    conn.commit()
-                    logger.info(f"[CV BG] CV-extracted skillset saved for linkedin='{linkedinurl}' (exclusive source)")
+                    cur.execute(
+                        f"UPDATE process SET skillset = %s WHERE {up_where} AND (skillset IS NULL OR TRIM(skillset) = '')",
+                        tuple([final_skillset_str] + up_params)
+                    )
+                    if cur.rowcount:
+                        conn.commit()
+                        logger.info(f"[CV BG] CV-extracted skillset saved for linkedin='{linkedinurl}' (exclusive source)")
+                    else:
+                        logger.info(f"[CV BG] Skillset already set for linkedin='{linkedinurl}' — skipping CV overwrite")
             except Exception as e_save:
                 logger.warning(f"[CV BG] Failed to persist CV skillset: {e_save}")
 
@@ -8489,13 +8504,18 @@ Return ONLY the JSON object, no other text."""
                 )
                 logger.info(f"[vskillset_gen] Persisted vskillset for {linkedinurl[:50]}")
             
-            # Update skillset with High skills only as comma-separated string
-            if 'skillset' in available_cols:
+            # Update skillset with High skills only as comma-separated string,
+            # but only if skillset is not already populated (guardrail).
+            if 'skillset' in available_cols and skillset_str:
                 cur.execute(
-                    "UPDATE process SET skillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    "UPDATE process SET skillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s"
+                    " AND (skillset IS NULL OR TRIM(skillset) = '')",
                     (skillset_str, _norm_persist)
                 )
-                logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
+                if cur.rowcount:
+                    logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
+                else:
+                    logger.info(f"[vskillset_gen] Skillset already set for {linkedinurl[:50]} — skipping overwrite")
             
             conn.commit()
             cur.close()
@@ -8829,12 +8849,21 @@ def process_bulk_assess():
                                     updates, vals = [], []
                                     if 'vskillset' in avail_cols:
                                         updates.append("vskillset = %s"); vals.append(vsk_json)
-                                    if 'skillset' in avail_cols and high_skills_str:
-                                        updates.append("skillset = %s"); vals.append(high_skills_str)
                                     if updates:
                                         vals.append(linkedinurl)
                                         cur_vsk.execute(f"UPDATE process SET {', '.join(updates)} WHERE linkedinurl = %s", tuple(vals))
-                                        conn_vsk.commit()
+                                    # Skillset guardrail: only write if currently empty (never overwrite existing value)
+                                    if 'skillset' in avail_cols and high_skills_str:
+                                        cur_vsk.execute(
+                                            "UPDATE process SET skillset = %s WHERE linkedinurl = %s"
+                                            " AND (skillset IS NULL OR TRIM(skillset) = '')",
+                                            (high_skills_str, linkedinurl)
+                                        )
+                                        if cur_vsk.rowcount:
+                                            logger.info(f"[BULK_ASSESS] Persisted High skills to skillset for {linkedinurl[:50]}")
+                                        else:
+                                            logger.info(f"[BULK_ASSESS] Skillset already set for {linkedinurl[:50]} — skipping overwrite")
+                                    conn_vsk.commit()
                                     cur_vsk.close(); conn_vsk.close()
                                 except Exception as e_vdb:
                                     logger.warning(f"[BULK_ASSESS] vskillset persist failed for {linkedinurl}: {e_vdb}")
