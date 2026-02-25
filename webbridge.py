@@ -3546,18 +3546,18 @@ Return ONLY the JSON object, no other text."""
             updates.append("vskillset = %s")
         
         if updates:
-            update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s"
+            update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s"
             update_values = []
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
-            update_values.extend([normalized, normalized])
+            update_values.append(normalized)
             cur.execute(update_sql, tuple(update_values))
         
         # Skillset: merge new High skills into existing value (add only; never remove or replace)
         if 'skillset' in available_cols and high_skills:
             cur.execute(
-                "SELECT skillset FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s",
-                (normalized, normalized)
+                "SELECT skillset FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                (normalized,)
             )
             _sk_row = cur.fetchone()
             _existing_sk = (_sk_row[0] or "") if _sk_row else ""
@@ -3568,8 +3568,8 @@ Return ONLY the JSON object, no other text."""
                 _merged_sk = ", ".join(_existing_parts + _new_high)
                 cur.execute(
                     "UPDATE process SET skillset = %s"
-                    " WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s",
-                    (_merged_sk, normalized, normalized)
+                    " WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (_merged_sk, normalized)
                 )
                 logger.info(f"[vskillset_infer] Merged {len(_new_high)} new High skills into skillset for {linkedinurl[:50]}")
             else:
@@ -3648,8 +3648,8 @@ def get_process_skillsets():
             conn.close()
             return jsonify({"skillset": [], "vskillset": []}), 200
         
-        query = f"SELECT {', '.join(select_cols)} FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s LIMIT 1"
-        cur.execute(query, (normalized, normalized))
+        query = f"SELECT {', '.join(select_cols)} FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s LIMIT 1"
+        cur.execute(query, (normalized,))
         row = cur.fetchone()
         
         cur.close()
@@ -8097,6 +8097,11 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         # Include username if available so we can reconcile against login.jskillset
         if 'username' in all_cols:
             select_fields.append("username")
+        # Include exp and tenure to implement write-once guard (never overwrite once set)
+        if 'exp' in all_cols:
+            select_fields.append("exp")
+        if 'tenure' in all_cols:
+            select_fields.append("tenure")
         
         cur.execute(f"SELECT {', '.join(select_fields)} FROM process WHERE {where_clause}", tuple(params))
         row = cur.fetchone()
@@ -8114,7 +8119,7 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
             # skillset_str was already set from CV extraction above - no modification needed
             # Merge product if available (index 1 if product was selected)
             if has_product:
-                prod_idx = 1 if 'product' in select_fields else None
+                prod_idx = select_fields.index("product") if "product" in select_fields else None
                 if prod_idx is not None and len(row) > prod_idx and row[prod_idx]:
                     curr_prod = [p.strip() for p in row[prod_idx].split(',') if p.strip()]
                     prod_set = set(curr_prod)
@@ -8124,11 +8129,22 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
                     # Existing DB product is empty — use freshly extracted product_str (may also be empty)
                     pass  # product_str already set from CV extraction above
         
+        # Write-once guard for total_experience_years / tenure / experience:
+        # If exp is already populated in the DB, do not overwrite it.
+        # This prevents Gemini's non-deterministic re-runs from changing previously stored values.
+        _exp_already_set = False
+        if row and 'exp' in select_fields:
+            _exp_idx = select_fields.index("exp")
+            _existing_exp = row[_exp_idx] if len(row) > _exp_idx else None
+            if _existing_exp is not None and str(_existing_exp).strip() not in ('', '0', '0.0'):
+                _exp_already_set = True
+                logger.info(f"[CV BG] exp already set for {linkedinurl[:50]} ({_existing_exp}) — skipping recalculation")
+        
         # If Gemini extracted no products and DB already has a non-empty product value,
         # keep the existing DB value rather than overwriting with empty string.
-        if not product_str and row and has_product:
-            prod_idx = 1 if 'product' in select_fields else None
-            if prod_idx is not None and len(row) > prod_idx and row[prod_idx]:
+        if not product_str and row and has_product and 'product' in select_fields:
+            prod_idx = select_fields.index("product")
+            if len(row) > prod_idx and row[prod_idx]:
                 product_str = row[prod_idx]  # Preserve existing products
                 logger.info(f"[CV BG] Preserved existing product data for {linkedinurl[:50]} (Gemini extraction returned empty)")
         
@@ -8159,6 +8175,10 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
             
             # Check tenure specifically as it's a numeric type, ensure column exists
             if col_key == "tenure" and "tenure" not in cols:
+                continue
+
+            # Write-once guard: skip exp, experience, tenure if already populated
+            if col_key in ("exp", "experience", "tenure") and _exp_already_set:
                 continue
 
             if db_col in cols and (val is not None and val != ""):
@@ -8423,9 +8443,8 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
                 _cur_idem.execute("""
                     SELECT vskillset FROM process
                     WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
-                       OR normalized_linkedin = %s
                     LIMIT 1
-                """, (_norm_gen, _norm_gen))
+                """, (_norm_gen,))
                 _idem_row = _cur_idem.fetchone()
                 _cur_idem.close(); _conn_idem.close()
                 if _idem_row and _idem_row[0]:
@@ -8813,9 +8832,8 @@ def process_bulk_assess():
                         cur_vsk_idem.execute("""
                             SELECT vskillset FROM process
                             WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
-                               OR normalized_linkedin = %s
                             LIMIT 1
-                        """, (_norm_vsk, _norm_vsk))
+                        """, (_norm_vsk,))
                         _vs_idem_row = cur_vsk_idem.fetchone()
                         if _vs_idem_row and _vs_idem_row[0]:
                             _vs_idem_val = _vs_idem_row[0]
