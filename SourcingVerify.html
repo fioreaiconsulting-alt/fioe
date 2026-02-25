@@ -4528,45 +4528,60 @@ function renderTable(){
     if (!cardOrContainer) return null;
     let col = cardOrContainer.querySelector('.sv-product-col');
     if (!col) {
+      // Outer section wrapper — identical structure and styling to vskillset-section
       col = document.createElement('div');
-      col.className = 'sv-skillset-col sv-product-col';
-      
+      col.className = 'sv-product-col product-section';
+      col.style.cssText = 'margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;';
+
+      // Header — identical styling to vskillset-header
       const head = document.createElement('div');
-      head.className = 'sv-skillset-head';
-      head.style.cssText = 'display: flex; justify-content: space-between; align-items: center; cursor: pointer;';
+      head.className = 'product-header';
+      head.style.cssText = 'display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 8px; background: #f9fafb; border-radius: 6px; margin-bottom: 8px;';
+
+      // Title — identical styling to vskillset-title
       const productTitleSpan = document.createElement('span');
       productTitleSpan.textContent = 'Product';
+      productTitleSpan.style.cssText = 'font-weight: 600; font-size: 13px; color: #374151;';
+
+      // Arrow — same class pattern as vskillset-arrow, default expanded (▼)
       const productArrow = document.createElement('span');
       productArrow.className = 'product-arrow';
-      productArrow.textContent = '▼'; // default: expanded
+      productArrow.textContent = '▼';
       productArrow.style.cssText = 'color: #6b7280; font-size: 12px;';
+
       head.appendChild(productTitleSpan);
       head.appendChild(productArrow);
+
+      // Content wrapper — visible by default (expanded)
+      const productContent = document.createElement('div');
+      productContent.className = 'product-content';
+      // No display:none — default state is expanded
+
       head.onclick = function() {
-        const listEl = col.querySelector('.sv-skillset-list');
         const arrow = this.querySelector('.product-arrow');
-        if (listEl.style.display === 'none') {
-          listEl.style.display = '';
+        if (productContent.style.display === 'none') {
+          productContent.style.display = '';
           arrow.textContent = '▼';
         } else {
-          listEl.style.display = 'none';
+          productContent.style.display = 'none';
           arrow.textContent = '▶';
         }
       };
-      
+
       const list = document.createElement('div');
       list.className = 'sv-skillset-list';
-      // default: expanded (no display:none)
-      
+      list.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; min-height: 24px;';
+
       // Add loading spinner initially
       const loadingSpinner = document.createElement('div');
       loadingSpinner.className = 'product-loading-spinner';
       loadingSpinner.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px; color: #6b7280;';
       loadingSpinner.innerHTML = '<span class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></span><span style="font-size: 12px;">Loading product...</span>';
       list.appendChild(loadingSpinner);
-      
+
+      productContent.appendChild(list);
       col.appendChild(head);
-      col.appendChild(list);
+      col.appendChild(productContent);
 
       if (cardOrContainer.classList.contains('sv-right-col')) {
           const exp = cardOrContainer.querySelector('.sv-experience');

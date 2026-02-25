@@ -466,5 +466,312 @@ class TestProductExcludedFromAssessment(unittest.TestCase):
         self.assertEqual(_extract_product_list_stub(42), [])
 
 
+# ---------------------------------------------------------------------------
+# Stubs for all rating assessment category heuristics.
+# These mirror the production functions in webbridge.py without importing it.
+# When the production functions change, update the stubs here to match.
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+def _jobtitle_heuristic_stub(candidate_title, required_tag):
+    """Mirror of jobtitle_heuristic in webbridge.py."""
+    if not candidate_title:
+        return "not_assessed", ""
+    v = str(candidate_title).lower()
+    t = str(required_tag).lower()
+    if t in v or v in t:
+        return "match", "Heuristic match"
+    _stopwords = {"the", "a", "an", "of", "and", "or", "for", "in", "at"}
+    v_tokens = set(_re.findall(r'\b\w+\b', v)) - _stopwords
+    t_tokens = set(_re.findall(r'\b\w+\b', t)) - _stopwords
+    if v_tokens & t_tokens:
+        return "related", "Partial title match (token overlap)"
+    return "unrelated", "No token overlap with role tag"
+
+
+def _seniority_heuristic_stub(candidate_seniority, required_seniority):
+    """Mirror of seniority_heuristic in webbridge.py."""
+    if not candidate_seniority:
+        return "not_assessed", ""
+    if not required_seniority:
+        return "not_assessed", ""
+    cs = str(candidate_seniority).lower().strip()
+    rs = str(required_seniority).lower().strip()
+    if cs == rs or cs in rs or rs in cs:
+        return "match", f"Seniority match: {candidate_seniority}"
+    return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
+
+
+def _country_heuristic_stub(candidate_country, required_country):
+    """Mirror of country_heuristic in webbridge.py."""
+    if not candidate_country:
+        return "not_assessed", ""
+    if not required_country:
+        return "not_assessed", ""
+    cc = str(candidate_country).lower().strip()
+    rc = str(required_country).lower().strip()
+    if cc == rc or cc in rc or rc in cc:
+        return "match", f"Country match: {candidate_country}"
+    return "unrelated", f"Country mismatch: candidate={candidate_country}, required={required_country}"
+
+
+def _tenure_heuristic_stub(tenure):
+    """Mirror of tenure assessment heuristic in webbridge.py."""
+    try:
+        val = float(tenure)
+        if val >= 4.0:
+            return "match", f"{val:.1f} years avg tenure"
+        elif val >= 2.0:
+            return "related", f"{val:.1f} years avg tenure"
+        else:
+            return "unrelated", f"{val:.1f} years avg tenure (short)"
+    except (ValueError, TypeError):
+        return "not_assessed", "Tenure data unavailable"
+
+
+def _scoring_factor_stub(category, status):
+    """
+    Mirror of the scoring logic in webbridge.py's _core_assess_profile scoring loop.
+    - seniority and country: binary (match=1.0, else=0)
+    - all others: match=1.0, related=0.5, else=0
+    """
+    if category in ("seniority", "country"):
+        return 1.0 if status == "match" else 0.0
+    if status == "match":
+        return 1.0
+    elif status == "related":
+        return 0.5
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Tests for Job Title (jobtitle_role_tag) assessment heuristic
+# ---------------------------------------------------------------------------
+
+class TestJobTitleHeuristic(unittest.TestCase):
+    def test_exact_match(self):
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Manager", "Clinical Study Manager")
+        self.assertEqual(st, "match")
+
+    def test_substring_match(self):
+        st, _ = _jobtitle_heuristic_stub("Senior Clinical Study Manager", "Clinical Study Manager")
+        self.assertEqual(st, "match")
+
+    def test_related_partial_token_overlap(self):
+        # "Clinical Project Manager" shares "Clinical" and "Manager" with "Clinical Study Manager"
+        st, _ = _jobtitle_heuristic_stub("Clinical Project Manager", "Clinical Study Manager")
+        self.assertEqual(st, "related")
+
+    def test_unrelated_no_token_overlap(self):
+        # "Clinical Study Director" shares "Clinical" and "Study" → still token overlap → related
+        # But a completely different role should be unrelated
+        st, _ = _jobtitle_heuristic_stub("Finance Business Partner", "Clinical Study Manager")
+        self.assertEqual(st, "unrelated")
+
+    def test_director_vs_manager_unrelated(self):
+        # Clinical Study Director vs Clinical Study Manager:
+        # "Clinical" and "Study" overlap → related (not unrelated) per token-overlap rule
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Director", "Clinical Study Manager")
+        self.assertEqual(st, "related")
+
+    def test_empty_candidate_title(self):
+        st, _ = _jobtitle_heuristic_stub("", "Clinical Study Manager")
+        self.assertEqual(st, "not_assessed")
+
+    def test_related_yields_half_score(self):
+        st, _ = _jobtitle_heuristic_stub("Clinical Project Manager", "Clinical Study Manager")
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 0.5)
+
+    def test_unrelated_yields_zero_score(self):
+        st, _ = _jobtitle_heuristic_stub("Finance Business Partner", "Clinical Study Manager")
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_match_yields_full_score(self):
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Manager", "Clinical Study Manager")
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Seniority assessment heuristic (binary: match=1.0, else=0)
+# ---------------------------------------------------------------------------
+
+class TestSeniorityHeuristic(unittest.TestCase):
+    def test_exact_match(self):
+        st, _ = _seniority_heuristic_stub("Manager", "Manager")
+        self.assertEqual(st, "match")
+
+    def test_mismatch_director_vs_manager(self):
+        # Candidate at Director level but required Manager → 0
+        st, _ = _seniority_heuristic_stub("Director", "Manager")
+        self.assertEqual(st, "unrelated")
+
+    def test_mismatch_director_vs_manager_scores_zero(self):
+        st, _ = _seniority_heuristic_stub("Director", "Manager")
+        factor = _scoring_factor_stub("seniority", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_mismatch_senior_vs_manager(self):
+        st, _ = _seniority_heuristic_stub("Senior", "Manager")
+        self.assertEqual(st, "unrelated")
+
+    def test_match_scores_full(self):
+        st, _ = _seniority_heuristic_stub("Manager", "Manager")
+        factor = _scoring_factor_stub("seniority", st)
+        self.assertEqual(factor, 1.0)
+
+    def test_related_status_also_scores_zero_for_seniority(self):
+        # Even if status were "related", binary scoring must yield 0 for seniority
+        factor = _scoring_factor_stub("seniority", "related")
+        self.assertEqual(factor, 0.0)
+
+    def test_no_required_seniority(self):
+        st, _ = _seniority_heuristic_stub("Senior", "")
+        self.assertEqual(st, "not_assessed")
+
+    def test_no_candidate_seniority(self):
+        st, _ = _seniority_heuristic_stub("", "Manager")
+        self.assertEqual(st, "not_assessed")
+
+    def test_case_insensitive(self):
+        st, _ = _seniority_heuristic_stub("MANAGER", "manager")
+        self.assertEqual(st, "match")
+
+
+# ---------------------------------------------------------------------------
+# Tests for Country assessment heuristic (binary: match=1.0, else=0)
+# ---------------------------------------------------------------------------
+
+class TestCountryHeuristic(unittest.TestCase):
+    def test_exact_match(self):
+        st, _ = _country_heuristic_stub("Singapore", "Singapore")
+        self.assertEqual(st, "match")
+
+    def test_mismatch_china_vs_singapore(self):
+        # Required Singapore, candidate's latest country China → 0
+        st, _ = _country_heuristic_stub("China", "Singapore")
+        self.assertEqual(st, "unrelated")
+
+    def test_mismatch_scores_zero(self):
+        st, _ = _country_heuristic_stub("China", "Singapore")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_match_scores_full(self):
+        st, _ = _country_heuristic_stub("Singapore", "Singapore")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 1.0)
+
+    def test_related_status_also_scores_zero_for_country(self):
+        # Even if status were "related", binary scoring must yield 0 for country
+        factor = _scoring_factor_stub("country", "related")
+        self.assertEqual(factor, 0.0)
+
+    def test_no_required_country(self):
+        st, _ = _country_heuristic_stub("Singapore", "")
+        self.assertEqual(st, "not_assessed")
+
+    def test_no_candidate_country(self):
+        st, _ = _country_heuristic_stub("", "Singapore")
+        self.assertEqual(st, "not_assessed")
+
+    def test_case_insensitive(self):
+        st, _ = _country_heuristic_stub("SINGAPORE", "singapore")
+        self.assertEqual(st, "match")
+
+    def test_uk_vs_usa_mismatch(self):
+        st, _ = _country_heuristic_stub("UK", "USA")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Company assessment (presence → match)
+# ---------------------------------------------------------------------------
+
+class TestCompanyAssessment(unittest.TestCase):
+    def test_company_present_scores_full(self):
+        factor = _scoring_factor_stub("company", "match")
+        self.assertEqual(factor, 1.0)
+
+    def test_company_related_still_scores_half(self):
+        # company uses standard (non-binary) scoring
+        factor = _scoring_factor_stub("company", "related")
+        self.assertEqual(factor, 0.5)
+
+    def test_company_unrelated_scores_zero(self):
+        factor = _scoring_factor_stub("company", "unrelated")
+        self.assertEqual(factor, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Sector assessment (related → 0.5 partial credit)
+# ---------------------------------------------------------------------------
+
+class TestSectorAssessment(unittest.TestCase):
+    def test_sector_match_scores_full(self):
+        factor = _scoring_factor_stub("sector", "match")
+        self.assertEqual(factor, 1.0)
+
+    def test_sector_related_scores_half(self):
+        factor = _scoring_factor_stub("sector", "related")
+        self.assertEqual(factor, 0.5)
+
+    def test_sector_unrelated_scores_zero(self):
+        factor = _scoring_factor_stub("sector", "unrelated")
+        self.assertEqual(factor, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Tenure assessment heuristic (match ≥4y, related 2–4y, unrelated <2y)
+# ---------------------------------------------------------------------------
+
+class TestTenureHeuristic(unittest.TestCase):
+    def test_long_tenure_is_match(self):
+        st, _ = _tenure_heuristic_stub(5.0)
+        self.assertEqual(st, "match")
+
+    def test_four_year_boundary_is_match(self):
+        st, _ = _tenure_heuristic_stub(4.0)
+        self.assertEqual(st, "match")
+
+    def test_medium_tenure_is_related(self):
+        st, _ = _tenure_heuristic_stub(3.0)
+        self.assertEqual(st, "related")
+
+    def test_two_year_boundary_is_related(self):
+        st, _ = _tenure_heuristic_stub(2.0)
+        self.assertEqual(st, "related")
+
+    def test_short_tenure_is_unrelated(self):
+        st, _ = _tenure_heuristic_stub(1.0)
+        self.assertEqual(st, "unrelated")
+
+    def test_zero_tenure_is_unrelated(self):
+        st, _ = _tenure_heuristic_stub(0.0)
+        self.assertEqual(st, "unrelated")
+
+    def test_invalid_tenure_not_assessed(self):
+        st, _ = _tenure_heuristic_stub("N/A")
+        self.assertEqual(st, "not_assessed")
+
+    def test_none_tenure_not_assessed(self):
+        st, _ = _tenure_heuristic_stub(None)
+        self.assertEqual(st, "not_assessed")
+
+    def test_tenure_related_scores_half(self):
+        st, _ = _tenure_heuristic_stub(3.0)
+        factor = _scoring_factor_stub("tenure", st)
+        self.assertEqual(factor, 0.5)
+
+    def test_tenure_match_scores_full(self):
+        st, _ = _tenure_heuristic_stub(5.0)
+        factor = _scoring_factor_stub("tenure", st)
+        self.assertEqual(factor, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

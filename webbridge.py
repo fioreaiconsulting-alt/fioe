@@ -7324,7 +7324,68 @@ def _core_assess_profile(data):
         if not val: return "not_assessed", ""
         v = str(val).lower(); t = str(target).lower()
         if t in v or v in t: return "match", "Heuristic match"
-        return "related", "Heuristic related" 
+        return "related", "Heuristic related"
+
+    def jobtitle_heuristic(candidate_title, required_tag):
+        """
+        Assess job title against role_tag using token overlap.
+        - Any token overlap → 'related' (conceptually related, but not exact match)
+        - No token overlap → 'unrelated' (not related at all)
+        - Full substring containment → 'match'
+        """
+        if not candidate_title: return "not_assessed", ""
+        v = str(candidate_title).lower()
+        t = str(required_tag).lower()
+        if t in v or v in t: return "match", "Heuristic match"
+        v_tokens = set(re.findall(r'\b\w+\b', v)) - {"the", "a", "an", "of", "and", "or", "for", "in", "at"}
+        t_tokens = set(re.findall(r'\b\w+\b', t)) - {"the", "a", "an", "of", "and", "or", "for", "in", "at"}
+        if v_tokens & t_tokens:
+            return "related", "Partial title match (token overlap)"
+        return "unrelated", "No token overlap with role tag"
+
+    def seniority_heuristic(candidate_seniority, required_seniority):
+        """
+        Assess seniority using binary match logic.
+        Seniority must be an exact level match; any mismatch yields 'unrelated' (not 'related').
+        """
+        if not candidate_seniority: return "not_assessed", ""
+        if not required_seniority: return "not_assessed", ""
+        cs = str(candidate_seniority).lower().strip()
+        rs = str(required_seniority).lower().strip()
+        # Direct match or one fully contains the other
+        if cs == rs or cs in rs or rs in cs:
+            return "match", f"Seniority match: {candidate_seniority}"
+        return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
+
+    def country_heuristic(candidate_country, required_country):
+        """
+        Assess country using binary match logic.
+        Country must match; any mismatch yields 'unrelated' (not 'related').
+        """
+        if not candidate_country: return "not_assessed", ""
+        if not required_country: return "not_assessed", ""
+        cc = str(candidate_country).lower().strip()
+        rc = str(required_country).lower().strip()
+        if cc == rc or cc in rc or rc in cc:
+            return "match", f"Country match: {candidate_country}"
+        return "unrelated", f"Country mismatch: candidate={candidate_country}, required={required_country}"
+
+    # Derive required seniority from role_tag if not explicitly provided
+    required_seniority = data.get("required_seniority", "")
+    if not required_seniority and role_tag:
+        _SENIORITY_KEYWORDS = [
+            "director", "vp", "vice president", "president", "head of", "chief",
+            "manager", "lead", "senior", "principal", "staff", "junior", "associate",
+            "analyst", "coordinator", "executive", "officer", "specialist"
+        ]
+        rt_lower = role_tag.lower()
+        for kw in _SENIORITY_KEYWORDS:
+            if re.search(r'\b' + re.escape(kw) + r'\b', rt_lower):
+                required_seniority = kw.title()
+                break
+
+    # Required country (optional — provided by caller if known)
+    required_country = data.get("required_country", "")
 
     def skill_heuristic(targets, candidates, exp_text):
         """
@@ -7360,14 +7421,15 @@ def _core_assess_profile(data):
     for c in active_criteria:
         if c not in assessment_results or assessment_results[c].get("status") not in ["match", "related", "unrelated"]:
             if c == "jobtitle_role_tag":
-                st, cm = heuristic_status(c, job_title, role_tag)
+                st, cm = jobtitle_heuristic(job_title, role_tag)
                 assessment_results[c] = {"status": st, "comment": cm}
             elif c == "country":
-                assessment_results[c] = {"status": "match", "comment": "Present"} 
+                st, cm = country_heuristic(country, required_country)
+                assessment_results[c] = {"status": st, "comment": cm}
             elif c == "company":
                  assessment_results[c] = {"status": "match", "comment": "Present"}
             elif c == "seniority":
-                 st, cm = heuristic_status(c, seniority, job_title)
+                 st, cm = seniority_heuristic(seniority, required_seniority)
                  assessment_results[c] = {"status": st, "comment": cm}
             elif c == "sector":
                  assessment_results[c] = {"status": "related", "comment": "Sector present"}
@@ -7601,6 +7663,12 @@ def _core_assess_profile(data):
             match_ratio = res.get("match_ratio", 0.0)
             factor, log_msg = calculate_skillset_factor(vskillset_results, target_skills, match_ratio)
             logger.info(f"[CORE_ASSESS] {log_msg}")
+        elif c in ("seniority", "country"):
+            # Binary scoring: seniority and country must be an exact match.
+            # A "related" status (partial match) scores 0 — mismatched seniority or
+            # country should never earn partial credit.
+            if st == "match": factor = 1.0
+            # related / unrelated / not_assessed = 0.0
         else:
             # Standard status-based scoring for other categories
             if st == "match": factor = 1.0
@@ -7627,6 +7695,9 @@ def _core_assess_profile(data):
         else:
             # Standard status-based stars for other categories
             if st == "match": category_stars = 5
+            elif c in ("seniority", "country"):
+                # Binary categories: only exact match earns stars
+                category_stars = 0
             elif st == "related": category_stars = 3
             elif st == "unrelated": category_stars = 1
             # not_assessed = 0
