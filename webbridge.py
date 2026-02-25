@@ -147,6 +147,10 @@ if not os.path.isfile(DATA_SORTER_RULES_PATH):
     # Fallback check
     DATA_SORTER_RULES_PATH = os.path.join(BASE_DIR, "data_sorter.json")
 
+CITY_TO_COUNTRY_PATH = os.path.join(BASE_DIR, "static", "city_to_country.json")
+if not os.path.isfile(CITY_TO_COUNTRY_PATH):
+    CITY_TO_COUNTRY_PATH = os.path.join(BASE_DIR, "city_to_country.json")
+
 def _load_data_sorter_rules():
     try:
         if os.path.isfile(DATA_SORTER_RULES_PATH):
@@ -159,6 +163,19 @@ def _load_data_sorter_rules():
     return None
 
 DATA_SORTER_RULES = _load_data_sorter_rules()
+
+def _load_city_to_country():
+    try:
+        if os.path.isfile(CITY_TO_COUNTRY_PATH):
+            with open(CITY_TO_COUNTRY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                logger.info(f"[CityToCountry] Loaded from {CITY_TO_COUNTRY_PATH}")
+                return data
+    except Exception as e:
+        logger.warning(f"[CityToCountry] Failed to load {CITY_TO_COUNTRY_PATH}: {e}")
+    return {}
+
+CITY_TO_COUNTRY_DATA = _load_city_to_country()
 
 def get_reference_mapping(job_title: str):
     """
@@ -3301,6 +3318,7 @@ def vskillset_infer():
     skills = data.get("skills", [])
     assessment_level = (data.get("assessment_level") or "L2").upper()
     username = (data.get("username") or "").strip()
+    force_regen = bool(data.get("force", False))
     
     if not linkedinurl or not skills:
         return jsonify({"error": "linkedinurl and skills required"}), 400
@@ -3327,6 +3345,37 @@ def vskillset_infer():
         normalized = linkedinurl.lower().strip().rstrip('/')
         if not normalized.startswith('http'):
             normalized = 'https://' + normalized
+        
+        # Idempotency guard: if vskillset already exists in DB, return it without
+        # re-running Gemini. Pass force=true in the request body to override this.
+        if not force_regen:
+            try:
+                cur.execute("""
+                    SELECT vskillset FROM process
+                    WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                       OR normalized_linkedin = %s
+                    LIMIT 1
+                """, (normalized, normalized))
+                vs_row = cur.fetchone()
+                if vs_row and vs_row[0]:
+                    existing_vs = vs_row[0]
+                    if isinstance(existing_vs, str):
+                        existing_vs = json.loads(existing_vs)
+                    if isinstance(existing_vs, list) and len(existing_vs) > 0:
+                        high_skills = [i["skill"] for i in existing_vs if isinstance(i, dict) and i.get("category") == "High"]
+                        cur.close()
+                        conn.close()
+                        logger.info(f"[vskillset_infer] Returning existing vskillset ({len(existing_vs)} items) for {linkedinurl[:50]} — use force=true to regenerate")
+                        return jsonify({
+                            "results": existing_vs,
+                            "persisted": True,
+                            "skipped": True,
+                            "high_skills": high_skills,
+                            "confirmed_skills": [i["skill"] for i in existing_vs if isinstance(i, dict) and i.get("source") == "confirmed"],
+                            "inferred_skills":  [i["skill"] for i in existing_vs if isinstance(i, dict) and i.get("source") == "inferred"],
+                        }), 200
+            except Exception as _e:
+                logger.warning(f"[vskillset_infer] Idempotency check failed ({_e}); proceeding with generation")
         
         # Fetch experience and cv from process table
         experience_text = ""
@@ -7363,61 +7412,48 @@ def _core_assess_profile(data):
         Country must match; any mismatch yields 'unrelated' (not 'related').
         Recognises major cities as belonging to their countries so that,
         e.g., "Tokyo" matches required "Japan".
+        City-to-country mapping is loaded from city_to_country.json; falls back
+        to a minimal hardcoded dict if the file is unavailable.
         """
-        _CITY_TO_COUNTRY = {
-            # Japan
-            "tokyo": "japan", "osaka": "japan", "kyoto": "japan", "yokohama": "japan",
-            # China
-            "beijing": "china", "shanghai": "china", "shenzhen": "china",
-            "guangzhou": "china", "chengdu": "china", "hong kong": "china",
-            # South Korea
-            "seoul": "south korea", "busan": "south korea",
-            # India
+        _json_cities = CITY_TO_COUNTRY_DATA.get("cities", {}) if isinstance(CITY_TO_COUNTRY_DATA, dict) else {}
+        _json_aliases = CITY_TO_COUNTRY_DATA.get("aliases", {}) if isinstance(CITY_TO_COUNTRY_DATA, dict) else {}
+
+        # Hardcoded fallback covers the most common cases when the JSON file is absent
+        _FALLBACK_CITIES = {
+            "tokyo": "japan", "osaka": "japan",
+            "beijing": "china", "shanghai": "china", "hong kong": "china",
+            "seoul": "south korea",
             "mumbai": "india", "delhi": "india", "bangalore": "india",
-            "hyderabad": "india", "chennai": "india", "kolkata": "india",
-            # Singapore (city-state — already resolves itself)
-            # Thailand
-            "bangkok": "thailand",
-            # Indonesia
-            "jakarta": "indonesia",
-            # Malaysia
-            "kuala lumpur": "malaysia",
-            # Philippines
-            "manila": "philippines",
-            # Vietnam
-            "hanoi": "vietnam", "ho chi minh city": "vietnam",
-            # Taiwan
-            "taipei": "taiwan",
-            # Australia
-            "sydney": "australia", "melbourne": "australia", "brisbane": "australia",
-            "perth": "australia",
-            # United Kingdom
-            "london": "united kingdom", "manchester": "united kingdom",
-            "birmingham": "united kingdom",
-            # Germany
-            "berlin": "germany", "munich": "germany", "frankfurt": "germany",
-            "hamburg": "germany",
-            # France
-            "paris": "france", "lyon": "france",
-            # USA
-            "new york": "united states", "los angeles": "united states",
-            "san francisco": "united states", "chicago": "united states",
-            "seattle": "united states", "boston": "united states",
-            "austin": "united states", "houston": "united states",
-            # Canada
-            "toronto": "canada", "vancouver": "canada", "montreal": "canada",
-            # UAE
+            "bangkok": "thailand", "jakarta": "indonesia",
+            "kuala lumpur": "malaysia", "manila": "philippines",
+            "hanoi": "vietnam", "taipei": "taiwan",
+            "sydney": "australia", "melbourne": "australia",
+            "london": "united kingdom", "berlin": "germany",
+            "paris": "france", "amsterdam": "netherlands",
+            "new york": "united states", "san francisco": "united states",
+            "toronto": "canada", "vancouver": "canada",
             "dubai": "united arab emirates", "abu dhabi": "united arab emirates",
         }
-        _COUNTRY_ALIASES = {
+        _FALLBACK_ALIASES = {
             "uk": "united kingdom", "usa": "united states", "us": "united states",
             "uae": "united arab emirates",
         }
 
         def _resolve(val):
             v = str(val).lower().strip()
-            v = _COUNTRY_ALIASES.get(v, v)
-            return _CITY_TO_COUNTRY.get(v, v)
+            # Apply aliases (JSON first, then fallback)
+            if _json_aliases:
+                v = _json_aliases.get(v, v).lower()  # aliases may be title-cased in JSON
+            else:
+                v = _FALLBACK_ALIASES.get(v, v)
+            # Resolve city to country (JSON cities values are capitalised; lower for comparison)
+            if _json_cities:
+                resolved = _json_cities.get(v)
+                if resolved:
+                    return resolved.lower()
+            else:
+                v = _FALLBACK_CITIES.get(v, v)
+            return v
 
         if not candidate_country: return "not_assessed", ""
         if not required_country: return "not_assessed", ""
@@ -7940,7 +7976,7 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         if row:
             # SOURCE OF TRUTH: CV Column - use extracted skillset exclusively (no merge with existing)
             # Gemini must exclusively reference the cv column in the process table (Postgres)
-            # skillset_str was already set from CV extraction above (line 5315) - no modification needed
+            # skillset_str was already set from CV extraction above - no modification needed
             # Merge product if available (index 1 if product was selected)
             if has_product:
                 prod_idx = 1 if 'product' in select_fields else None
@@ -7949,6 +7985,17 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
                     prod_set = set(curr_prod)
                     prod_set.update([str(p).strip() for p in product_list if str(p).strip()])
                     product_str = ", ".join(list(prod_set))
+                elif prod_idx is not None and len(row) > prod_idx and not row[prod_idx]:
+                    # Existing DB product is empty — use freshly extracted product_str (may also be empty)
+                    pass  # product_str already set from CV extraction above
+        
+        # If Gemini extracted no products and DB already has a non-empty product value,
+        # keep the existing DB value rather than overwriting with empty string.
+        if not product_str and row and has_product:
+            prod_idx = 1 if 'product' in select_fields else None
+            if prod_idx is not None and len(row) > prod_idx and row[prod_idx]:
+                product_str = row[prod_idx]  # Preserve existing products
+                logger.info(f"[CV BG] Preserved existing product data for {linkedinurl[:50]} (Gemini extraction returned empty)")
         
         # PATCH: Infer geographic region
         geo_region = _infer_region_from_country(country) if country else ""

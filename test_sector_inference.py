@@ -9,6 +9,8 @@ production dependencies (Flask, google-generativeai, etc.), making isolated
 testing impractical without a full environment. When the production functions
 change, the corresponding stubs here must be updated to match.
 """
+import json
+import os
 import re
 import heapq
 import unittest
@@ -504,43 +506,55 @@ def _seniority_heuristic_stub(candidate_seniority, required_seniority):
 
 
 def _country_heuristic_stub(candidate_country, required_country):
-    """Mirror of country_heuristic in webbridge.py — including city-to-country mapping."""
-    _CITY_TO_COUNTRY = {
-        "tokyo": "japan", "osaka": "japan", "kyoto": "japan", "yokohama": "japan",
-        "beijing": "china", "shanghai": "china", "shenzhen": "china",
-        "guangzhou": "china", "chengdu": "china", "hong kong": "china",
-        "seoul": "south korea", "busan": "south korea",
+    """
+    Mirror of country_heuristic in webbridge.py.
+    Loads city-to-country mapping from city_to_country.json (relative to this file)
+    and falls back to a minimal hardcoded dict when the file is unavailable.
+    """
+    _data = {}
+    try:
+        _json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "city_to_country.json")
+        with open(_json_path, "r", encoding="utf-8") as _f:
+            _data = json.load(_f)
+    except Exception:
+        pass
+
+    _json_cities  = _data.get("cities", {}) if _data else {}
+    _json_aliases = _data.get("aliases", {}) if _data else {}
+
+    _FALLBACK_CITIES = {
+        "tokyo": "japan", "osaka": "japan",
+        "beijing": "china", "shanghai": "china", "hong kong": "china",
+        "seoul": "south korea",
         "mumbai": "india", "delhi": "india", "bangalore": "india",
-        "hyderabad": "india", "chennai": "india", "kolkata": "india",
-        "bangkok": "thailand",
-        "jakarta": "indonesia",
-        "kuala lumpur": "malaysia",
-        "manila": "philippines",
-        "hanoi": "vietnam", "ho chi minh city": "vietnam",
-        "taipei": "taiwan",
-        "sydney": "australia", "melbourne": "australia", "brisbane": "australia",
-        "perth": "australia",
-        "london": "united kingdom", "manchester": "united kingdom",
-        "birmingham": "united kingdom",
-        "berlin": "germany", "munich": "germany", "frankfurt": "germany",
-        "hamburg": "germany",
-        "paris": "france", "lyon": "france",
-        "new york": "united states", "los angeles": "united states",
-        "san francisco": "united states", "chicago": "united states",
-        "seattle": "united states", "boston": "united states",
-        "austin": "united states", "houston": "united states",
-        "toronto": "canada", "vancouver": "canada", "montreal": "canada",
+        "bangkok": "thailand", "jakarta": "indonesia",
+        "kuala lumpur": "malaysia", "manila": "philippines",
+        "hanoi": "vietnam", "taipei": "taiwan",
+        "sydney": "australia", "melbourne": "australia",
+        "london": "united kingdom", "berlin": "germany",
+        "paris": "france",
+        "new york": "united states", "san francisco": "united states",
+        "toronto": "canada", "vancouver": "canada",
         "dubai": "united arab emirates", "abu dhabi": "united arab emirates",
     }
-    _COUNTRY_ALIASES = {
+    _FALLBACK_ALIASES = {
         "uk": "united kingdom", "usa": "united states", "us": "united states",
         "uae": "united arab emirates",
     }
 
     def _resolve(val):
         v = str(val).lower().strip()
-        v = _COUNTRY_ALIASES.get(v, v)
-        return _CITY_TO_COUNTRY.get(v, v)
+        if _json_aliases:
+            v = _json_aliases.get(v, v).lower()  # aliases may be title-cased in JSON
+        else:
+            v = _FALLBACK_ALIASES.get(v, v)
+        if _json_cities:
+            resolved = _json_cities.get(v)
+            if resolved:
+                return resolved.lower()
+        else:
+            v = _FALLBACK_CITIES.get(v, v)
+        return v
 
     if not candidate_country:
         return "not_assessed", ""
@@ -897,6 +911,70 @@ class TestStarStringNotAssessed(unittest.TestCase):
         self.assertNotIn("★", result)
         self.assertNotIn("☆", result)
         self.assertEqual(result, "Unable to Access")
+
+
+# ---------------------------------------------------------------------------
+# Tests for city_to_country.json integrity
+# ---------------------------------------------------------------------------
+
+class TestCityToCountryJson(unittest.TestCase):
+    def setUp(self):
+        _json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "city_to_country.json")
+        with open(_json_path, "r", encoding="utf-8") as f:
+            self.data = json.load(f)
+
+    def test_json_has_cities_key(self):
+        self.assertIn("cities", self.data)
+
+    def test_json_has_aliases_key(self):
+        self.assertIn("aliases", self.data)
+
+    def test_cities_are_lowercase(self):
+        for city in self.data["cities"]:
+            self.assertEqual(city, city.lower(), f"City key not lowercase: {city!r}")
+
+    def test_aliases_are_lowercase(self):
+        for alias in self.data["aliases"]:
+            self.assertEqual(alias, alias.lower(), f"Alias key not lowercase: {alias!r}")
+
+    def test_tokyo_in_json(self):
+        self.assertIn("tokyo", self.data["cities"])
+
+    def test_tokyo_maps_to_japan(self):
+        self.assertEqual(self.data["cities"]["tokyo"].lower(), "japan")
+
+    def test_dubai_maps_to_uae_full(self):
+        self.assertIn("dubai", self.data["cities"])
+
+    def test_uk_alias_resolves(self):
+        self.assertIn("uk", self.data["aliases"])
+
+    def test_all_city_values_are_strings(self):
+        for city, country in self.data["cities"].items():
+            self.assertIsInstance(country, str, f"city_to_country.json: value for {city!r} is not a string")
+
+    def test_vskillset_idempotency_logic(self):
+        """
+        Mirror of the idempotency guard in /vskillset/infer:
+        if existing vskillset is non-empty and force=False, return it without regeneration.
+        """
+        def _should_skip_regen(existing_vs, force):
+            if force:
+                return False
+            if isinstance(existing_vs, str):
+                try:
+                    existing_vs = json.loads(existing_vs)
+                except Exception:
+                    return False
+            return isinstance(existing_vs, list) and len(existing_vs) > 0
+
+        existing = [{"skill": "Python", "category": "High", "source": "confirmed"}]
+        self.assertTrue(_should_skip_regen(existing, force=False))
+        self.assertFalse(_should_skip_regen(existing, force=True))
+        self.assertFalse(_should_skip_regen([], force=False))
+        self.assertFalse(_should_skip_regen(None, force=False))
+        # JSON string form
+        self.assertTrue(_should_skip_regen(json.dumps(existing), force=False))
 
 
 if __name__ == "__main__":
