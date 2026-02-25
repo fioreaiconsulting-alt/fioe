@@ -3546,18 +3546,18 @@ Return ONLY the JSON object, no other text."""
             updates.append("vskillset = %s")
         
         if updates:
-            update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s"
+            update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s"
             update_values = []
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
-            update_values.extend([normalized, normalized])
+            update_values.append(normalized)
             cur.execute(update_sql, tuple(update_values))
         
         # Skillset: merge new High skills into existing value (add only; never remove or replace)
         if 'skillset' in available_cols and high_skills:
             cur.execute(
-                "SELECT skillset FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s",
-                (normalized, normalized)
+                "SELECT skillset FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                (normalized,)
             )
             _sk_row = cur.fetchone()
             _existing_sk = (_sk_row[0] or "") if _sk_row else ""
@@ -3568,8 +3568,8 @@ Return ONLY the JSON object, no other text."""
                 _merged_sk = ", ".join(_existing_parts + _new_high)
                 cur.execute(
                     "UPDATE process SET skillset = %s"
-                    " WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s",
-                    (_merged_sk, normalized, normalized)
+                    " WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (_merged_sk, normalized)
                 )
                 logger.info(f"[vskillset_infer] Merged {len(_new_high)} new High skills into skillset for {linkedinurl[:50]}")
             else:
@@ -3648,8 +3648,8 @@ def get_process_skillsets():
             conn.close()
             return jsonify({"skillset": [], "vskillset": []}), 200
         
-        query = f"SELECT {', '.join(select_cols)} FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s LIMIT 1"
-        cur.execute(query, (normalized, normalized))
+        query = f"SELECT {', '.join(select_cols)} FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s LIMIT 1"
+        cur.execute(query, (normalized,))
         row = cur.fetchone()
         
         cur.close()
@@ -8423,9 +8423,8 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
                 _cur_idem.execute("""
                     SELECT vskillset FROM process
                     WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
-                       OR normalized_linkedin = %s
                     LIMIT 1
-                """, (_norm_gen, _norm_gen))
+                """, (_norm_gen,))
                 _idem_row = _cur_idem.fetchone()
                 _cur_idem.close(); _conn_idem.close()
                 if _idem_row and _idem_row[0]:
@@ -8813,9 +8812,8 @@ def process_bulk_assess():
                         cur_vsk_idem.execute("""
                             SELECT vskillset FROM process
                             WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
-                               OR normalized_linkedin = %s
                             LIMIT 1
-                        """, (_norm_vsk, _norm_vsk))
+                        """, (_norm_vsk,))
                         _vs_idem_row = cur_vsk_idem.fetchone()
                         if _vs_idem_row and _vs_idem_row[0]:
                             _vs_idem_val = _vs_idem_row[0]
