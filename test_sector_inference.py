@@ -476,7 +476,7 @@ class TestProductExcludedFromAssessment(unittest.TestCase):
 
 import re as _re
 
-def _jobtitle_heuristic_stub(candidate_title, required_tag):
+def _jobtitle_heuristic_stub(candidate_title, required_tag, candidate_seniority="", required_seniority=""):
     """Mirror of jobtitle_heuristic in webbridge.py."""
     if not candidate_title:
         return "not_assessed", ""
@@ -488,6 +488,16 @@ def _jobtitle_heuristic_stub(candidate_title, required_tag):
     v_tokens = set(_re.findall(r'\b\w+\b', v)) - _stopwords
     t_tokens = set(_re.findall(r'\b\w+\b', t)) - _stopwords
     if v_tokens & t_tokens:
+        # Seniority gate: token overlap only yields "related" when seniority levels match.
+        if candidate_seniority or required_seniority:
+            def _sn(s):
+                return _re.sub(r'-level$', '', str(s).lower().strip()) if s else ""
+            cs = _sn(candidate_seniority)
+            rs = _sn(required_seniority)
+            _ACCEPTABLE_JT = {("lead", "manager"), ("expert", "director")}
+            seniority_ok = (not cs or not rs) or (cs == rs) or ((cs, rs) in _ACCEPTABLE_JT)
+            if not seniority_ok:
+                return "unrelated", f"Title overlap but seniority mismatch (candidate={cs}, required={rs})"
         return "related", "Partial title match (token overlap)"
     return "unrelated", "No token overlap with role tag"
 
@@ -510,6 +520,61 @@ def _seniority_heuristic_stub(candidate_seniority, required_seniority):
     if (cs, rs) in _ACCEPTABLE:
         return "match", f"Seniority equivalent: {candidate_seniority} \u2261 {required_seniority}"
     return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
+
+
+def _normalize_seniority_stub(seniority_text, total_experience_years=None):
+    """Mirror of _normalize_seniority_to_8_levels in webbridge.py."""
+    import re as _re
+    if not seniority_text:
+        if total_experience_years is not None:
+            try:
+                years = float(total_experience_years)
+                if years < 2: return "Junior-level"
+                elif years < 5: return "Mid-level"
+                elif years < 8: return "Senior-level"
+                elif years < 12: return "Lead-level"
+                else: return "Expert-level"
+            except Exception:
+                pass
+        return ""
+    s = str(seniority_text).strip().lower()
+    exact_matches = {
+        "junior-level": "Junior-level", "mid-level": "Mid-level",
+        "senior-level": "Senior-level", "lead-level": "Lead-level",
+        "manager-level": "Manager-level", "expert-level": "Expert-level",
+        "director-level": "Director-level", "executive-level": "Executive-level",
+    }
+    if s in exact_matches:
+        return exact_matches[s]
+    def _kw(kw, text):
+        return bool(_re.search(r'\b' + _re.escape(kw) + r'\b', text))
+    for kw in ["executive", "ceo", "cto", "cfo", "coo", "cxo", "chief", "president", "vp", "vice president", "c-level", "founder"]:
+        if _kw(kw, s): return "Executive-level"
+    for kw in ["director", "head of", "group director"]:
+        if _kw(kw, s): return "Director-level"
+    for kw in ["expert", "principal", "staff", "distinguished", "fellow", "architect"]:
+        if _kw(kw, s): return "Expert-level"
+    for kw in ["manager", "mgr", "supervisor", "team lead"]:
+        if _kw(kw, s): return "Manager-level"
+    for kw in ["lead"]:
+        if _kw(kw, s): return "Lead-level"
+    for kw in ["senior"]:
+        if _kw(kw, s): return "Senior-level"
+    for kw in ["mid", "intermediate", "associate", "specialist"]:
+        if _kw(kw, s): return "Mid-level"
+    for kw in ["junior", "entry", "trainee", "intern", "graduate", "jr", "assistant"]:
+        if _kw(kw, s): return "Junior-level"
+    if total_experience_years is not None:
+        try:
+            years = float(total_experience_years)
+            if years < 2: return "Junior-level"
+            elif years < 5: return "Mid-level"
+            elif years < 8: return "Senior-level"
+            elif years < 12: return "Lead-level"
+            else: return "Expert-level"
+        except Exception:
+            pass
+    return ""
 
 
 def _country_heuristic_stub(candidate_country, required_country):
@@ -668,6 +733,44 @@ class TestJobTitleHeuristic(unittest.TestCase):
         factor = _scoring_factor_stub("jobtitle_role_tag", st)
         self.assertEqual(factor, 1.0)
 
+    def test_seniority_gate_mismatch_yields_unrelated(self):
+        # Token overlap exists ("Clinical", "Study") but seniority mismatch → unrelated
+        st, _ = _jobtitle_heuristic_stub(
+            "Clinical Study Director", "Clinical Study Manager",
+            candidate_seniority="Director", required_seniority="Manager"
+        )
+        self.assertEqual(st, "unrelated")
+
+    def test_seniority_gate_match_yields_related(self):
+        # Token overlap + seniority match → related
+        st, _ = _jobtitle_heuristic_stub(
+            "Clinical Project Manager", "Clinical Study Manager",
+            candidate_seniority="Manager", required_seniority="Manager"
+        )
+        self.assertEqual(st, "related")
+
+    def test_seniority_gate_acceptable_mapping_yields_related(self):
+        # Token overlap + Lead→Manager acceptable cross-mapping → related
+        st, _ = _jobtitle_heuristic_stub(
+            "Clinical Project Lead", "Clinical Study Manager",
+            candidate_seniority="Lead", required_seniority="Manager"
+        )
+        self.assertEqual(st, "related")
+
+    def test_seniority_gate_no_seniority_context_unchanged(self):
+        # No seniority params → falls back to plain token-overlap logic → related
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Director", "Clinical Study Manager")
+        self.assertEqual(st, "related")
+
+    def test_seniority_gate_mismatch_yields_zero_score(self):
+        # Seniority mismatch in jobtitle → unrelated → 0 score
+        st, _ = _jobtitle_heuristic_stub(
+            "Clinical Study Director", "Clinical Study Manager",
+            candidate_seniority="Director", required_seniority="Manager"
+        )
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 0.0)
+
 
 # ---------------------------------------------------------------------------
 # Tests for Seniority assessment heuristic (binary: match=1.0, else=0)
@@ -754,6 +857,53 @@ class TestSeniorityHeuristic(unittest.TestCase):
         # Junior falls below Manager → 0
         st, _ = _seniority_heuristic_stub("Junior", "Manager")
         self.assertEqual(st, "unrelated")
+
+
+# ---------------------------------------------------------------------------
+# Tests for seniority level normalization (_normalize_seniority_to_8_levels)
+# ---------------------------------------------------------------------------
+
+class TestSeniorityNormalization(unittest.TestCase):
+    def test_director_title(self):
+        # Any title containing "Director" → Director-level
+        self.assertEqual(_normalize_seniority_stub("Clinical Study Director"), "Director-level")
+        self.assertEqual(_normalize_seniority_stub("Director of Operations"), "Director-level")
+
+    def test_architect_is_expert(self):
+        # Architect → Expert-level
+        self.assertEqual(_normalize_seniority_stub("Solution Architect"), "Expert-level")
+
+    def test_principal_is_expert(self):
+        self.assertEqual(_normalize_seniority_stub("Principal Engineer"), "Expert-level")
+
+    def test_staff_is_expert(self):
+        self.assertEqual(_normalize_seniority_stub("Staff Software Engineer"), "Expert-level")
+
+    def test_specialist_is_mid_not_expert(self):
+        # "Specialist" must map to Mid-level, not Expert-level
+        self.assertEqual(_normalize_seniority_stub("Clinical Specialist"), "Mid-level")
+
+    def test_senior_alone_is_senior_level(self):
+        # "Senior" alone → Senior-level (not Lead-level)
+        self.assertEqual(_normalize_seniority_stub("Senior"), "Senior-level")
+        self.assertEqual(_normalize_seniority_stub("Senior Clinical Trial Manager"), "Manager-level")
+
+    def test_senior_manager_is_manager(self):
+        # "Senior Manager" → Manager-level (Manager keyword checked before Senior)
+        self.assertEqual(_normalize_seniority_stub("Senior Manager"), "Manager-level")
+
+    def test_executive_titles(self):
+        self.assertEqual(_normalize_seniority_stub("Vice President"), "Executive-level")
+        self.assertEqual(_normalize_seniority_stub("CEO"), "Executive-level")
+        self.assertEqual(_normalize_seniority_stub("Founder"), "Executive-level")
+
+    def test_assistant_is_junior(self):
+        # "Assistant" → Junior-level
+        self.assertEqual(_normalize_seniority_stub("Research Assistant"), "Junior-level")
+
+    def test_associate_is_mid(self):
+        self.assertEqual(_normalize_seniority_stub("Associate Consultant"), "Mid-level")
+
 
 # ---------------------------------------------------------------------------
 # Tests for Country assessment heuristic (binary: match=1.0, else=0)

@@ -6718,46 +6718,56 @@ def _normalize_seniority_to_8_levels(seniority_text: str, total_experience_years
     if s in exact_matches:
         return exact_matches[s]
     
-    # Executive level - highest
-    executive_keywords = ["executive", "ceo", "cto", "cfo", "coo", "cxo", "chief", "president", "vp", "vice president", "c-level"]
+    def _kw_match(keyword, text):
+        """Word-boundary safe match to avoid substring collisions (e.g. 'cto' inside 'director')."""
+        return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text))
+
+    # Executive level - highest: VP, Founder, CEO, etc.
+    executive_keywords = ["executive", "ceo", "cto", "cfo", "coo", "cxo", "chief", "president", "vp", "vice president", "c-level", "founder"]
     for keyword in executive_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Executive-level"
     
-    # Director level
+    # Director level: any title containing "Director"
     director_keywords = ["director", "head of", "group director"]
     for keyword in director_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Director-level"
     
-    # Expert level - principal, staff, distinguished, fellow
-    expert_keywords = ["expert", "principal", "staff", "distinguished", "fellow", "architect", "specialist"]
+    # Expert level: Architect, Principal, Staff, etc. (NOT Specialist — that is Mid)
+    expert_keywords = ["expert", "principal", "staff", "distinguished", "fellow", "architect"]
     for keyword in expert_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Expert-level"
     
-    # Manager level - check before Lead to avoid "Senior Manager" being classified as Lead
+    # Manager level - check before Lead/Senior to handle "Senior Manager" correctly
     manager_keywords = ["manager", "mgr", "supervisor", "team lead"]
     for keyword in manager_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Manager-level"
     
-    # Lead level - senior/lead but not manager
-    lead_keywords = ["lead", "senior"]
+    # Lead level - "Lead" as a title designation (not "team lead", already caught above)
+    lead_keywords = ["lead"]
     for keyword in lead_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Lead-level"
     
-    # Mid level
-    mid_keywords = ["mid", "intermediate", "associate"]
+    # Senior level - "Senior" alone, without higher-level terms (already checked above)
+    senior_keywords = ["senior"]
+    for keyword in senior_keywords:
+        if _kw_match(keyword, s):
+            return "Senior-level"
+    
+    # Mid level: Associate, Specialist (validated domain contributor, not yet independent lead)
+    mid_keywords = ["mid", "intermediate", "associate", "specialist"]
     for keyword in mid_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Mid-level"
     
-    # Junior level
-    junior_keywords = ["junior", "entry", "trainee", "intern", "graduate", "jr"]
+    # Junior level: Assistant, entry-level titles
+    junior_keywords = ["junior", "entry", "trainee", "intern", "graduate", "jr", "assistant"]
     for keyword in junior_keywords:
-        if keyword in s:
+        if _kw_match(keyword, s):
             return "Junior-level"
     
     # Fallback to experience-based mapping
@@ -7464,10 +7474,10 @@ def _core_assess_profile(data):
 
     def jobtitle_heuristic(candidate_title, required_tag):
         """
-        Assess job title against role_tag using token overlap.
-        - Any token overlap → 'related' (conceptually related, but not exact match)
-        - No token overlap → 'unrelated' (not related at all)
-        - Full substring containment → 'match'
+        Assess job title against role_tag with seniority gate.
+        - Exact/near-exact match (substring containment) → 'match' (1.0)
+        - Token overlap AND seniority levels match → 'related' (0.5)
+        - No token overlap, OR token overlap but seniority mismatch → 'unrelated' (0)
         """
         if not candidate_title: return "not_assessed", ""
         v = str(candidate_title).lower()
@@ -7476,6 +7486,16 @@ def _core_assess_profile(data):
         v_tokens = set(re.findall(r'\b\w+\b', v)) - {"the", "a", "an", "of", "and", "or", "for", "in", "at"}
         t_tokens = set(re.findall(r'\b\w+\b', t)) - {"the", "a", "an", "of", "and", "or", "for", "in", "at"}
         if v_tokens & t_tokens:
+            # Seniority gate: conceptual overlap only scores "related" when seniority matches.
+            # Close over `seniority` (candidate) and `required_seniority` from _core_assess_profile.
+            def _sn(s):
+                return re.sub(r'-level$', '', str(s).lower().strip()) if s else ""
+            cs = _sn(seniority)
+            rs = _sn(required_seniority)
+            _ACCEPTABLE_JT = {("lead", "manager"), ("expert", "director")}
+            seniority_ok = (not cs or not rs) or (cs == rs) or ((cs, rs) in _ACCEPTABLE_JT)
+            if not seniority_ok:
+                return "unrelated", f"Title overlap but seniority mismatch (candidate={cs or 'unknown'}, required={rs or 'unknown'})"
             return "related", "Partial title match (token overlap)"
         return "unrelated", "No token overlap with role tag"
 
@@ -7615,9 +7635,9 @@ def _core_assess_profile(data):
         return status, comment, match_count, total_count, match_ratio
 
     for c in active_criteria:
-        # Seniority and country always use the deterministic heuristic — never trust Gemini's
-        # freeform assessment for these binary criteria (Gemini may return "match" for
-        # Director vs Manager, which the heuristic would correctly reject).
+        # seniority, country, and jobtitle_role_tag always use the deterministic heuristic —
+        # never trust Gemini's freeform assessment for these criteria (Gemini may return
+        # "match" for Director vs Manager, which the heuristic would correctly reject).
         if c == "seniority":
             st, cm = seniority_heuristic(seniority, required_seniority)
             assessment_results[c] = {"status": st, "comment": cm}
@@ -7632,11 +7652,12 @@ def _core_assess_profile(data):
                 st, cm = "not_assessed", ""
             assessment_results[c] = {"status": st, "comment": cm}
             continue
+        if c == "jobtitle_role_tag":
+            st, cm = jobtitle_heuristic(job_title, role_tag)
+            assessment_results[c] = {"status": st, "comment": cm}
+            continue
         if c not in assessment_results or assessment_results[c].get("status") not in ["match", "related", "unrelated"]:
-            if c == "jobtitle_role_tag":
-                st, cm = jobtitle_heuristic(job_title, role_tag)
-                assessment_results[c] = {"status": st, "comment": cm}
-            elif c == "company":
+            if c == "company":
                  assessment_results[c] = {"status": "match", "comment": "Present"}
             elif c == "sector":
                  assessment_results[c] = {"status": "related", "comment": "Sector present"}
