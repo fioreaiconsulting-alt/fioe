@@ -494,14 +494,21 @@ def _jobtitle_heuristic_stub(candidate_title, required_tag):
 
 def _seniority_heuristic_stub(candidate_seniority, required_seniority):
     """Mirror of seniority_heuristic in webbridge.py."""
+    import re as _re
     if not candidate_seniority:
         return "not_assessed", ""
     if not required_seniority:
         return "not_assessed", ""
-    cs = str(candidate_seniority).lower().strip()
-    rs = str(required_seniority).lower().strip()
-    if cs == rs or cs in rs or rs in cs:
+    def _norm(s):
+        return _re.sub(r'-level$', '', str(s).lower().strip())
+    cs = _norm(candidate_seniority)
+    rs = _norm(required_seniority)
+    if cs == rs:
         return "match", f"Seniority match: {candidate_seniority}"
+    # Acceptable cross-mappings: Lead ≡ Manager, Expert ≡ Director
+    _ACCEPTABLE = {("lead", "manager"), ("expert", "director")}
+    if (cs, rs) in _ACCEPTABLE:
+        return "match", f"Seniority equivalent: {candidate_seniority} \u2261 {required_seniority}"
     return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
 
 
@@ -707,6 +714,46 @@ class TestSeniorityHeuristic(unittest.TestCase):
         st, _ = _seniority_heuristic_stub("MANAGER", "manager")
         self.assertEqual(st, "match")
 
+    def test_level_suffix_stripped_for_match(self):
+        # "Manager-level" and "Manager" should match after normalisation
+        st, _ = _seniority_heuristic_stub("Manager-level", "Manager")
+        self.assertEqual(st, "match")
+
+    def test_lead_to_manager_acceptable_mapping(self):
+        # Lead candidate, Manager required → acceptable cross-mapping → match
+        st, _ = _seniority_heuristic_stub("Lead", "Manager")
+        self.assertEqual(st, "match")
+
+    def test_lead_level_to_manager_level_acceptable_mapping(self):
+        # Same mapping with '-level' suffix normalised away
+        st, _ = _seniority_heuristic_stub("Lead-level", "Manager-level")
+        self.assertEqual(st, "match")
+
+    def test_expert_to_director_acceptable_mapping(self):
+        # Expert candidate, Director required → acceptable cross-mapping → match
+        st, _ = _seniority_heuristic_stub("Expert", "Director")
+        self.assertEqual(st, "match")
+
+    def test_manager_to_lead_unrelated(self):
+        # Reverse of Lead→Manager: Manager candidate, Lead required → 0
+        st, _ = _seniority_heuristic_stub("Manager", "Lead")
+        self.assertEqual(st, "unrelated")
+
+    def test_director_to_expert_unrelated(self):
+        # Reverse of Expert→Director: Director candidate, Expert required → 0
+        st, _ = _seniority_heuristic_stub("Director", "Expert")
+        self.assertEqual(st, "unrelated")
+
+    def test_exceeds_required_level_unrelated(self):
+        # Director exceeds Manager → 0  (example from comment)
+        st, _ = _seniority_heuristic_stub("Director", "Manager")
+        factor = _scoring_factor_stub("seniority", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_falls_below_required_level_unrelated(self):
+        # Junior falls below Manager → 0
+        st, _ = _seniority_heuristic_stub("Junior", "Manager")
+        self.assertEqual(st, "unrelated")
 
 # ---------------------------------------------------------------------------
 # Tests for Country assessment heuristic (binary: match=1.0, else=0)

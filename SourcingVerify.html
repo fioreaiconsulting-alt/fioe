@@ -4911,7 +4911,32 @@ function renderTable(){
             }
         }
     } else {
-        matchingLevelContainer.innerHTML = '<span style="color:#999; font-size:12px;">(Assessment pending)</span>';
+        // No localStorage cache — fall back to DB-backed rating from tr.dataset.rating
+        // This covers browser restart / localStorage clear scenarios.
+        let dbRatingObj = null;
+        try {
+            const rawRating = tr.dataset.rating;
+            if (rawRating && rawRating !== 'null' && rawRating !== '{}') {
+                dbRatingObj = (typeof rawRating === 'string') ? JSON.parse(rawRating) : rawRating;
+                if (dbRatingObj && !dbRatingObj.total_score) dbRatingObj = null; // ignore empty objects
+            }
+        } catch (_) { dbRatingObj = null; }
+
+        if (dbRatingObj) {
+            // Generate assessment HTML from the DB-backed rating and populate the container
+            const { fullHtml } = generateAssessmentHTML(dbRatingObj);
+            if (fullHtml) {
+                matchingLevelContainer.innerHTML = fullHtml;
+                const m = fullHtml.match(/(\d+)%/);
+                if (m) currentScore = parseInt(m[1], 10);
+                // Cache it so future loads use localStorage path
+                cacheAssessmentHTML(content.dataset.anchor, dbRatingObj);
+            } else {
+                matchingLevelContainer.innerHTML = '<span style="color:#999; font-size:12px;">(Assessment pending)</span>';
+            }
+        } else {
+            matchingLevelContainer.innerHTML = '<span style="color:#999; font-size:12px;">(Assessment pending)</span>';
+        }
     }
     
     matchingLevelContainer.appendChild(assessmentActionContainer);
@@ -5041,6 +5066,27 @@ function renderTable(){
                     localStorage.setItem('assessmentState', JSON.stringify(assessState));
                 }
             } catch (e) { /* ignore */ }
+        }
+        // Final fallback: check tr.dataset.rating (DB-backed, survives localStorage clear / browser restart)
+        if (!assessBtn2.disabled) {
+            try {
+                const rawRating = tr.dataset.rating;
+                if (rawRating && rawRating !== 'null' && rawRating !== '{}') {
+                    const rObj = typeof rawRating === 'string' ? JSON.parse(rawRating) : rawRating;
+                    if (rObj && rObj.total_score) {
+                        assessBtn2.textContent = 'Assessed';
+                        assessBtn2.disabled = true;
+                        // Backfill localStorage caches
+                        try {
+                            if (!assessState[profileAnchor] || !assessState[profileAnchor].completed) {
+                                assessState[profileAnchor] = { completed: true, timestamp: Date.now(), mode: currentMode };
+                                localStorage.setItem('assessmentState', JSON.stringify(assessState));
+                            }
+                        } catch (_) { /* ignore */ }
+                        cacheAssessmentHTML(profileAnchor, rObj);
+                    }
+                }
+            } catch (_) { /* ignore malformed rating */ }
         }
     } catch (e) {
         console.warn('Failed to load assessment state:', e);

@@ -3544,21 +3544,38 @@ Return ONLY the JSON object, no other text."""
         updates = []
         if 'vskillset' in available_cols:
             updates.append("vskillset = %s")
-        if 'skillset' in available_cols:
-            updates.append("skillset = %s")
         
         if updates:
             update_sql = f"UPDATE process SET {', '.join(updates)} WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s"
-            
             update_values = []
             if 'vskillset' in available_cols:
                 update_values.append(vskillset_json)
-            if 'skillset' in available_cols:
-                update_values.append(skillset_str)
             update_values.extend([normalized, normalized])
-            
             cur.execute(update_sql, tuple(update_values))
-            conn.commit()
+        
+        # Skillset: merge new High skills into existing value (add only; never remove or replace)
+        if 'skillset' in available_cols and high_skills:
+            cur.execute(
+                "SELECT skillset FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s",
+                (normalized, normalized)
+            )
+            _sk_row = cur.fetchone()
+            _existing_sk = (_sk_row[0] or "") if _sk_row else ""
+            _existing_parts = [s.strip() for s in _existing_sk.split(",") if s.strip()]
+            _existing_set = {s.lower() for s in _existing_parts}
+            _new_high = [s for s in high_skills if s.lower() not in _existing_set]
+            if _new_high:
+                _merged_sk = ", ".join(_existing_parts + _new_high)
+                cur.execute(
+                    "UPDATE process SET skillset = %s"
+                    " WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s OR normalized_linkedin = %s",
+                    (_merged_sk, normalized, normalized)
+                )
+                logger.info(f"[vskillset_infer] Merged {len(_new_high)} new High skills into skillset for {linkedinurl[:50]}")
+            else:
+                logger.info(f"[vskillset_infer] No new High skills for {linkedinurl[:50]} — skillset unchanged")
+        
+        conn.commit()
         
         cur.close()
         conn.close()
@@ -7461,16 +7478,23 @@ def _core_assess_profile(data):
 
     def seniority_heuristic(candidate_seniority, required_seniority):
         """
-        Assess seniority using binary match logic.
-        Seniority must be an exact level match; any mismatch yields 'unrelated' (not 'related').
+        Assess seniority: the candidate level must be an exact match to the required level.
+        Acceptable cross-mappings: Lead → Manager, Expert → Director.
+        Exceeding or falling below the required level always scores 0 (unrelated).
         """
         if not candidate_seniority: return "not_assessed", ""
         if not required_seniority: return "not_assessed", ""
-        cs = str(candidate_seniority).lower().strip()
-        rs = str(required_seniority).lower().strip()
-        # Direct match or one fully contains the other
-        if cs == rs or cs in rs or rs in cs:
+        # Normalize: lowercase, strip whitespace and trailing '-level' suffix
+        def _norm(s):
+            return re.sub(r'-level$', '', str(s).lower().strip())
+        cs = _norm(candidate_seniority)
+        rs = _norm(required_seniority)
+        if cs == rs:
             return "match", f"Seniority match: {candidate_seniority}"
+        # Acceptable cross-mappings: Lead ≡ Manager, Expert ≡ Director
+        _ACCEPTABLE = {("lead", "manager"), ("expert", "director")}
+        if (cs, rs) in _ACCEPTABLE:
+            return "match", f"Seniority equivalent: {candidate_seniority} ≡ {required_seniority}"
         return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
 
     def country_heuristic(candidate_country, required_country):
@@ -8155,13 +8179,20 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
             final_skillset_str = skillset_str
             
             try:
-                # Persist CV-extracted skillset to process table (no reconciliation)
-                if 'skillset' in cols:
+                # Persist CV-extracted skillset to process table only if not already populated.
+                # Guardrail: skillset must not overwrite an existing value — assessment sets it authoritatively.
+                if 'skillset' in cols and final_skillset_str:
                     up_where = where_clause
                     up_params = list(params)
-                    cur.execute(f"UPDATE process SET skillset = %s WHERE {up_where}", tuple([final_skillset_str] + up_params))
-                    conn.commit()
-                    logger.info(f"[CV BG] CV-extracted skillset saved for linkedin='{linkedinurl}' (exclusive source)")
+                    cur.execute(
+                        f"UPDATE process SET skillset = %s WHERE {up_where} AND (skillset IS NULL OR TRIM(skillset) = '')",
+                        tuple([final_skillset_str] + up_params)
+                    )
+                    if cur.rowcount:
+                        conn.commit()
+                        logger.info(f"[CV BG] CV-extracted skillset saved for linkedin='{linkedinurl}' (exclusive source)")
+                    else:
+                        logger.info(f"[CV BG] Skillset already set for linkedin='{linkedinurl}' — skipping CV overwrite")
             except Exception as e_save:
                 logger.warning(f"[CV BG] Failed to persist CV skillset: {e_save}")
 
@@ -8338,6 +8369,7 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
     """
     Generate vskillset for a profile using Gemini inference.
     Returns list of skill evaluation results or None if failed.
+    Idempotent: returns existing vskillset from DB without regenerating if already populated.
     """
     if not (genai and GEMINI_API_KEY):
         return None
@@ -8352,6 +8384,33 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
         pg_user = os.getenv("PGUSER", "postgres")
         pg_password = os.getenv("PGPASSWORD", "") or "orlha"
         pg_db = os.getenv("PGDATABASE", "candidate_db")
+
+        # --- Idempotency guard: if vskillset already exists in DB, return it without re-running Gemini ---
+        if linkedinurl:
+            try:
+                _norm_gen = linkedinurl.lower().strip().rstrip('/')
+                _conn_idem = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+                _cur_idem = _conn_idem.cursor()
+                _cur_idem.execute("""
+                    SELECT vskillset FROM process
+                    WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                       OR normalized_linkedin = %s
+                    LIMIT 1
+                """, (_norm_gen, _norm_gen))
+                _idem_row = _cur_idem.fetchone()
+                _cur_idem.close(); _conn_idem.close()
+                if _idem_row and _idem_row[0]:
+                    _vs_existing = _idem_row[0]
+                    if isinstance(_vs_existing, str):
+                        try:
+                            _vs_existing = json.loads(_vs_existing)
+                        except Exception:
+                            _vs_existing = []
+                    if isinstance(_vs_existing, list) and len(_vs_existing) > 0:
+                        logger.info(f"[vskillset_gen] Returning existing vskillset ({len(_vs_existing)} items) for {linkedinurl[:50]} — skipping Gemini re-inference")
+                        return _vs_existing
+            except Exception as _e_idem_gen:
+                logger.warning(f"[vskillset_gen] Idempotency check failed ({_e_idem_gen}); proceeding with generation")
         
         # Use experience as primary context, cv as fallback
         profile_context = experience_text if experience_text else ""
@@ -8451,15 +8510,36 @@ Return ONLY the JSON object, no other text."""
             """)
             available_cols = {r[0] for r in cur.fetchall()}
             
+            # Use normalized URL for consistent match with idempotency checks elsewhere
+            _norm_persist = linkedinurl.lower().strip().rstrip('/')
             # Update vskillset if column exists
             if 'vskillset' in available_cols:
-                cur.execute("UPDATE process SET vskillset = %s WHERE linkedinurl = %s", (vskillset_json, linkedinurl))
+                cur.execute(
+                    "UPDATE process SET vskillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (vskillset_json, _norm_persist)
+                )
                 logger.info(f"[vskillset_gen] Persisted vskillset for {linkedinurl[:50]}")
             
-            # Update skillset with High skills only as comma-separated string
-            if 'skillset' in available_cols:
-                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_str, linkedinurl))
-                logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
+            # Update skillset: merge new High skills into existing value (add only; never remove or replace)
+            if 'skillset' in available_cols and confirmed_skills:
+                cur.execute(
+                    "SELECT skillset FROM process WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (_norm_persist,)
+                )
+                _sk_row = cur.fetchone()
+                _existing_sk = (_sk_row[0] or "") if _sk_row else ""
+                _existing_parts = [s.strip() for s in _existing_sk.split(",") if s.strip()]
+                _existing_set = {s.lower() for s in _existing_parts}
+                _new_high = [s for s in confirmed_skills if s.lower() not in _existing_set]
+                if _new_high:
+                    _merged_sk = ", ".join(_existing_parts + _new_high)
+                    cur.execute(
+                        "UPDATE process SET skillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                        (_merged_sk, _norm_persist)
+                    )
+                    logger.info(f"[vskillset_gen] Merged {len(_new_high)} new High skills into skillset for {linkedinurl[:50]}")
+                else:
+                    logger.info(f"[vskillset_gen] No new High skills for {linkedinurl[:50]} — skillset unchanged")
             
             conn.commit()
             cur.close()
@@ -8793,12 +8873,28 @@ def process_bulk_assess():
                                     updates, vals = [], []
                                     if 'vskillset' in avail_cols:
                                         updates.append("vskillset = %s"); vals.append(vsk_json)
-                                    if 'skillset' in avail_cols and high_skills_str:
-                                        updates.append("skillset = %s"); vals.append(high_skills_str)
                                     if updates:
                                         vals.append(linkedinurl)
                                         cur_vsk.execute(f"UPDATE process SET {', '.join(updates)} WHERE linkedinurl = %s", tuple(vals))
-                                        conn_vsk.commit()
+                                    # Skillset: merge new High skills into existing value (add only; never remove or replace)
+                                    if 'skillset' in avail_cols and high_skills_str:
+                                        _new_highs = [s.strip() for s in high_skills_str.split(',') if s.strip()]
+                                        cur_vsk.execute("SELECT skillset FROM process WHERE linkedinurl = %s", (linkedinurl,))
+                                        _sk_row = cur_vsk.fetchone()
+                                        _existing_sk = (_sk_row[0] or "") if _sk_row else ""
+                                        _existing_parts = [s.strip() for s in _existing_sk.split(',') if s.strip()]
+                                        _existing_set = {s.lower() for s in _existing_parts}
+                                        _new_sk = [s for s in _new_highs if s.lower() not in _existing_set]
+                                        if _new_sk:
+                                            _merged_sk = ', '.join(_existing_parts + _new_sk)
+                                            cur_vsk.execute(
+                                                "UPDATE process SET skillset = %s WHERE linkedinurl = %s",
+                                                (_merged_sk, linkedinurl)
+                                            )
+                                            logger.info(f"[BULK_ASSESS] Merged {len(_new_sk)} new High skills into skillset for {linkedinurl[:50]}")
+                                        else:
+                                            logger.info(f"[BULK_ASSESS] No new High skills for {linkedinurl[:50]} — skillset unchanged")
+                                    conn_vsk.commit()
                                     cur_vsk.close(); conn_vsk.close()
                                 except Exception as e_vdb:
                                     logger.warning(f"[BULK_ASSESS] vskillset persist failed for {linkedinurl}: {e_vdb}")
