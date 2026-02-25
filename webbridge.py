@@ -7107,12 +7107,14 @@ def _core_assess_profile(data):
             _cv = _ctc_aliases.get(_cv, _cv).lower()
         else:
             _cv = _ctc_fallback_aliases.get(_cv, _cv)
+        # City lookup: try full value first, then the first comma-separated token
+        # (handles "Tokyo, Japan" → "tokyo" → "Japan")
         if _ctc_cities:
-            _resolved = _ctc_cities.get(_cv)
+            _resolved = _ctc_cities.get(_cv) or _ctc_cities.get(_cv.split(",")[0].strip())
             if _resolved:
                 country = _resolved
         else:
-            _resolved = _ctc_fallback_cities.get(_cv)
+            _resolved = _ctc_fallback_cities.get(_cv) or _ctc_fallback_cities.get(_cv.split(",")[0].strip())
             if _resolved:
                 country = _resolved
     
@@ -7152,7 +7154,7 @@ def _core_assess_profile(data):
                 "tenure": _get_weight(["tenure", "avg_tenure"], 15.0),
                 "country": _get_weight(["country", "location"], 10.0),
                 "company": _get_weight(["company"], 10.0),
-                "product": _get_weight(["product"], 5.0),
+                # product excluded from active criteria; omit from cw so sum stays 100
                 "seniority": _get_weight(["seniority"], 5.0),
                 "sector": _get_weight(["sector", "industry"], 5.0)
             }
@@ -7506,12 +7508,13 @@ def _core_assess_profile(data):
             else:
                 v = _FALLBACK_ALIASES.get(v, v)
             # Resolve city to country (JSON cities values are capitalised; lower for comparison)
+            # Also try the first comma-separated token to handle "Tokyo, Japan" style values
             if _json_cities:
-                resolved = _json_cities.get(v)
+                resolved = _json_cities.get(v) or _json_cities.get(v.split(",")[0].strip())
                 if resolved:
                     return resolved.lower()
             else:
-                v = _FALLBACK_CITIES.get(v, v)
+                v = _FALLBACK_CITIES.get(v) or _FALLBACK_CITIES.get(v.split(",")[0].strip()) or v
             return v
 
         if not candidate_country: return "not_assessed", ""
@@ -8669,92 +8672,120 @@ def process_bulk_assess():
             # For L2 assessment, run full extractive-confirm + inference vskillset generation
             vskillset_results = None  # Initialize to None for passing to profile_data
             if assessment_level == "L2" and target_skills and len(target_skills) > 0:
-                logger.info(f"[BULK_ASSESS] L2 mode - generating vskillset (extractive+inference) for {linkedinurl[:50]}")
+                logger.info(f"[BULK_ASSESS] L2 mode - checking/generating vskillset for {linkedinurl[:50]}")
                 try:
-                    profile_context = experience_text
-                    if not profile_context and cv_data:
-                        cv_bytes_ctx = cv_data if isinstance(cv_data, bytes) else bytes(cv_data)
-                        try:
-                            from pypdf import PdfReader
-                            import io
-                            reader = PdfReader(io.BytesIO(cv_bytes_ctx))
-                            profile_context = "".join(
-                                (p.extract_text() or "") + "\n" for p in reader.pages
-                            )[:3000]
-                        except Exception:
-                            pass
+                    # Idempotency guard: reuse existing vskillset if already persisted
+                    _existing_vs_bulk = None
+                    try:
+                        conn_vsk_idem = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+                        cur_vsk_idem = conn_vsk_idem.cursor()
+                        cur_vsk_idem.execute("""
+                            SELECT vskillset FROM process WHERE linkedinurl = %s LIMIT 1
+                        """, (linkedinurl,))
+                        _vs_idem_row = cur_vsk_idem.fetchone()
+                        if _vs_idem_row and _vs_idem_row[0]:
+                            _vs_idem_val = _vs_idem_row[0]
+                            if isinstance(_vs_idem_val, str):
+                                try:
+                                    _vs_idem_val = json.loads(_vs_idem_val)
+                                except Exception:
+                                    _vs_idem_val = []
+                            if isinstance(_vs_idem_val, list) and len(_vs_idem_val) > 0:
+                                _existing_vs_bulk = _vs_idem_val
+                        cur_vsk_idem.close(); conn_vsk_idem.close()
+                    except Exception as _e_vs_idem:
+                        logger.warning(f"[BULK_ASSESS] vskillset idempotency check failed ({_e_vs_idem}); will regenerate")
 
-                    if profile_context and target_skills:
-                        # Step 1: Extractive confirm (fast, no Gemini call)
-                        confirmed_skills = _extract_confirmed_skills(profile_context, target_skills)
-                        confirmed_set = set(s.lower() for s in confirmed_skills)
-                        vskillset_results = [
-                            {"skill": s, "probability": 100, "category": "High",
-                             "reason": "Explicitly mentioned in experience text", "source": "confirmed"}
-                            for s in confirmed_skills
-                        ]
-
-                        # Step 2: Gemini inference for remaining skills
-                        unconfirmed = [s for s in target_skills if s.lower() not in confirmed_set]
-                        if unconfirmed and genai and GEMINI_API_KEY:
-                            try:
-                                model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
-                                prompt = (
-                                    "SYSTEM: You are an expert technical recruiter evaluating candidate skillsets.\n"
-                                    "For each skill below evaluate the candidate's likely proficiency from their experience.\n"
-                                    "These skills were NOT found explicitly, so use contextual inference from job titles, companies, products.\n"
-                                    "Assign a probability score (0-100) and categorize as Low (<40), Medium (40-74), or High (75-100).\n\n"
-                                    f"CANDIDATE PROFILE:\n{profile_context[:3000]}\n\n"
-                                    f"SKILLS TO INFER:\n{json.dumps(unconfirmed, ensure_ascii=False)}\n\n"
-                                    "OUTPUT FORMAT (JSON):\n"
-                                    '{"evaluations": [{"skill": "skill_name", "probability": 0-100, "category": "Low|Medium|High", "reason": "..."}]}\n'
-                                    "Return ONLY the JSON object."
-                                )
-                                resp = model.generate_content(prompt)
-                                parsed = _extract_json_object((resp.text or "").strip())
-                                if parsed and "evaluations" in parsed:
-                                    for item in parsed["evaluations"]:
-                                        item.setdefault("probability", 50)
-                                        item.setdefault("reason", "Inferred from context")
-                                        item.setdefault("source", "inferred")
-                                        prob = item["probability"]
-                                        item["category"] = "High" if prob >= 75 else ("Medium" if prob >= 40 else "Low")
-                                    vskillset_results += parsed["evaluations"]
-                            except Exception as e_inf:
-                                logger.warning(f"[BULK_ASSESS] vskillset inference step failed for {linkedinurl}: {e_inf}")
-
-                        # Persist vskillset to DB
-                        if vskillset_results:
-                            try:
-                                conn_vsk = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
-                                cur_vsk = conn_vsk.cursor()
-                                cur_vsk.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='process' AND column_name IN ('vskillset','skillset')")
-                                avail_cols = {r[0] for r in cur_vsk.fetchall()}
-                                vsk_json = json.dumps(vskillset_results, ensure_ascii=False)
-                                high_skills_str = ", ".join(
-                                    i["skill"] for i in vskillset_results if i.get("category") == "High"
-                                )
-                                updates, vals = [], []
-                                if 'vskillset' in avail_cols:
-                                    updates.append("vskillset = %s"); vals.append(vsk_json)
-                                if 'skillset' in avail_cols and high_skills_str:
-                                    updates.append("skillset = %s"); vals.append(high_skills_str)
-                                if updates:
-                                    vals.append(linkedinurl)
-                                    cur_vsk.execute(f"UPDATE process SET {', '.join(updates)} WHERE linkedinurl = %s", tuple(vals))
-                                    conn_vsk.commit()
-                                cur_vsk.close(); conn_vsk.close()
-                            except Exception as e_vdb:
-                                logger.warning(f"[BULK_ASSESS] vskillset persist failed for {linkedinurl}: {e_vdb}")
-
-                        # Update candidate_skills from High vskillset results
-                        candidate_skills = [i["skill"] for i in vskillset_results if i.get("category") == "High"]
-                        logger.info(f"[BULK_ASSESS] vskillset: {len(confirmed_skills)} confirmed, {len(vskillset_results)-len(confirmed_skills)} inferred, {len(candidate_skills)} High total")
+                    if _existing_vs_bulk is not None:
+                        vskillset_results = _existing_vs_bulk
+                        candidate_skills = [i["skill"] for i in vskillset_results if isinstance(i, dict) and i.get("category") == "High"]
+                        logger.info(f"[BULK_ASSESS] Reusing existing vskillset ({len(vskillset_results)} items) for {linkedinurl[:50]}")
                     else:
-                        # Fallback to _generate_vskillset_for_profile when no profile context
-                        vskillset_results = _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text, cv_data)
-                        if vskillset_results:
+                    # New generation
+                        profile_context = experience_text
+                        if not profile_context and cv_data:
+                            cv_bytes_ctx = cv_data if isinstance(cv_data, bytes) else bytes(cv_data)
+                            try:
+                                from pypdf import PdfReader
+                                import io
+                                reader = PdfReader(io.BytesIO(cv_bytes_ctx))
+                                profile_context = "".join(
+                                    (p.extract_text() or "") + "\n" for p in reader.pages
+                                )[:3000]
+                            except Exception:
+                                pass
+
+                        if profile_context and target_skills:
+                            # Step 1: Extractive confirm (fast, no Gemini call)
+                            confirmed_skills = _extract_confirmed_skills(profile_context, target_skills)
+                            confirmed_set = set(s.lower() for s in confirmed_skills)
+                            vskillset_results = [
+                                {"skill": s, "probability": 100, "category": "High",
+                                 "reason": "Explicitly mentioned in experience text", "source": "confirmed"}
+                                for s in confirmed_skills
+                            ]
+
+                            # Step 2: Gemini inference for remaining skills
+                            unconfirmed = [s for s in target_skills if s.lower() not in confirmed_set]
+                            if unconfirmed and genai and GEMINI_API_KEY:
+                                try:
+                                    model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+                                    prompt = (
+                                        "SYSTEM: You are an expert technical recruiter evaluating candidate skillsets.\n"
+                                        "For each skill below evaluate the candidate's likely proficiency from their experience.\n"
+                                        "These skills were NOT found explicitly, so use contextual inference from job titles, companies, products.\n"
+                                        "Assign a probability score (0-100) and categorize as Low (<40), Medium (40-74), or High (75-100).\n\n"
+                                        f"CANDIDATE PROFILE:\n{profile_context[:3000]}\n\n"
+                                        f"SKILLS TO INFER:\n{json.dumps(unconfirmed, ensure_ascii=False)}\n\n"
+                                        "OUTPUT FORMAT (JSON):\n"
+                                        '{"evaluations": [{"skill": "skill_name", "probability": 0-100, "category": "Low|Medium|High", "reason": "..."}]}\n'
+                                        "Return ONLY the JSON object."
+                                    )
+                                    resp = model.generate_content(prompt)
+                                    parsed = _extract_json_object((resp.text or "").strip())
+                                    if parsed and "evaluations" in parsed:
+                                        for item in parsed["evaluations"]:
+                                            item.setdefault("probability", 50)
+                                            item.setdefault("reason", "Inferred from context")
+                                            item.setdefault("source", "inferred")
+                                            prob = item["probability"]
+                                            item["category"] = "High" if prob >= 75 else ("Medium" if prob >= 40 else "Low")
+                                        vskillset_results += parsed["evaluations"]
+                                except Exception as e_inf:
+                                    logger.warning(f"[BULK_ASSESS] vskillset inference step failed for {linkedinurl}: {e_inf}")
+
+                            # Persist vskillset to DB
+                            if vskillset_results:
+                                try:
+                                    conn_vsk = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+                                    cur_vsk = conn_vsk.cursor()
+                                    cur_vsk.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='process' AND column_name IN ('vskillset','skillset')")
+                                    avail_cols = {r[0] for r in cur_vsk.fetchall()}
+                                    vsk_json = json.dumps(vskillset_results, ensure_ascii=False)
+                                    high_skills_str = ", ".join(
+                                        i["skill"] for i in vskillset_results if i.get("category") == "High"
+                                    )
+                                    updates, vals = [], []
+                                    if 'vskillset' in avail_cols:
+                                        updates.append("vskillset = %s"); vals.append(vsk_json)
+                                    if 'skillset' in avail_cols and high_skills_str:
+                                        updates.append("skillset = %s"); vals.append(high_skills_str)
+                                    if updates:
+                                        vals.append(linkedinurl)
+                                        cur_vsk.execute(f"UPDATE process SET {', '.join(updates)} WHERE linkedinurl = %s", tuple(vals))
+                                        conn_vsk.commit()
+                                    cur_vsk.close(); conn_vsk.close()
+                                except Exception as e_vdb:
+                                    logger.warning(f"[BULK_ASSESS] vskillset persist failed for {linkedinurl}: {e_vdb}")
+
+                            # Update candidate_skills from High vskillset results
                             candidate_skills = [i["skill"] for i in vskillset_results if i.get("category") == "High"]
+                            logger.info(f"[BULK_ASSESS] vskillset: {len(confirmed_skills)} confirmed, {len(vskillset_results)-len(confirmed_skills)} inferred, {len(candidate_skills)} High total")
+                        else:
+                            # Fallback to _generate_vskillset_for_profile when no profile context
+                            vskillset_results = _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text, cv_data)
+                            if vskillset_results:
+                                candidate_skills = [i["skill"] for i in vskillset_results if i.get("category") == "High"]
                 except Exception as e_vsk:
                     logger.warning(f"[BULK_ASSESS] vskillset generation failed for {linkedinurl}: {e_vsk}")
             
