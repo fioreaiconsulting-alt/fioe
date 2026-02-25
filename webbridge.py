@@ -8338,6 +8338,7 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
     """
     Generate vskillset for a profile using Gemini inference.
     Returns list of skill evaluation results or None if failed.
+    Idempotent: returns existing vskillset from DB without regenerating if already populated.
     """
     if not (genai and GEMINI_API_KEY):
         return None
@@ -8352,6 +8353,33 @@ def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text=
         pg_user = os.getenv("PGUSER", "postgres")
         pg_password = os.getenv("PGPASSWORD", "") or "orlha"
         pg_db = os.getenv("PGDATABASE", "candidate_db")
+
+        # --- Idempotency guard: if vskillset already exists in DB, return it without re-running Gemini ---
+        if linkedinurl:
+            try:
+                _norm_gen = linkedinurl.lower().strip().rstrip('/')
+                _conn_idem = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
+                _cur_idem = _conn_idem.cursor()
+                _cur_idem.execute("""
+                    SELECT vskillset FROM process
+                    WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                       OR normalized_linkedin = %s
+                    LIMIT 1
+                """, (_norm_gen, _norm_gen))
+                _idem_row = _cur_idem.fetchone()
+                _cur_idem.close(); _conn_idem.close()
+                if _idem_row and _idem_row[0]:
+                    _vs_existing = _idem_row[0]
+                    if isinstance(_vs_existing, str):
+                        try:
+                            _vs_existing = json.loads(_vs_existing)
+                        except Exception:
+                            _vs_existing = []
+                    if isinstance(_vs_existing, list) and len(_vs_existing) > 0:
+                        logger.info(f"[vskillset_gen] Returning existing vskillset ({len(_vs_existing)} items) for {linkedinurl[:50]} — skipping Gemini re-inference")
+                        return _vs_existing
+            except Exception as _e_idem_gen:
+                logger.warning(f"[vskillset_gen] Idempotency check failed ({_e_idem_gen}); proceeding with generation")
         
         # Use experience as primary context, cv as fallback
         profile_context = experience_text if experience_text else ""
@@ -8451,14 +8479,22 @@ Return ONLY the JSON object, no other text."""
             """)
             available_cols = {r[0] for r in cur.fetchall()}
             
+            # Use normalized URL for consistent match with idempotency checks elsewhere
+            _norm_persist = linkedinurl.lower().strip().rstrip('/')
             # Update vskillset if column exists
             if 'vskillset' in available_cols:
-                cur.execute("UPDATE process SET vskillset = %s WHERE linkedinurl = %s", (vskillset_json, linkedinurl))
+                cur.execute(
+                    "UPDATE process SET vskillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (vskillset_json, _norm_persist)
+                )
                 logger.info(f"[vskillset_gen] Persisted vskillset for {linkedinurl[:50]}")
             
             # Update skillset with High skills only as comma-separated string
             if 'skillset' in available_cols:
-                cur.execute("UPDATE process SET skillset = %s WHERE linkedinurl = %s", (skillset_str, linkedinurl))
+                cur.execute(
+                    "UPDATE process SET skillset = %s WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s",
+                    (skillset_str, _norm_persist)
+                )
                 logger.info(f"[vskillset_gen] Persisted {len(confirmed_skills)} High skills to skillset for {linkedinurl[:50]}")
             
             conn.commit()
