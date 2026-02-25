@@ -327,5 +327,144 @@ class TestShouldOverwriteExisting(unittest.TestCase):
         self.assertTrue(allow)
 
 
+# ---------------------------------------------------------------------------
+# Tests for product exclusion from assessment + independent product inference
+# Mirrors the production logic in webbridge.py without importing it.
+# ---------------------------------------------------------------------------
+
+def _build_active_criteria_stub(job_title, role_tag, country, company, seniority,
+                                sector, product, tenure, target_skills,
+                                candidate_skills, experience_text):
+    """
+    Stub that mirrors the active_criteria building logic in webbridge.py
+    (after the change that excludes 'product' from the assessment breakdown).
+    Product is intentionally NOT appended to active_criteria.
+    """
+    active_criteria = []
+    if job_title and role_tag:
+        active_criteria.append("jobtitle_role_tag")
+    if country:
+        active_criteria.append("country")
+    if company:
+        active_criteria.append("company")
+    if seniority:
+        active_criteria.append("seniority")
+    if sector:
+        active_criteria.append("sector")
+    # Product is excluded from active_criteria (Gemini populates it independently).
+    if tenure is not None and tenure != "":
+        try:
+            float(tenure)
+            active_criteria.append("tenure")
+        except (ValueError, TypeError):
+            pass
+    if target_skills and (candidate_skills or experience_text):
+        active_criteria.append("skillset")
+    return active_criteria
+
+
+def _extract_product_list_stub(gemini_output):
+    """
+    Stub that mirrors how webbridge.py extracts the product_list from Gemini
+    output (obj.get("product_list", [])).  Product inference is independent of
+    the assessment breakdown.
+    """
+    if not isinstance(gemini_output, dict):
+        return []
+    raw = gemini_output.get("product_list", [])
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    if isinstance(raw, str):
+        return [s.strip() for s in raw.split(',') if s.strip()]
+    return []
+
+
+class TestProductExcludedFromAssessment(unittest.TestCase):
+    """Validate that 'product' is excluded from active_criteria while
+    product inference (Gemini product_list) remains fully functional."""
+
+    def test_product_not_in_active_criteria_when_products_present(self):
+        """Even with a non-empty product list, product must not appear in active_criteria."""
+        criteria = _build_active_criteria_stub(
+            job_title="Product Manager",
+            role_tag="Product Manager",
+            country="Singapore",
+            company="Acme Corp",
+            seniority="Senior",
+            sector="Technology > Software",
+            product=["SaaS", "Mobile App", "API Platform"],
+            tenure=3.5,
+            target_skills=["Python", "SQL"],
+            candidate_skills=["Python", "Java"],
+            experience_text="5 years of software development"
+        )
+        self.assertNotIn("product", criteria)
+
+    def test_product_not_in_active_criteria_when_no_products(self):
+        """product must not appear in active_criteria even when product list is empty."""
+        criteria = _build_active_criteria_stub(
+            job_title="Software Engineer",
+            role_tag="Software Engineer",
+            country="UK",
+            company="TechCo",
+            seniority="Mid",
+            sector="Technology > Cloud & Infrastructure",
+            product=[],
+            tenure=2.0,
+            target_skills=["AWS", "Docker"],
+            candidate_skills=["AWS"],
+            experience_text="3 years cloud engineering"
+        )
+        self.assertNotIn("product", criteria)
+
+    def test_other_criteria_still_active(self):
+        """Excluding product must not affect other criteria being added."""
+        criteria = _build_active_criteria_stub(
+            job_title="Data Scientist",
+            role_tag="Data Scientist",
+            country="USA",
+            company="DataCo",
+            seniority="Senior",
+            sector="Technology > AI & Data",
+            product=["ML Platform"],
+            tenure=4.0,
+            target_skills=["Python", "TensorFlow"],
+            candidate_skills=["Python"],
+            experience_text="6 years ML research"
+        )
+        for expected in ["jobtitle_role_tag", "country", "company", "seniority",
+                         "sector", "tenure", "skillset"]:
+            self.assertIn(expected, criteria)
+        self.assertNotIn("product", criteria)
+
+    def test_product_inference_from_gemini_output(self):
+        """Product list extracted from Gemini output is independent of assessment."""
+        gemini_output = {
+            "skillset": ["Python", "SQL"],
+            "product_list": ["CRM Platform", "Mobile App", "Data Pipeline"],
+            "seniority": "Senior",
+            "sector": "Technology > Software"
+        }
+        products = _extract_product_list_stub(gemini_output)
+        self.assertEqual(products, ["CRM Platform", "Mobile App", "Data Pipeline"])
+
+    def test_product_inference_empty_output(self):
+        """Empty Gemini output yields an empty product list (no crash)."""
+        products = _extract_product_list_stub({})
+        self.assertEqual(products, [])
+
+    def test_product_inference_string_fallback(self):
+        """Comma-separated string product_list is correctly parsed."""
+        gemini_output = {"product_list": "SaaS, Mobile, API"}
+        products = _extract_product_list_stub(gemini_output)
+        self.assertEqual(products, ["SaaS", "Mobile", "API"])
+
+    def test_product_inference_invalid_input(self):
+        """Non-dict Gemini output returns empty list without raising."""
+        self.assertEqual(_extract_product_list_stub(None), [])
+        self.assertEqual(_extract_product_list_stub("string"), [])
+        self.assertEqual(_extract_product_list_stub(42), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

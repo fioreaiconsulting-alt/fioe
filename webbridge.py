@@ -7067,9 +7067,8 @@ def _core_assess_profile(data):
     if company: active_criteria.append("company")
     if seniority: active_criteria.append("seniority")
     if sector: active_criteria.append("sector")
-    # Product active if we have product data
-    if product and len(product) > 0:
-        active_criteria.append("product")
+    # Product is excluded from the assessment category breakdown;
+    # Gemini continues to populate it independently via product_list.
     # Tenure active if value is provided and valid
     if tenure is not None and tenure != "":
         try:

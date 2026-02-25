@@ -4533,10 +4533,30 @@ function renderTable(){
       
       const head = document.createElement('div');
       head.className = 'sv-skillset-head';
-      head.textContent = 'Product';
+      head.style.cssText = 'display: flex; justify-content: space-between; align-items: center; cursor: pointer;';
+      const productTitleSpan = document.createElement('span');
+      productTitleSpan.textContent = 'Product';
+      const productArrow = document.createElement('span');
+      productArrow.className = 'product-arrow';
+      productArrow.textContent = '▼'; // default: expanded
+      productArrow.style.cssText = 'color: #6b7280; font-size: 12px;';
+      head.appendChild(productTitleSpan);
+      head.appendChild(productArrow);
+      head.onclick = function() {
+        const listEl = col.querySelector('.sv-skillset-list');
+        const arrow = this.querySelector('.product-arrow');
+        if (listEl.style.display === 'none') {
+          listEl.style.display = '';
+          arrow.textContent = '▼';
+        } else {
+          listEl.style.display = 'none';
+          arrow.textContent = '▶';
+        }
+      };
       
       const list = document.createElement('div');
       list.className = 'sv-skillset-list';
+      // default: expanded (no display:none)
       
       // Add loading spinner initially
       const loadingSpinner = document.createElement('div');
@@ -4894,7 +4914,12 @@ function renderTable(){
           
           // Validate LinkedIn URL before rendering to avoid broken links
           let validatedUrl = url;
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          if (url.startsWith('http://') || url.startsWith('https://')) {
+            validatedUrl = url;
+          } else if (url.startsWith('/')) {
+            // Path-only (e.g. /in/username) — resolve against linkedin.com
+            validatedUrl = 'https://www.linkedin.com' + url;
+          } else {
             validatedUrl = 'https://' + url;
           }
           
@@ -5226,8 +5251,13 @@ function renderTable(){
     if (linkedinurl) {
       downloadBtn.addEventListener('click', () => {
         const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
-        if(anchor){
-           window.open(API_DOWNLOAD_CV + '?linkedin=' + encodeURIComponent(anchor), '_blank');
+        if (anchor) {
+          const a = document.createElement('a');
+          a.href = API_DOWNLOAD_CV + '?linkedin=' + encodeURIComponent(anchor);
+          a.download = '';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         }
       });
     }
