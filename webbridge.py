@@ -7107,14 +7107,20 @@ def _core_assess_profile(data):
             _cv = _ctc_aliases.get(_cv, _cv).lower()
         else:
             _cv = _ctc_fallback_aliases.get(_cv, _cv)
-        # City lookup: try full value first, then the first comma-separated token
-        # (handles "Tokyo, Japan" → "tokyo" → "Japan")
+        # City lookup: try full value, first comma-separated token, then last token
+        # (handles "Tokyo" → "Japan", "Tokyo, Japan" → "Japan", "Yokohama, Kanagawa, Japan" → "Japan")
         if _ctc_cities:
-            _resolved = _ctc_cities.get(_cv) or _ctc_cities.get(_cv.split(",")[0].strip())
+            _cv_parts = [p.strip() for p in _cv.split(",")]
+            _resolved = _ctc_cities.get(_cv) or _ctc_cities.get(_cv_parts[0])
+            if not _resolved and len(_cv_parts) > 1:
+                _resolved = _ctc_cities.get(_cv_parts[-1])
             if _resolved:
                 country = _resolved
         else:
-            _resolved = _ctc_fallback_cities.get(_cv) or _ctc_fallback_cities.get(_cv.split(",")[0].strip())
+            _cv_parts = [p.strip() for p in _cv.split(",")]
+            _resolved = _ctc_fallback_cities.get(_cv) or _ctc_fallback_cities.get(_cv_parts[0])
+            if not _resolved and len(_cv_parts) > 1:
+                _resolved = _ctc_fallback_cities.get(_cv_parts[-1])
             if _resolved:
                 country = _resolved
     
@@ -7508,13 +7514,21 @@ def _core_assess_profile(data):
             else:
                 v = _FALLBACK_ALIASES.get(v, v)
             # Resolve city to country (JSON cities values are capitalised; lower for comparison)
-            # Also try the first comma-separated token to handle "Tokyo, Japan" style values
+            # Try full value, first comma-separated token, then last token
+            # (handles "Tokyo" → "Japan", "Tokyo, JP" → "Japan", "Unknown City, Japan" → "Japan")
             if _json_cities:
-                resolved = _json_cities.get(v) or _json_cities.get(v.split(",")[0].strip())
+                _v_parts = [p.strip() for p in v.split(",")]
+                resolved = _json_cities.get(v) or _json_cities.get(_v_parts[0])
+                if not resolved and len(_v_parts) > 1:
+                    resolved = _json_cities.get(_v_parts[-1])
                 if resolved:
                     return resolved.lower()
             else:
-                v = _FALLBACK_CITIES.get(v) or _FALLBACK_CITIES.get(v.split(",")[0].strip()) or v
+                _v_parts = [p.strip() for p in v.split(",")]
+                v = _FALLBACK_CITIES.get(v) or _FALLBACK_CITIES.get(_v_parts[0])
+                if not v and len(_v_parts) > 1:
+                    v = _FALLBACK_CITIES.get(_v_parts[-1])
+                v = v or str(val).lower().strip()
             return v
 
         if not candidate_country: return "not_assessed", ""
@@ -7579,7 +7593,13 @@ def _core_assess_profile(data):
                 st, cm = jobtitle_heuristic(job_title, role_tag)
                 assessment_results[c] = {"status": st, "comment": cm}
             elif c == "country":
-                st, cm = country_heuristic(country, required_country)
+                if required_country:
+                    st, cm = country_heuristic(country, required_country)
+                elif country:
+                    # No required country specified; candidate has a location → no restriction, treat as match
+                    st, cm = "match", "No country requirement; candidate location accepted"
+                else:
+                    st, cm = "not_assessed", ""
                 assessment_results[c] = {"status": st, "comment": cm}
             elif c == "company":
                  assessment_results[c] = {"status": "match", "comment": "Present"}
@@ -8679,9 +8699,14 @@ def process_bulk_assess():
                     try:
                         conn_vsk_idem = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
                         cur_vsk_idem = conn_vsk_idem.cursor()
+                        # Use normalized URL comparison to handle trailing slash / case differences
+                        _norm_vsk = linkedinurl.lower().strip().rstrip('/')
                         cur_vsk_idem.execute("""
-                            SELECT vskillset FROM process WHERE linkedinurl = %s LIMIT 1
-                        """, (linkedinurl,))
+                            SELECT vskillset FROM process
+                            WHERE LOWER(TRIM(TRAILING '/' FROM linkedinurl)) = %s
+                               OR normalized_linkedin = %s
+                            LIMIT 1
+                        """, (_norm_vsk, _norm_vsk))
                         _vs_idem_row = cur_vsk_idem.fetchone()
                         if _vs_idem_row and _vs_idem_row[0]:
                             _vs_idem_val = _vs_idem_row[0]

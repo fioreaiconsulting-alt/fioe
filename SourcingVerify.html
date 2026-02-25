@@ -987,6 +987,18 @@ function cacheAssessmentHTML(linkedinurl, result) {
         const hashId = `${linkedinurl.length}_${(linkedinurl.charCodeAt(0) * 31 + linkedinurl.charCodeAt(linkedinurl.length - 1)) % 10000}`;
         console.log(`[cacheAssessmentHTML] Cached full assessment HTML for profile: id_${hashId}, score: ${totalScore}%`);
     }
+    // Also persist assessment completion into assessmentState so the individual view
+    // shows "Assessed" (not "Assess") after a bulk assessment completes.
+    if (fullHtml && linkedinurl) {
+        try {
+            const ratingLevel = (result.assessment_level && result.assessment_level.includes('L2')) ? 'L2' : 'L1';
+            const assessState = JSON.parse(localStorage.getItem('assessmentState') || '{}');
+            if (!assessState[linkedinurl] || !assessState[linkedinurl].completed) {
+                assessState[linkedinurl] = { completed: true, timestamp: Date.now(), mode: ratingLevel };
+                localStorage.setItem('assessmentState', JSON.stringify(assessState));
+            }
+        } catch (e) { /* ignore localStorage errors */ }
+    }
 }
 
 /* Helper: Generate full assessment HTML from assessment result data */
@@ -5016,6 +5028,19 @@ function renderTable(){
                 // Different mode - allow re-assessment
                 assessBtn2.title = `Run Fresh ${currentMode} Assessment (previously assessed in ${storedMode} mode)`;
             }
+        }
+        // Also check card cache: if assessment HTML is already cached (e.g. from bulk assessment),
+        // treat the profile as assessed so the button shows "Assessed" and stays disabled.
+        if (!assessBtn2.disabled && cachedCard && cachedCard.assessmentHTML) {
+            assessBtn2.textContent = 'Assessed';
+            assessBtn2.disabled = true;
+            // Backfill assessmentState so future loads don't need the card cache check
+            try {
+                if (!assessState[profileAnchor] || !assessState[profileAnchor].completed) {
+                    assessState[profileAnchor] = { completed: true, timestamp: Date.now(), mode: currentMode };
+                    localStorage.setItem('assessmentState', JSON.stringify(assessState));
+                }
+            } catch (e) { /* ignore */ }
         }
     } catch (e) {
         console.warn('Failed to load assessment state:', e);
