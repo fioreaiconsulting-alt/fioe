@@ -9,6 +9,8 @@ production dependencies (Flask, google-generativeai, etc.), making isolated
 testing impractical without a full environment. When the production functions
 change, the corresponding stubs here must be updated to match.
 """
+import json
+import os
 import re
 import heapq
 import unittest
@@ -325,6 +327,654 @@ class TestShouldOverwriteExisting(unittest.TestCase):
         meta = {"level": None, "version": 1}
         allow, reason = _should_overwrite_existing(meta, "L2", False)
         self.assertTrue(allow)
+
+
+# ---------------------------------------------------------------------------
+# Tests for product exclusion from assessment + independent product inference
+# Mirrors the production logic in webbridge.py without importing it.
+# ---------------------------------------------------------------------------
+
+def _build_active_criteria_stub(job_title, role_tag, country, company, seniority,
+                                sector, product, tenure, target_skills,
+                                candidate_skills, experience_text):
+    """
+    Stub that mirrors the active_criteria building logic in webbridge.py
+    (after the change that excludes 'product' from the assessment breakdown).
+    Product is intentionally NOT appended to active_criteria.
+    """
+    active_criteria = []
+    if job_title and role_tag:
+        active_criteria.append("jobtitle_role_tag")
+    if country:
+        active_criteria.append("country")
+    if company:
+        active_criteria.append("company")
+    if seniority:
+        active_criteria.append("seniority")
+    if sector:
+        active_criteria.append("sector")
+    # Product is excluded from active_criteria (Gemini populates it independently).
+    if tenure is not None and tenure != "":
+        try:
+            float(tenure)
+            active_criteria.append("tenure")
+        except (ValueError, TypeError):
+            pass
+    if target_skills and (candidate_skills or experience_text):
+        active_criteria.append("skillset")
+    return active_criteria
+
+
+def _extract_product_list_stub(gemini_output):
+    """
+    Stub that mirrors how webbridge.py extracts the product_list from Gemini
+    output (obj.get("product_list", [])).  Product inference is independent of
+    the assessment breakdown.
+    """
+    if not isinstance(gemini_output, dict):
+        return []
+    raw = gemini_output.get("product_list", [])
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    if isinstance(raw, str):
+        return [s.strip() for s in raw.split(',') if s.strip()]
+    return []
+
+
+class TestProductExcludedFromAssessment(unittest.TestCase):
+    """Validate that 'product' is excluded from active_criteria while
+    product inference (Gemini product_list) remains fully functional."""
+
+    def test_product_not_in_active_criteria_when_products_present(self):
+        """Even with a non-empty product list, product must not appear in active_criteria."""
+        criteria = _build_active_criteria_stub(
+            job_title="Product Manager",
+            role_tag="Product Manager",
+            country="Singapore",
+            company="Acme Corp",
+            seniority="Senior",
+            sector="Technology > Software",
+            product=["SaaS", "Mobile App", "API Platform"],
+            tenure=3.5,
+            target_skills=["Python", "SQL"],
+            candidate_skills=["Python", "Java"],
+            experience_text="5 years of software development"
+        )
+        self.assertNotIn("product", criteria)
+
+    def test_product_not_in_active_criteria_when_no_products(self):
+        """product must not appear in active_criteria even when product list is empty."""
+        criteria = _build_active_criteria_stub(
+            job_title="Software Engineer",
+            role_tag="Software Engineer",
+            country="UK",
+            company="TechCo",
+            seniority="Mid",
+            sector="Technology > Cloud & Infrastructure",
+            product=[],
+            tenure=2.0,
+            target_skills=["AWS", "Docker"],
+            candidate_skills=["AWS"],
+            experience_text="3 years cloud engineering"
+        )
+        self.assertNotIn("product", criteria)
+
+    def test_other_criteria_still_active(self):
+        """Excluding product must not affect other criteria being added."""
+        criteria = _build_active_criteria_stub(
+            job_title="Data Scientist",
+            role_tag="Data Scientist",
+            country="USA",
+            company="DataCo",
+            seniority="Senior",
+            sector="Technology > AI & Data",
+            product=["ML Platform"],
+            tenure=4.0,
+            target_skills=["Python", "TensorFlow"],
+            candidate_skills=["Python"],
+            experience_text="6 years ML research"
+        )
+        for expected in ["jobtitle_role_tag", "country", "company", "seniority",
+                         "sector", "tenure", "skillset"]:
+            self.assertIn(expected, criteria)
+        self.assertNotIn("product", criteria)
+
+    def test_product_inference_from_gemini_output(self):
+        """Product list extracted from Gemini output is independent of assessment."""
+        gemini_output = {
+            "skillset": ["Python", "SQL"],
+            "product_list": ["CRM Platform", "Mobile App", "Data Pipeline"],
+            "seniority": "Senior",
+            "sector": "Technology > Software"
+        }
+        products = _extract_product_list_stub(gemini_output)
+        self.assertEqual(products, ["CRM Platform", "Mobile App", "Data Pipeline"])
+
+    def test_product_inference_empty_output(self):
+        """Empty Gemini output yields an empty product list (no crash)."""
+        products = _extract_product_list_stub({})
+        self.assertEqual(products, [])
+
+    def test_product_inference_string_fallback(self):
+        """Comma-separated string product_list is correctly parsed."""
+        gemini_output = {"product_list": "SaaS, Mobile, API"}
+        products = _extract_product_list_stub(gemini_output)
+        self.assertEqual(products, ["SaaS", "Mobile", "API"])
+
+    def test_product_inference_invalid_input(self):
+        """Non-dict Gemini output returns empty list without raising."""
+        self.assertEqual(_extract_product_list_stub(None), [])
+        self.assertEqual(_extract_product_list_stub("string"), [])
+        self.assertEqual(_extract_product_list_stub(42), [])
+
+
+# ---------------------------------------------------------------------------
+# Stubs for all rating assessment category heuristics.
+# These mirror the production functions in webbridge.py without importing it.
+# When the production functions change, update the stubs here to match.
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+def _jobtitle_heuristic_stub(candidate_title, required_tag):
+    """Mirror of jobtitle_heuristic in webbridge.py."""
+    if not candidate_title:
+        return "not_assessed", ""
+    v = str(candidate_title).lower()
+    t = str(required_tag).lower()
+    if t in v or v in t:
+        return "match", "Heuristic match"
+    _stopwords = {"the", "a", "an", "of", "and", "or", "for", "in", "at"}
+    v_tokens = set(_re.findall(r'\b\w+\b', v)) - _stopwords
+    t_tokens = set(_re.findall(r'\b\w+\b', t)) - _stopwords
+    if v_tokens & t_tokens:
+        return "related", "Partial title match (token overlap)"
+    return "unrelated", "No token overlap with role tag"
+
+
+def _seniority_heuristic_stub(candidate_seniority, required_seniority):
+    """Mirror of seniority_heuristic in webbridge.py."""
+    if not candidate_seniority:
+        return "not_assessed", ""
+    if not required_seniority:
+        return "not_assessed", ""
+    cs = str(candidate_seniority).lower().strip()
+    rs = str(required_seniority).lower().strip()
+    if cs == rs or cs in rs or rs in cs:
+        return "match", f"Seniority match: {candidate_seniority}"
+    return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
+
+
+def _country_heuristic_stub(candidate_country, required_country):
+    """
+    Mirror of country_heuristic in webbridge.py.
+    Loads city-to-country mapping from city_to_country.json (relative to this file)
+    and falls back to a minimal hardcoded dict when the file is unavailable.
+    """
+    _data = {}
+    try:
+        _json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "city_to_country.json")
+        with open(_json_path, "r", encoding="utf-8") as _f:
+            _data = json.load(_f)
+    except Exception:
+        pass
+
+    _json_cities  = _data.get("cities", {}) if _data else {}
+    _json_aliases = _data.get("aliases", {}) if _data else {}
+
+    _FALLBACK_CITIES = {
+        "tokyo": "japan", "osaka": "japan",
+        "beijing": "china", "shanghai": "china", "hong kong": "china",
+        "seoul": "south korea",
+        "mumbai": "india", "delhi": "india", "bangalore": "india",
+        "bangkok": "thailand", "jakarta": "indonesia",
+        "kuala lumpur": "malaysia", "manila": "philippines",
+        "hanoi": "vietnam", "taipei": "taiwan",
+        "sydney": "australia", "melbourne": "australia",
+        "london": "united kingdom", "berlin": "germany",
+        "paris": "france",
+        "new york": "united states", "san francisco": "united states",
+        "toronto": "canada", "vancouver": "canada",
+        "dubai": "united arab emirates", "abu dhabi": "united arab emirates",
+    }
+    _FALLBACK_ALIASES = {
+        "uk": "united kingdom", "usa": "united states", "us": "united states",
+        "uae": "united arab emirates",
+    }
+
+    def _resolve(val):
+        v = str(val).lower().strip()
+        if _json_aliases:
+            v = _json_aliases.get(v, v).lower()  # aliases may be title-cased in JSON
+        else:
+            v = _FALLBACK_ALIASES.get(v, v)
+        if _json_cities:
+            resolved = _json_cities.get(v)
+            if resolved:
+                return resolved.lower()
+        else:
+            v = _FALLBACK_CITIES.get(v, v)
+        return v
+
+    if not candidate_country:
+        return "not_assessed", ""
+    if not required_country:
+        return "not_assessed", ""
+    cc = _resolve(candidate_country)
+    rc = _resolve(required_country)
+    if cc == rc or cc in rc or rc in cc:
+        return "match", f"Country match: {candidate_country}"
+    return "unrelated", f"Country mismatch: candidate={candidate_country}, required={required_country}"
+
+
+def _star_string_stub(status, category_stars):
+    """Mirror of star_string generation in webbridge.py."""
+    if status == "not_assessed":
+        return "Unable to Access"
+    return "★" * category_stars + "☆" * (5 - category_stars)
+
+
+def _tenure_heuristic_stub(tenure):
+    """Mirror of tenure assessment heuristic in webbridge.py."""
+    try:
+        val = float(tenure)
+        if val >= 4.0:
+            return "match", f"{val:.1f} years avg tenure"
+        elif val >= 2.0:
+            return "related", f"{val:.1f} years avg tenure"
+        else:
+            return "unrelated", f"{val:.1f} years avg tenure (short)"
+    except (ValueError, TypeError):
+        return "not_assessed", "Tenure data unavailable"
+
+
+def _scoring_factor_stub(category, status):
+    """
+    Mirror of the scoring logic in webbridge.py's _core_assess_profile scoring loop.
+    - seniority and country: binary (match=1.0, else=0)
+    - all others: match=1.0, related=0.5, else=0
+    """
+    if category in ("seniority", "country"):
+        return 1.0 if status == "match" else 0.0
+    if status == "match":
+        return 1.0
+    elif status == "related":
+        return 0.5
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Tests for Job Title (jobtitle_role_tag) assessment heuristic
+# ---------------------------------------------------------------------------
+
+class TestJobTitleHeuristic(unittest.TestCase):
+    def test_exact_match(self):
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Manager", "Clinical Study Manager")
+        self.assertEqual(st, "match")
+
+    def test_substring_match(self):
+        st, _ = _jobtitle_heuristic_stub("Senior Clinical Study Manager", "Clinical Study Manager")
+        self.assertEqual(st, "match")
+
+    def test_related_partial_token_overlap(self):
+        # "Clinical Project Manager" shares "Clinical" and "Manager" with "Clinical Study Manager"
+        st, _ = _jobtitle_heuristic_stub("Clinical Project Manager", "Clinical Study Manager")
+        self.assertEqual(st, "related")
+
+    def test_unrelated_no_token_overlap(self):
+        # "Clinical Study Director" shares "Clinical" and "Study" → still token overlap → related
+        # But a completely different role should be unrelated
+        st, _ = _jobtitle_heuristic_stub("Finance Business Partner", "Clinical Study Manager")
+        self.assertEqual(st, "unrelated")
+
+    def test_director_vs_manager_unrelated(self):
+        # Clinical Study Director vs Clinical Study Manager:
+        # "Clinical" and "Study" overlap → related (not unrelated) per token-overlap rule
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Director", "Clinical Study Manager")
+        self.assertEqual(st, "related")
+
+    def test_empty_candidate_title(self):
+        st, _ = _jobtitle_heuristic_stub("", "Clinical Study Manager")
+        self.assertEqual(st, "not_assessed")
+
+    def test_related_yields_half_score(self):
+        st, _ = _jobtitle_heuristic_stub("Clinical Project Manager", "Clinical Study Manager")
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 0.5)
+
+    def test_unrelated_yields_zero_score(self):
+        st, _ = _jobtitle_heuristic_stub("Finance Business Partner", "Clinical Study Manager")
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_match_yields_full_score(self):
+        st, _ = _jobtitle_heuristic_stub("Clinical Study Manager", "Clinical Study Manager")
+        factor = _scoring_factor_stub("jobtitle_role_tag", st)
+        self.assertEqual(factor, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Seniority assessment heuristic (binary: match=1.0, else=0)
+# ---------------------------------------------------------------------------
+
+class TestSeniorityHeuristic(unittest.TestCase):
+    def test_exact_match(self):
+        st, _ = _seniority_heuristic_stub("Manager", "Manager")
+        self.assertEqual(st, "match")
+
+    def test_mismatch_director_vs_manager(self):
+        # Candidate at Director level but required Manager → 0
+        st, _ = _seniority_heuristic_stub("Director", "Manager")
+        self.assertEqual(st, "unrelated")
+
+    def test_mismatch_director_vs_manager_scores_zero(self):
+        st, _ = _seniority_heuristic_stub("Director", "Manager")
+        factor = _scoring_factor_stub("seniority", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_mismatch_senior_vs_manager(self):
+        st, _ = _seniority_heuristic_stub("Senior", "Manager")
+        self.assertEqual(st, "unrelated")
+
+    def test_match_scores_full(self):
+        st, _ = _seniority_heuristic_stub("Manager", "Manager")
+        factor = _scoring_factor_stub("seniority", st)
+        self.assertEqual(factor, 1.0)
+
+    def test_related_status_also_scores_zero_for_seniority(self):
+        # Even if status were "related", binary scoring must yield 0 for seniority
+        factor = _scoring_factor_stub("seniority", "related")
+        self.assertEqual(factor, 0.0)
+
+    def test_no_required_seniority(self):
+        st, _ = _seniority_heuristic_stub("Senior", "")
+        self.assertEqual(st, "not_assessed")
+
+    def test_no_candidate_seniority(self):
+        st, _ = _seniority_heuristic_stub("", "Manager")
+        self.assertEqual(st, "not_assessed")
+
+    def test_case_insensitive(self):
+        st, _ = _seniority_heuristic_stub("MANAGER", "manager")
+        self.assertEqual(st, "match")
+
+
+# ---------------------------------------------------------------------------
+# Tests for Country assessment heuristic (binary: match=1.0, else=0)
+# ---------------------------------------------------------------------------
+
+class TestCountryHeuristic(unittest.TestCase):
+    def test_exact_match(self):
+        st, _ = _country_heuristic_stub("Singapore", "Singapore")
+        self.assertEqual(st, "match")
+
+    def test_mismatch_china_vs_singapore(self):
+        # Required Singapore, candidate's latest country China → 0
+        st, _ = _country_heuristic_stub("China", "Singapore")
+        self.assertEqual(st, "unrelated")
+
+    def test_mismatch_scores_zero(self):
+        st, _ = _country_heuristic_stub("China", "Singapore")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_match_scores_full(self):
+        st, _ = _country_heuristic_stub("Singapore", "Singapore")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 1.0)
+
+    def test_related_status_also_scores_zero_for_country(self):
+        # Even if status were "related", binary scoring must yield 0 for country
+        factor = _scoring_factor_stub("country", "related")
+        self.assertEqual(factor, 0.0)
+
+    def test_no_required_country(self):
+        st, _ = _country_heuristic_stub("Singapore", "")
+        self.assertEqual(st, "not_assessed")
+
+    def test_no_candidate_country(self):
+        st, _ = _country_heuristic_stub("", "Singapore")
+        self.assertEqual(st, "not_assessed")
+
+    def test_case_insensitive(self):
+        st, _ = _country_heuristic_stub("SINGAPORE", "singapore")
+        self.assertEqual(st, "match")
+
+    def test_uk_vs_usa_mismatch(self):
+        st, _ = _country_heuristic_stub("UK", "USA")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Company assessment (presence → match)
+# ---------------------------------------------------------------------------
+
+class TestCompanyAssessment(unittest.TestCase):
+    def test_company_present_scores_full(self):
+        factor = _scoring_factor_stub("company", "match")
+        self.assertEqual(factor, 1.0)
+
+    def test_company_related_still_scores_half(self):
+        # company uses standard (non-binary) scoring
+        factor = _scoring_factor_stub("company", "related")
+        self.assertEqual(factor, 0.5)
+
+    def test_company_unrelated_scores_zero(self):
+        factor = _scoring_factor_stub("company", "unrelated")
+        self.assertEqual(factor, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Sector assessment (related → 0.5 partial credit)
+# ---------------------------------------------------------------------------
+
+class TestSectorAssessment(unittest.TestCase):
+    def test_sector_match_scores_full(self):
+        factor = _scoring_factor_stub("sector", "match")
+        self.assertEqual(factor, 1.0)
+
+    def test_sector_related_scores_half(self):
+        factor = _scoring_factor_stub("sector", "related")
+        self.assertEqual(factor, 0.5)
+
+    def test_sector_unrelated_scores_zero(self):
+        factor = _scoring_factor_stub("sector", "unrelated")
+        self.assertEqual(factor, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for Tenure assessment heuristic (match ≥4y, related 2–4y, unrelated <2y)
+# ---------------------------------------------------------------------------
+
+class TestTenureHeuristic(unittest.TestCase):
+    def test_long_tenure_is_match(self):
+        st, _ = _tenure_heuristic_stub(5.0)
+        self.assertEqual(st, "match")
+
+    def test_four_year_boundary_is_match(self):
+        st, _ = _tenure_heuristic_stub(4.0)
+        self.assertEqual(st, "match")
+
+    def test_medium_tenure_is_related(self):
+        st, _ = _tenure_heuristic_stub(3.0)
+        self.assertEqual(st, "related")
+
+    def test_two_year_boundary_is_related(self):
+        st, _ = _tenure_heuristic_stub(2.0)
+        self.assertEqual(st, "related")
+
+    def test_short_tenure_is_unrelated(self):
+        st, _ = _tenure_heuristic_stub(1.0)
+        self.assertEqual(st, "unrelated")
+
+    def test_zero_tenure_is_unrelated(self):
+        st, _ = _tenure_heuristic_stub(0.0)
+        self.assertEqual(st, "unrelated")
+
+    def test_invalid_tenure_not_assessed(self):
+        st, _ = _tenure_heuristic_stub("N/A")
+        self.assertEqual(st, "not_assessed")
+
+    def test_none_tenure_not_assessed(self):
+        st, _ = _tenure_heuristic_stub(None)
+        self.assertEqual(st, "not_assessed")
+
+    def test_tenure_related_scores_half(self):
+        st, _ = _tenure_heuristic_stub(3.0)
+        factor = _scoring_factor_stub("tenure", st)
+        self.assertEqual(factor, 0.5)
+
+    def test_tenure_match_scores_full(self):
+        st, _ = _tenure_heuristic_stub(5.0)
+        factor = _scoring_factor_stub("tenure", st)
+        self.assertEqual(factor, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests for city-to-country recognition in country assessment
+# ---------------------------------------------------------------------------
+
+class TestCityToCountryMapping(unittest.TestCase):
+    def test_tokyo_maps_to_japan(self):
+        st, _ = _country_heuristic_stub("Tokyo", "Japan")
+        self.assertEqual(st, "match")
+
+    def test_beijing_maps_to_china(self):
+        st, _ = _country_heuristic_stub("Beijing", "China")
+        self.assertEqual(st, "match")
+
+    def test_london_maps_to_uk(self):
+        st, _ = _country_heuristic_stub("London", "United Kingdom")
+        self.assertEqual(st, "match")
+
+    def test_london_maps_to_uk_alias(self):
+        st, _ = _country_heuristic_stub("London", "UK")
+        self.assertEqual(st, "match")
+
+    def test_new_york_maps_to_usa(self):
+        st, _ = _country_heuristic_stub("New York", "United States")
+        self.assertEqual(st, "match")
+
+    def test_dubai_maps_to_uae(self):
+        st, _ = _country_heuristic_stub("Dubai", "UAE")
+        self.assertEqual(st, "match")
+
+    def test_city_in_wrong_country_is_unrelated(self):
+        # Tokyo is in Japan, not Singapore
+        st, _ = _country_heuristic_stub("Tokyo", "Singapore")
+        self.assertEqual(st, "unrelated")
+
+    def test_beijing_vs_singapore_is_unrelated(self):
+        st, _ = _country_heuristic_stub("Beijing", "Singapore")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 0.0)
+
+    def test_city_country_same_country_match(self):
+        # Both resolve to the same country
+        st, _ = _country_heuristic_stub("Tokyo", "Japan")
+        factor = _scoring_factor_stub("country", st)
+        self.assertEqual(factor, 1.0)
+
+    def test_seoul_maps_to_south_korea(self):
+        st, _ = _country_heuristic_stub("Seoul", "South Korea")
+        self.assertEqual(st, "match")
+
+    def test_sydney_maps_to_australia(self):
+        st, _ = _country_heuristic_stub("Sydney", "Australia")
+        self.assertEqual(st, "match")
+
+
+# ---------------------------------------------------------------------------
+# Tests for "Unable to Access" star_string when status is not_assessed
+# ---------------------------------------------------------------------------
+
+class TestStarStringNotAssessed(unittest.TestCase):
+    def test_not_assessed_yields_unable_to_access(self):
+        result = _star_string_stub("not_assessed", 0)
+        self.assertEqual(result, "Unable to Access")
+
+    def test_match_yields_star_string(self):
+        result = _star_string_stub("match", 5)
+        self.assertEqual(result, "★★★★★")
+
+    def test_unrelated_yields_empty_stars(self):
+        result = _star_string_stub("unrelated", 0)
+        self.assertEqual(result, "☆☆☆☆☆")
+
+    def test_related_yields_partial_stars(self):
+        result = _star_string_stub("related", 3)
+        self.assertEqual(result, "★★★☆☆")
+
+    def test_not_assessed_never_shows_stars(self):
+        result = _star_string_stub("not_assessed", 5)
+        self.assertNotIn("★", result)
+        self.assertNotIn("☆", result)
+        self.assertEqual(result, "Unable to Access")
+
+
+# ---------------------------------------------------------------------------
+# Tests for city_to_country.json integrity
+# ---------------------------------------------------------------------------
+
+class TestCityToCountryJson(unittest.TestCase):
+    def setUp(self):
+        _json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "city_to_country.json")
+        with open(_json_path, "r", encoding="utf-8") as f:
+            self.data = json.load(f)
+
+    def test_json_has_cities_key(self):
+        self.assertIn("cities", self.data)
+
+    def test_json_has_aliases_key(self):
+        self.assertIn("aliases", self.data)
+
+    def test_cities_are_lowercase(self):
+        for city in self.data["cities"]:
+            self.assertEqual(city, city.lower(), f"City key not lowercase: {city!r}")
+
+    def test_aliases_are_lowercase(self):
+        for alias in self.data["aliases"]:
+            self.assertEqual(alias, alias.lower(), f"Alias key not lowercase: {alias!r}")
+
+    def test_tokyo_in_json(self):
+        self.assertIn("tokyo", self.data["cities"])
+
+    def test_tokyo_maps_to_japan(self):
+        self.assertEqual(self.data["cities"]["tokyo"].lower(), "japan")
+
+    def test_dubai_maps_to_uae_full(self):
+        self.assertIn("dubai", self.data["cities"])
+
+    def test_uk_alias_resolves(self):
+        self.assertIn("uk", self.data["aliases"])
+
+    def test_all_city_values_are_strings(self):
+        for city, country in self.data["cities"].items():
+            self.assertIsInstance(country, str, f"city_to_country.json: value for {city!r} is not a string")
+
+    def test_vskillset_idempotency_logic(self):
+        """
+        Mirror of the idempotency guard in /vskillset/infer:
+        if existing vskillset is non-empty and force=False, return it without regeneration.
+        """
+        def _should_skip_regen(existing_vs, force):
+            if force:
+                return False
+            if isinstance(existing_vs, str):
+                try:
+                    existing_vs = json.loads(existing_vs)
+                except Exception:
+                    return False
+            return isinstance(existing_vs, list) and len(existing_vs) > 0
+
+        existing = [{"skill": "Python", "category": "High", "source": "confirmed"}]
+        self.assertTrue(_should_skip_regen(existing, force=False))
+        self.assertFalse(_should_skip_regen(existing, force=True))
+        self.assertFalse(_should_skip_regen([], force=False))
+        self.assertFalse(_should_skip_regen(None, force=False))
+        # JSON string form
+        self.assertTrue(_should_skip_regen(json.dumps(existing), force=False))
 
 
 if __name__ == "__main__":
