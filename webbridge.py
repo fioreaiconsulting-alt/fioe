@@ -3280,7 +3280,7 @@ def user_token_update():
     last_result_count, preventing the feedback loop where the same search
     result count is deducted repeatedly on every page refresh or new-tab load.
     """
-    global _token_guard_column_ensured
+    global _token_guard_column_ensured, _role_tag_session_column_ensured
     data = request.get_json(force=True, silent=True) or {}
     userid = (data.get("userid") or "").strip()
     token_val = data.get("token")
@@ -3321,22 +3321,43 @@ def user_token_update():
                         "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT"
                     )
                     _token_guard_column_ensured = True
-                # Read current token, stored result count, and stored role_tag
+                # Ensure session tracking columns exist in login and sourcing
+                if not _role_tag_session_column_ensured:
+                    cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    _role_tag_session_column_ensured = True
+                # Read current token, stored result count, role_tag guard, username, and session timestamp
                 cur.execute(
-                    "SELECT token, last_result_count, last_deducted_role_tag FROM login WHERE userid = %s",
+                    "SELECT token, last_result_count, last_deducted_role_tag, username, role_tag_session"
+                    " FROM login WHERE userid = %s",
                     (userid,)
                 )
                 existing = cur.fetchone()
                 if not existing:
                     conn.commit()
                     return jsonify({"error": "user not found"}), 404
-                current_token, stored_count, _stored_role_tag_raw = existing
+                current_token, stored_count, _stored_role_tag_raw, login_username, login_session_ts = existing
                 stored_role_tag = (_stored_role_tag_raw or "").strip()
                 # Backend idempotency guard: skip if same result_count was already persisted.
                 # When role_tag is also provided, require that the stored role_tag also matches;
                 # a NULL/empty stored role_tag with a provided role_tag is treated as a new session.
                 if stored_count is not None and stored_count == result_count_int:
                     if (not role_tag) or (stored_role_tag and stored_role_tag == role_tag):
+                        conn.commit()
+                        return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
+                # Session-based guard: skip if login.role_tag_session == sourcing.role_tag_session
+                # (both non-null and equal), which means this session was already deducted.
+                # Deduction is only allowed when the session values differ, indicating a new
+                # search session that has not yet had its token deducted.
+                has_session = login_session_ts is not None and bool(login_username)
+                if has_session:
+                    cur.execute(
+                        "SELECT role_tag_session FROM sourcing WHERE username = %s LIMIT 1",
+                        (login_username,)
+                    )
+                    src_row = cur.fetchone()
+                    sourcing_session_ts = src_row[0] if src_row else None
+                    if sourcing_session_ts is not None and login_session_ts == sourcing_session_ts:
                         conn.commit()
                         return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
                 # New deduction — persist updated balance, result count, and role_tag
@@ -3349,6 +3370,13 @@ def user_token_update():
                     cur.execute(
                         "UPDATE login SET token = %s, last_result_count = %s WHERE userid = %s RETURNING token",
                         (token_int, result_count_int, userid)
+                    )
+                # Sync sourcing.role_tag_session = login.role_tag_session to mark this session as
+                # deducted. Subsequent calls with the same session will be skipped by the guard above.
+                if has_session:
+                    cur.execute(
+                        "UPDATE sourcing SET role_tag_session = %s WHERE username = %s",
+                        (login_session_ts, login_username)
                     )
             else:
                 # Legacy path: no result_count supplied — set token unconditionally
@@ -3380,8 +3408,11 @@ def user_update_role_tag():
 
     Session tracking:
     - A timestamp (role_tag_session) is generated and stored in login when role_tag is set.
-    - The same timestamp is transferred to sourcing only after validating that the
-      role_tag value matches in both tables, ensuring cross-table traceability.
+    - sourcing.role_tag_session is intentionally NOT transferred here; it is synced to
+      login.role_tag_session only after a successful token deduction in /user/token_update.
+      This enables the session-based deduction guard to detect new search sessions
+      (login.role_tag_session != sourcing.role_tag_session) and prevents duplicate
+      deductions when sessions are already in sync.
     """
     global _role_tag_session_column_ensured
     if request.method == "POST":
@@ -3423,21 +3454,19 @@ def user_update_role_tag():
         login_row = cur.fetchone()
         login_role_tag = login_row[0] if login_row else None
         login_session_ts = login_row[1] if login_row else None
-        # Step 3: Update sourcing role_tag for all records of this user
+        # Step 3: Update sourcing role_tag for all records of this user.
+        # sourcing.role_tag_session is intentionally NOT transferred here; it is only
+        # synced to login.role_tag_session after a successful token deduction in
+        # /user/token_update. This ensures the session guard can detect new search
+        # sessions (login.role_tag_session != sourcing.role_tag_session) and prevents
+        # duplicate deductions when sessions are already in sync.
         cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
         cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag, username))
-        # Step 4: Validate that role_tag matches in both login and sourcing, then transfer
-        # the session timestamp from login to sourcing for consistency and traceability.
-        if login_role_tag == role_tag and login_session_ts is not None:
-            cur.execute(
-                "UPDATE sourcing SET role_tag_session=%s WHERE username=%s AND role_tag=%s",
-                (login_session_ts, username, role_tag)
-            )
         conn.commit()
         cur.close(); conn.close()
         logger.info(
             f"[UpdateRoleTag] Set role_tag='{role_tag}' session_ts='{login_session_ts}' "
-            f"for user='{username}' in login and sourcing tables"
+            f"for user='{username}' in login table (sourcing.role_tag_session deferred to token deduction)"
         )
         return jsonify({"ok": True, "username": username, "role_tag": role_tag,
                         "role_tag_session": login_session_ts.isoformat() if login_session_ts else None}), 200
@@ -5093,15 +5122,12 @@ def start_job():
                 _login_row = cur_l.fetchone()
                 _login_role_tag = _login_row[0] if _login_row else None
                 _login_session_ts = _login_row[1] if _login_row else None
-                # Transfer role_tag to sourcing table (authoritative source for assessments)
+                # Transfer role_tag to sourcing table (authoritative source for assessments).
+                # sourcing.role_tag_session is intentionally NOT transferred here; it is synced
+                # only after a successful token deduction in /user/token_update so that the
+                # session-based deduction guard works correctly.
                 cur_l.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
                 cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag_val, username))
-                # Transfer session timestamp to sourcing after validating role_tag matches
-                if _login_role_tag == role_tag_val and _login_session_ts is not None:
-                    cur_l.execute(
-                        "UPDATE sourcing SET role_tag_session=%s WHERE username=%s AND role_tag=%s",
-                        (_login_session_ts, username, role_tag_val)
-                    )
                 conn_l.commit()
                 cur_l.close()
                 conn_l.close()

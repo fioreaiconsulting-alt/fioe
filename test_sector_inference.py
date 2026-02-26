@@ -2079,7 +2079,9 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None, 
 
     ``db_store``    – dict keyed by userid simulating the login table row:
                       { userid: {"token": int, "last_result_count": int|None,
-                                 "last_deducted_role_tag": str|None} }
+                                 "last_deducted_role_tag": str|None,
+                                 "login_session_ts": datetime|None,
+                                 "sourcing_session_ts": datetime|None} }
     ``userid``      – user identifier
     ``token_val``   – new token value to persist
     ``result_count``– optional idempotency key (mirrors request body field)
@@ -2098,10 +2100,20 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None, 
             # A NULL/empty stored_role_tag with a provided role_tag is a new session — do not skip.
             if (not role_tag) or (stored_role_tag and stored_role_tag == role_tag):
                 return {"ok": True, "token": row["token"], "skipped": True}
+        # Session-based guard: skip if login.role_tag_session == sourcing.role_tag_session
+        # (both non-null and equal), indicating this session was already deducted.
+        login_session_ts = row.get("login_session_ts")
+        sourcing_session_ts = row.get("sourcing_session_ts")
+        if (login_session_ts is not None and sourcing_session_ts is not None
+                and login_session_ts == sourcing_session_ts):
+            return {"ok": True, "token": row["token"], "skipped": True}
         row["token"] = token_val
         row["last_result_count"] = result_count
         if role_tag:
             row["last_deducted_role_tag"] = role_tag
+        # Sync sourcing session to match login session, marking this session as deducted.
+        if login_session_ts is not None:
+            row["sourcing_session_ts"] = login_session_ts
     else:
         # Legacy path: no result_count — set unconditionally
         row["token"] = token_val
@@ -2124,7 +2136,8 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
 
     def _fresh_db(self, token=5000):
         """Return a db_store with a single user whose guard columns are unset."""
-        return {"u1": {"token": token, "last_result_count": None, "last_deducted_role_tag": None}}
+        return {"u1": {"token": token, "last_result_count": None, "last_deducted_role_tag": None,
+                       "login_session_ts": None, "sourcing_session_ts": None}}
 
     # ------------------------------------------------------------------
     # First call — no stored count yet
@@ -2276,6 +2289,95 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self.assertEqual(db["u1"]["token"], 4900)
         self.assertEqual(db["u1"]["last_deducted_role_tag"], "Software Engineer")
 
+    # ------------------------------------------------------------------
+    # Session-based guard — login.role_tag_session vs sourcing.role_tag_session
+    # ------------------------------------------------------------------
+
+    def _fresh_db_with_session(self, token=5000, login_session=None, sourcing_session=None):
+        """Return a db_store whose session fields are set to supplied values."""
+        from datetime import datetime as _dt, timezone as _tz
+        return {"u1": {
+            "token": token,
+            "last_result_count": None,
+            "last_deducted_role_tag": None,
+            "login_session_ts": login_session,
+            "sourcing_session_ts": sourcing_session,
+        }}
+
+    def test_session_guard_skips_when_sessions_match(self):
+        """When login.role_tag_session == sourcing.role_tag_session (both non-null),
+        the deduction must be skipped — same session already deducted."""
+        from datetime import datetime as _dt, timezone as _tz
+        ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db_with_session(5000, login_session=ts, sourcing_session=ts)
+        resp = self._call(db, "u1", 4900, result_count=100)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 5000)
+
+    def test_session_guard_allows_when_login_session_differs_from_sourcing(self):
+        """When login.role_tag_session != sourcing.role_tag_session, deduction must proceed."""
+        from datetime import datetime as _dt, timezone as _tz
+        login_ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        sourcing_ts = _dt(2024, 5, 1, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db_with_session(5000, login_session=login_ts, sourcing_session=sourcing_ts)
+        resp = self._call(db, "u1", 4900, result_count=100)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4900)
+
+    def test_session_guard_allows_when_sourcing_session_is_none(self):
+        """When sourcing.role_tag_session is None (new session, not yet deducted),
+        deduction must proceed."""
+        from datetime import datetime as _dt, timezone as _tz
+        login_ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db_with_session(5000, login_session=login_ts, sourcing_session=None)
+        resp = self._call(db, "u1", 4900, result_count=100)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4900)
+
+    def test_session_guard_allows_when_login_session_is_none(self):
+        """When login.role_tag_session is None, the session guard must not fire
+        (no timestamp to compare against)."""
+        db = self._fresh_db_with_session(5000, login_session=None, sourcing_session=None)
+        resp = self._call(db, "u1", 4900, result_count=100)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4900)
+
+    def test_session_synced_to_sourcing_after_deduction(self):
+        """After a successful deduction, sourcing_session_ts must be set to login_session_ts
+        so that the next call (page refresh) is correctly identified as same-session."""
+        from datetime import datetime as _dt, timezone as _tz
+        login_ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db_with_session(5000, login_session=login_ts, sourcing_session=None)
+        self._call(db, "u1", 4900, result_count=100)
+        self.assertEqual(db["u1"]["sourcing_session_ts"], login_ts)
+
+    def test_page_refresh_after_deduction_is_skipped_by_session_guard(self):
+        """Full refresh simulation: first call deducts and syncs session;
+        subsequent call (same result_count cleared, different count to bypass count guard)
+        with matching sessions must be skipped."""
+        from datetime import datetime as _dt, timezone as _tz
+        login_ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        # Simulate sourcing session already synced (deduction already happened this session)
+        db = self._fresh_db_with_session(5000, login_session=login_ts, sourcing_session=login_ts)
+        # Even with a different result_count, same session means skip
+        resp = self._call(db, "u1", 4800, result_count=200)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 5000)
+
+    def test_new_search_session_clears_sourcing_session_allows_deduction(self):
+        """A new role_tag update creates a new login session (different timestamp).
+        The sourcing session still holds the old value → sessions differ → deduction allowed."""
+        from datetime import datetime as _dt, timezone as _tz
+        old_ts = _dt(2024, 5, 1, 12, 0, 0, tzinfo=_tz.utc)
+        new_ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        # After new update_role_tag: login has new_ts, sourcing still has old_ts
+        db = self._fresh_db_with_session(4900, login_session=new_ts, sourcing_session=old_ts)
+        resp = self._call(db, "u1", 4800, result_count=100)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4800)
+        # Session is synced after deduction
+        self.assertEqual(db["u1"]["sourcing_session_ts"], new_ts)
+
 
 def _update_role_tag(db_store, username, role_tag):
     """
@@ -2290,9 +2392,9 @@ def _update_role_tag(db_store, username, role_tag):
     Steps mirror the webbridge implementation:
       1. Update login.role_tag and generate login.role_tag_session = now().
       2. Update sourcing.role_tag for the user.
-      3. Validate login.role_tag == role_tag and login.role_tag_session is not None.
-      4. If valid, transfer login.role_tag_session → sourcing.role_tag_session where
-         sourcing.role_tag == login.role_tag.
+         sourcing.role_tag_session is NOT transferred here; it is synced only after a
+         successful token deduction via /user/token_update so that the session-based
+         deduction guard can detect new search sessions.
 
     Returns a result dict: {"ok": True, "role_tag": ..., "role_tag_session": ...}
     """
@@ -2308,19 +2410,12 @@ def _update_role_tag(db_store, username, role_tag):
     login_table[username]["role_tag"] = role_tag
     login_table[username]["role_tag_session"] = session_ts
 
-    # Step 2: Update sourcing role_tag
+    # Step 2: Update sourcing role_tag (session timestamp deferred to token deduction)
     if username not in sourcing_table:
         sourcing_table[username] = {}
     sourcing_table[username]["role_tag"] = role_tag
 
-    # Step 3: Read back from login to validate
-    login_role_tag = login_table[username].get("role_tag")
     login_session_ts = login_table[username].get("role_tag_session")
-
-    # Step 4: Transfer session timestamp to sourcing only when role_tags match
-    if login_role_tag == role_tag and login_session_ts is not None:
-        if sourcing_table[username].get("role_tag") == role_tag:
-            sourcing_table[username]["role_tag_session"] = login_session_ts
 
     return {"ok": True, "role_tag": role_tag,
             "role_tag_session": login_session_ts.isoformat() if login_session_ts else None}
@@ -2329,8 +2424,9 @@ def _update_role_tag(db_store, username, role_tag):
 class TestRoleTagSessionTracking(unittest.TestCase):
     """
     Verifies that the /user/update_role_tag endpoint generates a session timestamp
-    when role_tag is set in the login table and transfers it to the sourcing table
-    only after validating that the role_tag values match in both tables.
+    when role_tag is set in the login table; the session timestamp is transferred to
+    sourcing only after a successful token deduction (via /user/token_update) so that
+    the session-based deduction guard can detect new search sessions.
     """
 
     def _fresh_db(self):
@@ -2370,16 +2466,17 @@ class TestRoleTagSessionTracking(unittest.TestCase):
         self.assertGreaterEqual(ts2, ts1)
 
     # ------------------------------------------------------------------
-    # Sourcing table — timestamp transfer
+    # Sourcing table — role_tag propagation (session deferred to token deduction)
     # ------------------------------------------------------------------
 
-    def test_sourcing_role_tag_session_matches_login(self):
-        """sourcing.role_tag_session must equal login.role_tag_session after update."""
+    def test_sourcing_role_tag_session_not_set_by_update_role_tag(self):
+        """sourcing.role_tag_session must remain None after update_role_tag.
+        The session timestamp is only transferred to sourcing after a successful
+        token deduction so that the deduction guard correctly detects new sessions."""
         db = self._fresh_db()
         self._call(db, "alice", "Product Manager")
-        login_ts = db["login"]["alice"]["role_tag_session"]
         sourcing_ts = db["sourcing"]["alice"].get("role_tag_session")
-        self.assertEqual(sourcing_ts, login_ts)
+        self.assertIsNone(sourcing_ts)
 
     def test_sourcing_role_tag_matches_login_role_tag(self):
         """sourcing.role_tag must equal the role_tag set in login."""
@@ -2387,32 +2484,17 @@ class TestRoleTagSessionTracking(unittest.TestCase):
         self._call(db, "alice", "DevOps Engineer")
         self.assertEqual(db["sourcing"]["alice"]["role_tag"], "DevOps Engineer")
 
-    def test_session_not_transferred_when_sourcing_role_tag_diverges(self):
-        """
-        The transfer of role_tag_session to sourcing is guarded by a WHERE role_tag=%s
-        clause. If sourcing.role_tag differs from login.role_tag at transfer time,
-        the session timestamp must NOT be written to sourcing.
-
-        This is simulated by calling a stripped-down version of step 4 directly
-        with a diverged sourcing.role_tag state.
-        """
-        from datetime import datetime as _dt, timezone as _tz
+    def test_sourcing_session_differs_from_login_session_after_update(self):
+        """After update_role_tag, login has a session timestamp but sourcing does not.
+        This difference is intentional: it signals that a new search session exists
+        and the token deduction has not yet been processed."""
         db = self._fresh_db()
-        # Set up login with a role_tag and session timestamp
-        login_ts = _dt.now(_tz.utc)
-        db["login"]["alice"] = {"role_tag": "Target Role", "role_tag_session": login_ts}
-        # Sourcing has a DIFFERENT role_tag — simulates a concurrent update or stale row
-        db["sourcing"]["alice"] = {"role_tag": "Different Role", "role_tag_session": None}
-
-        # Replicate step 4 from the stub: only transfer if sourcing.role_tag == login.role_tag
-        login_role_tag = db["login"]["alice"]["role_tag"]
-        login_session_ts = db["login"]["alice"]["role_tag_session"]
-        if (db["sourcing"]["alice"].get("role_tag") == login_role_tag
-                and login_session_ts is not None):
-            db["sourcing"]["alice"]["role_tag_session"] = login_session_ts
-
-        # sourcing.role_tag was "Different Role" ≠ "Target Role" → no transfer
-        self.assertIsNone(db["sourcing"]["alice"]["role_tag_session"])
+        self._call(db, "alice", "Data Scientist")
+        login_ts = db["login"]["alice"]["role_tag_session"]
+        sourcing_ts = db["sourcing"]["alice"].get("role_tag_session")
+        self.assertIsNotNone(login_ts)
+        self.assertIsNone(sourcing_ts)
+        self.assertNotEqual(login_ts, sourcing_ts)
 
     def test_return_value_includes_role_tag_session_iso(self):
         """The return dict must include role_tag_session as an ISO-8601 string."""
@@ -2433,11 +2515,12 @@ class TestRoleTagSessionTracking(unittest.TestCase):
         self._call(db, "alice", "Engineer")
         self._call(db, "bob", "Designer")
         self.assertNotEqual(db["login"]["alice"]["role_tag"], db["login"]["bob"]["role_tag"])
-        # Each user has their own session timestamp
+        # Each user has their own login session timestamp
         self.assertIsNotNone(db["login"]["alice"]["role_tag_session"])
         self.assertIsNotNone(db["login"]["bob"]["role_tag_session"])
-        self.assertIsNotNone(db["sourcing"]["alice"]["role_tag_session"])
-        self.assertIsNotNone(db["sourcing"]["bob"]["role_tag_session"])
+        # sourcing.role_tag_session is deferred (set only after token deduction)
+        self.assertIsNone(db["sourcing"]["alice"].get("role_tag_session"))
+        self.assertIsNone(db["sourcing"]["bob"].get("role_tag_session"))
 
 
 if __name__ == "__main__":
