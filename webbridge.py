@@ -3380,7 +3380,36 @@ def user_token_update():
                         (token_int, result_count_int, userid)
                     )
             else:
-                # Legacy path: no result_count supplied — set token unconditionally
+                # Legacy path: no result_count supplied — set token unconditionally.
+                # Also run the role_tag_session backfill here so that SourcingVerify.html
+                # calls (which never send result_count) still trigger session population.
+                if not _role_tag_session_column_ensured:
+                    cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    _role_tag_session_column_ensured = True
+                cur.execute(
+                    "SELECT role_tag, role_tag_session, username FROM login WHERE userid = %s",
+                    (userid,)
+                )
+                _legacy_row = cur.fetchone()
+                if _legacy_row:
+                    _legacy_role_tag, _legacy_session_ts, _legacy_username = _legacy_row
+                    if (_legacy_role_tag or "").strip() and _legacy_session_ts is None:
+                        cur.execute(
+                            "UPDATE login SET role_tag_session = NOW() WHERE userid = %s RETURNING role_tag_session",
+                            (userid,)
+                        )
+                        _legacy_ts_row = cur.fetchone()
+                        _legacy_new_ts = _legacy_ts_row[0] if _legacy_ts_row else None
+                        if _legacy_new_ts is not None and _legacy_username:
+                            cur.execute(
+                                "UPDATE sourcing SET role_tag_session = %s WHERE username = %s AND role_tag = %s",
+                                (_legacy_new_ts, _legacy_username, _legacy_role_tag)
+                            )
+                            logger.info(
+                                f"[TokenUpdate] Auto-backfilled role_tag_session='{_legacy_new_ts}' "
+                                f"for user='{_legacy_username}' (role_tag='{_legacy_role_tag}') via legacy path"
+                            )
                 cur.execute(
                     "UPDATE login SET token = %s WHERE userid = %s RETURNING token",
                     (token_int, userid)
@@ -9908,13 +9937,15 @@ def _startup_backfill_role_tag_session():
             conn.commit()
             if count:
                 logger.info(f"[Startup] Backfilled role_tag_session for {count} user(s) missing a session timestamp.")
+            else:
+                logger.info("[Startup] role_tag_session backfill: no rows needed backfilling (all sessions already set or no role_tag entries found).")
             global _role_tag_session_column_ensured
             _role_tag_session_column_ensured = True
         finally:
             cur.close()
             conn.close()
     except Exception as e:
-        logger.warning(f"[Startup] role_tag_session backfill skipped: {e}")
+        logger.error(f"[Startup] role_tag_session backfill failed: {e}")
 
 
 _startup_backfill_role_tag_session()
