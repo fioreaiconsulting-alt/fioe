@@ -2077,9 +2077,14 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None, 
     """
     Python mirror of the backend guard in webbridge.user_token_update.
 
-    ``db_store``    – dict keyed by userid simulating the login table row:
-                      { userid: {"token": int, "last_result_count": int|None,
-                                 "last_deducted_role_tag": str|None} }
+    ``db_store``    – dict keyed by userid simulating login and sourcing tables:
+                      { "login": { userid: {"token": int, "last_result_count": int|None,
+                                            "last_deducted_role_tag": str|None,
+                                            "role_tag": str|None,
+                                            "role_tag_session": datetime|None,
+                                            "username": str|None} },
+                        "sourcing": { username: {"role_tag": str|None,
+                                                 "role_tag_session": datetime|None} } }
     ``userid``      – user identifier
     ``token_val``   – new token value to persist
     ``result_count``– optional idempotency key (mirrors request body field)
@@ -2087,12 +2092,27 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None, 
 
     Returns a dict with keys "ok", "token", and optionally "skipped": True.
     """
-    if userid not in db_store:
+    from datetime import datetime as _dt, timezone as _tz
+
+    login_table = db_store.get("login", {})
+    sourcing_table = db_store.get("sourcing", {})
+
+    if userid not in login_table:
         return {"error": "user not found"}
-    row = db_store[userid]
+    row = login_table[userid]
     if result_count is not None:
         stored_count = row.get("last_result_count")
         stored_role_tag = (row.get("last_deducted_role_tag") or "").strip()
+        # Auto-backfill: if login.role_tag is set but login.role_tag_session is NULL,
+        # generate a session timestamp and transfer to sourcing where role_tag matches.
+        login_role_tag = (row.get("role_tag") or "").strip()
+        if login_role_tag and row.get("role_tag_session") is None:
+            session_ts = _dt.now(_tz.utc)
+            row["role_tag_session"] = session_ts
+            username = row.get("username")
+            if username and username in sourcing_table:
+                if sourcing_table[username].get("role_tag") == login_role_tag:
+                    sourcing_table[username]["role_tag_session"] = session_ts
         if stored_count is not None and stored_count == result_count:
             # Guard fires: skip if no role_tag is involved, or stored role_tag matches.
             # A NULL/empty stored_role_tag with a provided role_tag is a new session — do not skip.
@@ -2122,9 +2142,19 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
     def _call(self, db_store, userid, token_val, result_count=None, role_tag=None):
         return _token_update_backend_guard(db_store, userid, token_val, result_count, role_tag)
 
-    def _fresh_db(self, token=5000):
+    def _fresh_db(self, token=5000, login_role_tag=None, login_session_ts=None, username="u1"):
         """Return a db_store with a single user whose guard columns are unset."""
-        return {"u1": {"token": token, "last_result_count": None, "last_deducted_role_tag": None}}
+        return {
+            "login": {"u1": {
+                "token": token,
+                "last_result_count": None,
+                "last_deducted_role_tag": None,
+                "role_tag": login_role_tag,
+                "role_tag_session": login_session_ts,
+                "username": username,
+            }},
+            "sourcing": {},
+        }
 
     # ------------------------------------------------------------------
     # First call — no stored count yet
@@ -2136,15 +2166,15 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         resp = self._call(db, "u1", 4900, result_count=100)
         self.assertEqual(resp["ok"], True)
         self.assertNotIn("skipped", resp)
-        self.assertEqual(db["u1"]["token"], 4900)
-        self.assertEqual(db["u1"]["last_result_count"], 100)
+        self.assertEqual(db["login"]["u1"]["token"], 4900)
+        self.assertEqual(db["login"]["u1"]["last_result_count"], 100)
 
     def test_first_call_without_result_count_updates_unconditionally(self):
         """Legacy call without result_count must update token unconditionally."""
         db = self._fresh_db(5000)
         resp = self._call(db, "u1", 4800)
         self.assertEqual(resp["ok"], True)
-        self.assertEqual(db["u1"]["token"], 4800)
+        self.assertEqual(db["login"]["u1"]["token"], 4800)
 
     # ------------------------------------------------------------------
     # Repeated call — same result_count → backend guard fires
@@ -2156,7 +2186,7 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self._call(db, "u1", 4900, result_count=100)  # first persist
         resp = self._call(db, "u1", 4800, result_count=100)  # repeat (page refresh)
         self.assertTrue(resp.get("skipped"))
-        self.assertEqual(db["u1"]["token"], 4900)  # unchanged
+        self.assertEqual(db["login"]["u1"]["token"], 4900)  # unchanged
 
     def test_multiple_repeated_calls_do_not_decrease_token(self):
         """Ten repeated calls with the same result_count must leave the token unchanged."""
@@ -2164,7 +2194,7 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self._call(db, "u1", 4900, result_count=100)
         for _ in range(10):
             self._call(db, "u1", 4800, result_count=100)
-        self.assertEqual(db["u1"]["token"], 4900)
+        self.assertEqual(db["login"]["u1"]["token"], 4900)
 
     # ------------------------------------------------------------------
     # New search — different result_count → update fires
@@ -2176,8 +2206,8 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self._call(db, "u1", 4900, result_count=100)
         resp = self._call(db, "u1", 4750, result_count=150)
         self.assertNotIn("skipped", resp)
-        self.assertEqual(db["u1"]["token"], 4750)
-        self.assertEqual(db["u1"]["last_result_count"], 150)
+        self.assertEqual(db["login"]["u1"]["token"], 4750)
+        self.assertEqual(db["login"]["u1"]["last_result_count"], 150)
 
     # ------------------------------------------------------------------
     # Cross-tab / browser-restart scenario
@@ -2195,7 +2225,7 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         # New tab: sessionStorage empty → frontend calls backend again with same count
         resp = self._call(db, "u1", 4800, result_count=100)
         self.assertTrue(resp.get("skipped"))
-        self.assertEqual(db["u1"]["token"], 4900)  # still the original deducted value
+        self.assertEqual(db["login"]["u1"]["token"], 4900)  # still the original deducted value
 
     def test_user_not_found_returns_error(self):
         """Requesting an unknown userid must return an error dict."""
@@ -2211,8 +2241,8 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         """role_tag must be persisted into last_deducted_role_tag on first call."""
         db = self._fresh_db(5000)
         self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
-        self.assertEqual(db["u1"]["last_deducted_role_tag"], "Software Engineer")
-        self.assertEqual(db["u1"]["last_result_count"], 100)
+        self.assertEqual(db["login"]["u1"]["last_deducted_role_tag"], "Software Engineer")
+        self.assertEqual(db["login"]["u1"]["last_result_count"], 100)
 
     def test_same_role_tag_and_count_on_refresh_is_skipped(self):
         """Refresh with same role_tag + same result_count must be skipped."""
@@ -2220,7 +2250,7 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
         resp = self._call(db, "u1", 4800, result_count=100, role_tag="Software Engineer")
         self.assertTrue(resp.get("skipped"))
-        self.assertEqual(db["u1"]["token"], 4900)
+        self.assertEqual(db["login"]["u1"]["token"], 4900)
 
     def test_different_role_tag_same_count_is_not_skipped(self):
         """A new search with a different role_tag but same count must fire a new deduction."""
@@ -2229,8 +2259,8 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         # Same count, different role → new search, should deduct
         resp = self._call(db, "u1", 4800, result_count=100, role_tag="Product Manager")
         self.assertNotIn("skipped", resp)
-        self.assertEqual(db["u1"]["token"], 4800)
-        self.assertEqual(db["u1"]["last_deducted_role_tag"], "Product Manager")
+        self.assertEqual(db["login"]["u1"]["token"], 4800)
+        self.assertEqual(db["login"]["u1"]["last_deducted_role_tag"], "Product Manager")
 
     def test_same_role_tag_different_count_is_not_skipped(self):
         """A new search with a different result_count (same role_tag) must fire a new deduction."""
@@ -2238,8 +2268,8 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
         resp = self._call(db, "u1", 4750, result_count=150, role_tag="Software Engineer")
         self.assertNotIn("skipped", resp)
-        self.assertEqual(db["u1"]["token"], 4750)
-        self.assertEqual(db["u1"]["last_result_count"], 150)
+        self.assertEqual(db["login"]["u1"]["token"], 4750)
+        self.assertEqual(db["login"]["u1"]["last_result_count"], 150)
 
     def test_new_tab_same_role_tag_and_count_guarded_by_backend(self):
         """
@@ -2252,17 +2282,20 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         # New tab — frontend resends same values
         resp = self._call(db, "u1", 4800, result_count=100, role_tag="Data Scientist")
         self.assertTrue(resp.get("skipped"))
-        self.assertEqual(db["u1"]["token"], 4900)
+        self.assertEqual(db["login"]["u1"]["token"], 4900)
 
     def test_legacy_row_no_stored_role_tag_still_guarded_by_count(self):
         """
         Existing users with NULL last_deducted_role_tag (pre-migration rows) must
         still be protected by the count-only guard when no role_tag is sent.
         """
-        db = {"u1": {"token": 5000, "last_result_count": 100, "last_deducted_role_tag": None}}
+        db = {"login": {"u1": {"token": 5000, "last_result_count": 100,
+                               "last_deducted_role_tag": None, "role_tag": None,
+                               "role_tag_session": None, "username": "u1"}},
+              "sourcing": {}}
         resp = self._call(db, "u1", 4900, result_count=100)
         self.assertTrue(resp.get("skipped"))
-        self.assertEqual(db["u1"]["token"], 5000)
+        self.assertEqual(db["login"]["u1"]["token"], 5000)
 
     def test_legacy_row_null_stored_role_tag_new_role_tag_request_not_skipped(self):
         """
@@ -2270,11 +2303,184 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         role_tag (same count) must NOT be skipped — the role_tag marks it as a
         new session that should record the role for future guard checks.
         """
-        db = {"u1": {"token": 5000, "last_result_count": 100, "last_deducted_role_tag": None}}
+        db = {"login": {"u1": {"token": 5000, "last_result_count": 100,
+                               "last_deducted_role_tag": None, "role_tag": None,
+                               "role_tag_session": None, "username": "u1"}},
+              "sourcing": {}}
         resp = self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
         self.assertNotIn("skipped", resp)
-        self.assertEqual(db["u1"]["token"], 4900)
-        self.assertEqual(db["u1"]["last_deducted_role_tag"], "Software Engineer")
+        self.assertEqual(db["login"]["u1"]["token"], 4900)
+        self.assertEqual(db["login"]["u1"]["last_deducted_role_tag"], "Software Engineer")
+
+    # ------------------------------------------------------------------
+    # Auto-backfill — role_tag set but role_tag_session NULL
+    # ------------------------------------------------------------------
+
+    def test_autobackfill_generates_session_when_role_tag_set_and_session_null(self):
+        """
+        When login.role_tag has a value but role_tag_session is NULL (pre-existing row),
+        token_update must auto-generate a session timestamp for login.
+        """
+        db = self._fresh_db(5000, login_role_tag="Site Activation Manager")
+        self._call(db, "u1", 4900, result_count=100)
+        self.assertIsNotNone(db["login"]["u1"]["role_tag_session"])
+
+    def test_autobackfill_transfers_session_to_sourcing_when_role_tag_matches(self):
+        """
+        Auto-backfill must also transfer the generated session to sourcing
+        when sourcing.role_tag matches login.role_tag.
+        """
+        db = self._fresh_db(5000, login_role_tag="Site Activation Manager", username="alice")
+        db["sourcing"]["alice"] = {"role_tag": "Site Activation Manager", "role_tag_session": None}
+        self._call(db, "u1", 4900, result_count=100)
+        self.assertIsNotNone(db["login"]["u1"]["role_tag_session"])
+        # Transfer must have happened since role_tags match
+        self.assertEqual(db["sourcing"]["alice"]["role_tag_session"],
+                         db["login"]["u1"]["role_tag_session"])
+
+    def test_autobackfill_skips_sourcing_transfer_when_role_tag_differs(self):
+        """
+        Auto-backfill must NOT transfer the session to sourcing when
+        sourcing.role_tag differs from login.role_tag.
+        """
+        db = self._fresh_db(5000, login_role_tag="Site Activation Manager", username="alice")
+        db["sourcing"]["alice"] = {"role_tag": "Different Role", "role_tag_session": None}
+        self._call(db, "u1", 4900, result_count=100)
+        # sourcing.role_tag_session must remain NULL (role_tags don't match)
+        self.assertIsNone(db["sourcing"]["alice"]["role_tag_session"])
+
+    def test_autobackfill_does_not_fire_when_session_already_set(self):
+        """
+        When login.role_tag_session is already set, auto-backfill must not overwrite it.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+        existing_ts = _dt(2024, 6, 1, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db(5000, login_role_tag="Engineer", login_session_ts=existing_ts)
+        self._call(db, "u1", 4900, result_count=100)
+        self.assertEqual(db["login"]["u1"]["role_tag_session"], existing_ts)
+
+    def test_autobackfill_does_not_fire_when_role_tag_empty(self):
+        """
+        When login.role_tag is empty/NULL, auto-backfill must not generate a session.
+        """
+        db = self._fresh_db(5000, login_role_tag=None)
+        self._call(db, "u1", 4900, result_count=100)
+        self.assertIsNone(db["login"]["u1"]["role_tag_session"])
+
+
+def _startup_backfill_role_tag_session(db_store):
+    """
+    Python stub of the startup backfill in webbridge._startup_backfill_role_tag_session.
+
+    ``db_store`` – dict simulating login and sourcing tables:
+        {
+          "login":   { username: {"role_tag": str|None, "role_tag_session": datetime|None, ...} },
+          "sourcing": { username: {"role_tag": str|None, "role_tag_session": datetime|None} }
+        }
+
+    For every login row where role_tag is set but role_tag_session is NULL,
+    generates a timestamp and transfers it to matching sourcing rows.
+    Returns the number of users backfilled.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    login_table = db_store.get("login", {})
+    sourcing_table = db_store.get("sourcing", {})
+    count = 0
+    for username, row in login_table.items():
+        if not username:
+            continue
+        login_role_tag = (row.get("role_tag") or "").strip()
+        if login_role_tag and row.get("role_tag_session") is None:
+            session_ts = _dt.now(_tz.utc)
+            row["role_tag_session"] = session_ts
+            if username in sourcing_table:
+                if sourcing_table[username].get("role_tag") == login_role_tag:
+                    sourcing_table[username]["role_tag_session"] = session_ts
+            count += 1
+    return count
+
+
+class TestStartupBackfillRoleTagSession(unittest.TestCase):
+    """
+    Verifies the startup backfill in webbridge._startup_backfill_role_tag_session.
+
+    This covers the scenario where the server is restarted after data already
+    existed in the login/sourcing tables but before the role_tag_session column
+    was introduced.  The backfill should run at module-load time (before any
+    request is handled) so every role_tag entry is immediately tied to a session.
+    """
+
+    def _run(self, db_store):
+        return _startup_backfill_role_tag_session(db_store)
+
+    def _db(self, login_role_tag=None, login_session_ts=None, sourcing_role_tag=None,
+            sourcing_session_ts=None, username="alice"):
+        return {
+            "login": {username: {
+                "role_tag": login_role_tag,
+                "role_tag_session": login_session_ts,
+            }},
+            "sourcing": {username: {
+                "role_tag": sourcing_role_tag,
+                "role_tag_session": sourcing_session_ts,
+            }} if sourcing_role_tag is not None else {},
+        }
+
+    def test_backfills_login_session_when_role_tag_set(self):
+        """Login row with role_tag but NULL session must get a timestamp."""
+        db = self._db(login_role_tag="Site Activation Manager")
+        n = self._run(db)
+        self.assertEqual(n, 1)
+        self.assertIsNotNone(db["login"]["alice"]["role_tag_session"])
+
+    def test_transfers_session_to_sourcing_when_role_tags_match(self):
+        """When login and sourcing role_tag match, session is transferred to sourcing."""
+        db = self._db(login_role_tag="Site Activation Manager",
+                      sourcing_role_tag="Site Activation Manager")
+        self._run(db)
+        self.assertIsNotNone(db["sourcing"]["alice"]["role_tag_session"])
+        self.assertEqual(db["sourcing"]["alice"]["role_tag_session"],
+                         db["login"]["alice"]["role_tag_session"])
+
+    def test_does_not_transfer_session_when_role_tags_differ(self):
+        """When sourcing.role_tag differs from login.role_tag, no transfer occurs."""
+        db = self._db(login_role_tag="Site Activation Manager",
+                      sourcing_role_tag="Different Role")
+        self._run(db)
+        self.assertIsNone(db["sourcing"]["alice"]["role_tag_session"])
+
+    def test_skips_row_when_role_tag_empty(self):
+        """Row with NULL/empty role_tag must not get a session timestamp."""
+        db = self._db(login_role_tag=None)
+        n = self._run(db)
+        self.assertEqual(n, 0)
+        self.assertIsNone(db["login"]["alice"]["role_tag_session"])
+
+    def test_skips_row_when_session_already_set(self):
+        """Row that already has a role_tag_session must not be overwritten."""
+        from datetime import datetime as _dt, timezone as _tz
+        existing_ts = _dt(2024, 1, 1, tzinfo=_tz.utc)
+        db = self._db(login_role_tag="Engineer", login_session_ts=existing_ts)
+        n = self._run(db)
+        self.assertEqual(n, 0)
+        self.assertEqual(db["login"]["alice"]["role_tag_session"], existing_ts)
+
+    def test_backfills_multiple_users(self):
+        """All users missing a session must be backfilled in a single pass."""
+        db = {
+            "login": {
+                "u1": {"role_tag": "Engineer", "role_tag_session": None},
+                "u2": {"role_tag": "Manager", "role_tag_session": None},
+                "u3": {"role_tag": None, "role_tag_session": None},
+            },
+            "sourcing": {},
+        }
+        n = self._run(db)
+        self.assertEqual(n, 2)
+        self.assertIsNotNone(db["login"]["u1"]["role_tag_session"])
+        self.assertIsNotNone(db["login"]["u2"]["role_tag_session"])
+        self.assertIsNone(db["login"]["u3"]["role_tag_session"])
 
 
 def _update_role_tag(db_store, username, role_tag):
