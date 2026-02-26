@@ -6896,23 +6896,31 @@ def _normalize_company_name(company_name):
 def _recalculate_tenure_and_experience(experience_list):
     """
     Recalculate total_experience_years and tenure from experience list.
-    
-    This function enforces business rules:
-    1. Internship roles are excluded from total_experience_years calculation
-    2. Same company (regardless of job title) counts as ONE employer for tenure
-    3. Internship roles are excluded from employer count for tenure
-    4. Overlapping periods at the same company are merged (e.g., two roles at same company with same dates)
-    
+
+    Calculation rules:
+    1. Internship roles are excluded from both total_experience and employer count.
+    2. total_experience_years uses a GLOBAL timeline merge (across all employers) so that
+       cross-employer overlapping or boundary-sharing years are counted only once.
+       Inclusive year counting is used: a segment [s, e] contributes (e - s + 1) years
+       because both the start year and the end year represent working years.
+    3. Tenure uses a PER-EMPLOYER timeline merge with inclusive counting, then averages
+       across unique employer count.  This reflects how long the person typically commits
+       to each organisation, independent of concurrency with other employers.
+    4. Implausible dates (start < 1950, start > current_year, end < start, span > 50 yr)
+       are discarded before the calculation to prevent Gemini parsing errors from
+       corrupting results.
+
     Args:
-        experience_list: List of experience strings in format "Job Title, Company, StartYear to EndYear|present"
-                        or "Job Title, Company, Month YYYY to Month YYYY|present"
-    
+        experience_list: List of experience strings in format
+            "Job Title, Company, StartYear to EndYear|present"
+            or "Job Title, Company, Month YYYY to Month YYYY|present"
+
     Returns:
         dict: {
-            "total_experience_years": float,  # Total years excluding internships and overlaps
-            "tenure": float,  # Average tenure per unique employer (excluding internships)
-            "employer_count": int,  # Number of unique employers (excluding internships)
-            "total_roles": int  # Total number of roles (including internships)
+            "total_experience_years": float,  # Globally-merged inclusive total
+            "tenure": float,  # Average per-employer inclusive tenure (excl. internships)
+            "employer_count": int,  # Unique non-intern employer count
+            "total_roles": int      # All roles including internships
         }
     """
     if not experience_list or not isinstance(experience_list, list):
@@ -6922,94 +6930,96 @@ def _recalculate_tenure_and_experience(experience_list):
             "employer_count": 0,
             "total_roles": 0
         }
-    
-    current_year = datetime.now().year  # Note: Uses year only, timezone not critical for year calculation
-    # Track periods per employer: company -> list of (start_year, end_year) tuples
-    employer_periods = {}
+
+    current_year = datetime.now().year
+    all_periods = []        # global list for total_experience_years
+    employer_periods = {}   # per-company list for tenure
     total_roles = len(experience_list)
-    
+
     for entry in experience_list:
         if not entry or not isinstance(entry, str):
             continue
-        
+
         # Expected format: "Job Title, Company, StartYear to EndYear|present"
         # or "Job Title, Company, Month YYYY to Month YYYY|present"
         parts = [p.strip() for p in entry.split(',')]
-        
+
         if len(parts) < 3:
-            # Cannot reliably parse, skip this entry
             continue
-        
+
         job_title = parts[0]
         company = parts[1]
         duration_str = parts[2]
-        
-        # Check if this is an internship role
+
         is_intern = _is_internship_role(job_title)
-        
-        # Parse duration: Improved regex to handle month names
-        # Matches: "Aug 2020 to present", "2020 to 2021", "Jan 2019 to Dec 2020", etc.
-        duration_match = re.search(r'(?:\w+\s+)?(\d{4})\s*(?:to|[-–—])\s*(?:\w+\s+)?(present|\d{4})', duration_str, re.IGNORECASE)
-        
+
+        # Primary regex: handles optional leading month name ("Aug 2020 to present")
+        duration_match = re.search(
+            r'(?:\w+\s+)?(\d{4})\s*(?:to|[-–—])\s*(?:\w+\s+)?(present|\d{4})',
+            duration_str, re.IGNORECASE
+        )
         if not duration_match:
-            continue
-        
-        start_year = int(duration_match.group(1))
-        end_part = duration_match.group(2).lower()
-        
-        if end_part == 'present':
-            end_year = current_year
+            # Fallback: extract any 4-digit years directly from the duration string.
+            # Handles formats like "15 Aug 2015 to 10 Dec 2020" where the primary
+            # regex cannot reach past the day number before the end-date.
+            years_found = re.findall(r'\b(\d{4})\b', duration_str)
+            present_in_str = bool(re.search(r'\bpresent\b', duration_str, re.IGNORECASE))
+            if len(years_found) >= 2:
+                start_year = int(years_found[0])
+                end_year = int(years_found[-1])
+            elif len(years_found) == 1 and present_in_str:
+                start_year = int(years_found[0])
+                end_year = current_year
+            else:
+                continue
         else:
-            end_year = int(end_part)
-        
-        # Validation layer: discard implausible dates to prevent parsing errors
-        # from propagating into the calculation.
+            start_year = int(duration_match.group(1))
+            end_part = duration_match.group(2).lower()
+            end_year = current_year if end_part == 'present' else int(end_part)
+
+        # Validation layer: discard implausible dates
         if start_year < 1950 or start_year > current_year:
             continue
         if end_year < start_year or (end_year - start_year) > 50:
             continue
-        
-        # Calculate duration in years
-        # Note: This calculates full years only (2020 to 2021 = 1 year)
-        # Partial years are not accounted for due to limited date precision in CV format
+
         # (end_year >= start_year is already guaranteed by the validation layer above)
         if not is_intern:
-            # Track periods per employer to handle overlaps
             normalized_company = _normalize_company_name(company)
             if normalized_company:
-                if normalized_company not in employer_periods:
-                    employer_periods[normalized_company] = []
-                employer_periods[normalized_company].append((start_year, end_year))
-    
-    # Merge overlapping/duplicate periods for each employer
-    total_experience = 0.0
+                employer_periods.setdefault(normalized_company, []).append((start_year, end_year))
+                all_periods.append((start_year, end_year))
+
+    # ── Total experience: global timeline merge + inclusive counting ──────────
+    # Global merge ensures cross-employer boundary years (e.g. end 2020 / start 2020)
+    # are counted only once, and overlapping concurrent roles don't inflate totals.
+    all_periods.sort()
+    merged_global = []
+    for start, end in all_periods:
+        if merged_global and start <= merged_global[-1][1]:
+            merged_global[-1] = (merged_global[-1][0], max(merged_global[-1][1], end))
+        else:
+            merged_global.append((start, end))
+    # Inclusive: "2015 to 2020" means the person worked during 2015, 2016 … 2020 = 6 years
+    total_experience = sum(e - s + 1 for s, e in merged_global)
+
+    # ── Tenure: per-employer merge + inclusive counting ───────────────────────
+    # Uses employer-specific merge so concurrency at different companies doesn't
+    # reduce any single employer's measured contribution.
+    per_employer_total = 0.0
     for company, periods in employer_periods.items():
-        # Sort periods by start year
         periods.sort()
-        
-        # Merge overlapping or adjacent periods
-        merged = []
+        merged_emp = []
         for start, end in periods:
-            if merged and start <= merged[-1][1]:
-                # Overlapping or adjacent - extend the last period
-                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            if merged_emp and start <= merged_emp[-1][1]:
+                merged_emp[-1] = (merged_emp[-1][0], max(merged_emp[-1][1], end))
             else:
-                # Non-overlapping - add new period
-                merged.append((start, end))
-        
-        # Calculate total duration for this employer after merging overlaps
-        company_duration = sum(end - start for start, end in merged)
-        total_experience += company_duration
-    
-    # Calculate tenure
+                merged_emp.append((start, end))
+        per_employer_total += sum(e - s + 1 for s, e in merged_emp)
+
     employer_count = len(employer_periods)
-    
-    if employer_count > 0:
-        tenure = total_experience / employer_count
-        tenure = round(tenure, 1)
-    else:
-        tenure = 0.0
-    
+    tenure = round(per_employer_total / employer_count, 1) if employer_count > 0 else 0.0
+
     return {
         "total_experience_years": round(total_experience, 1),
         "tenure": tenure,
