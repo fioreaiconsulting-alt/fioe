@@ -93,7 +93,7 @@
 
   <!-- New Weightage Configuration Panel -->
   <div class="weight-config-panel" id="weightConfigPanel">
-    <div class="weight-config-header" id="weightConfigHeader">
+    <div class="weight-config-header" id="weightConfigHeader" onclick="toggleWeightConfig()" style="cursor:pointer;">
       <span>Assessment Weightage Configuration</span>
       <span id="weightConfigArrow">▼</span>
     </div>
@@ -533,52 +533,21 @@ function toggleWeightConfig() {
   arrow.textContent = content.classList.contains('open') ? '▲' : '▼';
 }
 
-// Setup hover behavior for Assessment Weightage Configuration
-(function setupWeightConfigHover() {
+// Assessment Weightage Configuration — click only (no hover)
+(function setupWeightConfigClick() {
   const panel = document.getElementById('weightConfigPanel');
   const content = document.getElementById('weightConfigContent');
-  const arrow = document.getElementById('weightConfigArrow');
-  const header = document.getElementById('weightConfigHeader');
-  
-  if (panel && content && arrow && header) {
-    // Hover behavior - expand on mouseenter
-    panel.addEventListener('mouseenter', function() {
-      content.classList.add('open');
-      arrow.textContent = '▲';
-    });
-    
-    // Collapse on mouseleave - validate weights when closing
-    panel.addEventListener('mouseleave', function() {
-      content.classList.remove('open');
-      arrow.textContent = '▼';
-      
-      // Validate weights when panel closes
-      setTimeout(function() {
+  if (panel && content) {
+    // Close panel when clicking outside
+    document.addEventListener('click', function(e) {
+      if (content.classList.contains('open') && !panel.contains(e.target)) {
+        content.classList.remove('open');
+        const arrow = document.getElementById('weightConfigArrow');
+        if (arrow) arrow.textContent = '▼';
         if (typeof window.validateWeightsOnClose === 'function') {
           window.validateWeightsOnClose();
         }
-      }, 200);
-    });
-    
-    // Focus behavior for keyboard accessibility
-    header.addEventListener('focus', function() {
-      content.classList.add('open');
-      arrow.textContent = '▲';
-    });
-    
-    header.addEventListener('blur', function() {
-      // Delay to allow clicking on sliders inside the panel
-      setTimeout(function() {
-        if (!panel.contains(document.activeElement)) {
-          content.classList.remove('open');
-          arrow.textContent = '▼';
-          
-          // Validate weights when panel closes
-          if (typeof window.validateWeightsOnClose === 'function') {
-            window.validateWeightsOnClose();
-          }
-        }
-      }, 150);
+      }
     });
   }
 })();
@@ -2404,10 +2373,11 @@ function syncMetricTokens(backendToken){
     const _storedCount = sessionStorage.getItem(_lastCountKey);
     if (_storedCount === null || parseInt(_storedCount, 10) !== effectiveTotal) {
       sessionStorage.setItem(_lastCountKey, String(effectiveTotal));
+      const _roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
       fetch(TOKEN_UPDATE_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userid: uid, token: leftComputed, result_count: effectiveTotal }),
+        body: JSON.stringify({ userid: uid, token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag }),
         credentials: 'same-origin'
       }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
     }

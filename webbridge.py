@@ -3294,6 +3294,7 @@ def user_token_update():
             result_count_int = int(rc)
         except (TypeError, ValueError):
             pass
+    role_tag = (data.get("role_tag") or "").strip()
     try:
         import psycopg2
         pg_host = os.getenv("PGHOST", "localhost")
@@ -3308,31 +3309,43 @@ def user_token_update():
         cur = conn.cursor()
         try:
             if result_count_int is not None:
-                # Ensure idempotency column exists — run at most once per process
+                # Ensure idempotency columns exist — run at most once per process
                 if not _token_guard_column_ensured:
                     cur.execute(
                         "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_result_count INTEGER"
                     )
+                    cur.execute(
+                        "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT"
+                    )
                     _token_guard_column_ensured = True
-                # Read current token and stored result count (no COALESCE so NULL is preserved)
+                # Read current token, stored result count, and stored role_tag
                 cur.execute(
-                    "SELECT token, last_result_count FROM login WHERE userid = %s",
+                    "SELECT token, last_result_count, last_deducted_role_tag FROM login WHERE userid = %s",
                     (userid,)
                 )
                 existing = cur.fetchone()
                 if not existing:
                     conn.commit()
                     return jsonify({"error": "user not found"}), 404
-                current_token, stored_count = existing
-                # Backend idempotency guard: skip if same result_count was already persisted
+                current_token, stored_count, stored_role_tag = existing
+                # Backend idempotency guard: skip if same result_count was already persisted.
+                # When role_tag is also provided, require that the stored role_tag also matches;
+                # a NULL stored role_tag with a provided role_tag is treated as a new session.
                 if stored_count is not None and stored_count == result_count_int:
-                    conn.commit()
-                    return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
-                # New result_count — persist updated balance and record the count
-                cur.execute(
-                    "UPDATE login SET token = %s, last_result_count = %s WHERE userid = %s RETURNING token",
-                    (token_int, result_count_int, userid)
-                )
+                    if (not role_tag) or (stored_role_tag is not None and stored_role_tag == role_tag):
+                        conn.commit()
+                        return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
+                # New deduction — persist updated balance, result count, and role_tag
+                if role_tag:
+                    cur.execute(
+                        "UPDATE login SET token = %s, last_result_count = %s, last_deducted_role_tag = %s WHERE userid = %s RETURNING token",
+                        (token_int, result_count_int, role_tag, userid)
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE login SET token = %s, last_result_count = %s WHERE userid = %s RETURNING token",
+                        (token_int, result_count_int, userid)
+                    )
             else:
                 # Legacy path: no result_count supplied — set token unconditionally
                 cur.execute(

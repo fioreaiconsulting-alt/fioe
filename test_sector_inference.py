@@ -2023,15 +2023,17 @@ class TestSyncMetricTokensSessionGuard(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
 
-def _token_update_backend_guard(db_store, userid, token_val, result_count=None):
+def _token_update_backend_guard(db_store, userid, token_val, result_count=None, role_tag=None):
     """
     Python mirror of the backend guard in webbridge.user_token_update.
 
     ``db_store``    – dict keyed by userid simulating the login table row:
-                      { userid: {"token": int, "last_result_count": int|None} }
+                      { userid: {"token": int, "last_result_count": int|None,
+                                 "last_deducted_role_tag": str|None} }
     ``userid``      – user identifier
     ``token_val``   – new token value to persist
     ``result_count``– optional idempotency key (mirrors request body field)
+    ``role_tag``    – optional role tag for compound guard (mirrors request body field)
 
     Returns a dict with keys "ok", "token", and optionally "skipped": True.
     """
@@ -2040,10 +2042,16 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None):
     row = db_store[userid]
     if result_count is not None:
         stored_count = row.get("last_result_count")
+        stored_role_tag = row.get("last_deducted_role_tag")
         if stored_count is not None and stored_count == result_count:
-            return {"ok": True, "token": row["token"], "skipped": True}
+            # Guard fires: skip if no role_tag is involved, or stored role_tag matches.
+            # A NULL stored_role_tag with a provided role_tag is a new session — do not skip.
+            if (not role_tag) or (stored_role_tag is not None and stored_role_tag == role_tag):
+                return {"ok": True, "token": row["token"], "skipped": True}
         row["token"] = token_val
         row["last_result_count"] = result_count
+        if role_tag:
+            row["last_deducted_role_tag"] = role_tag
     else:
         # Legacy path: no result_count — set unconditionally
         row["token"] = token_val
@@ -2054,18 +2062,19 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
     """
     Verifies the backend idempotency guard in /user/token_update.
 
-    The guard uses a ``last_result_count`` column in the login table to ensure
-    the token deduction only fires once per unique search result count,
-    regardless of how many times the frontend calls the endpoint — including
-    across new tabs and browser restarts where sessionStorage is not available.
+    The guard uses a ``last_result_count`` column and a ``last_deducted_role_tag``
+    column in the login table to ensure the token deduction only fires once per
+    unique search session (identified by result_count + role_tag), regardless of
+    how many times the frontend calls the endpoint — including across new tabs and
+    browser restarts where sessionStorage is not available.
     """
 
-    def _call(self, db_store, userid, token_val, result_count=None):
-        return _token_update_backend_guard(db_store, userid, token_val, result_count)
+    def _call(self, db_store, userid, token_val, result_count=None, role_tag=None):
+        return _token_update_backend_guard(db_store, userid, token_val, result_count, role_tag)
 
     def _fresh_db(self, token=5000):
-        """Return a db_store with a single user whose last_result_count is unset."""
-        return {"u1": {"token": token, "last_result_count": None}}
+        """Return a db_store with a single user whose guard columns are unset."""
+        return {"u1": {"token": token, "last_result_count": None, "last_deducted_role_tag": None}}
 
     # ------------------------------------------------------------------
     # First call — no stored count yet
@@ -2143,6 +2152,79 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         db = self._fresh_db()
         resp = self._call(db, "unknown_user", 4900, result_count=100)
         self.assertIn("error", resp)
+
+    # ------------------------------------------------------------------
+    # role_tag compound guard
+    # ------------------------------------------------------------------
+
+    def test_role_tag_stored_on_first_deduction(self):
+        """role_tag must be persisted into last_deducted_role_tag on first call."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
+        self.assertEqual(db["u1"]["last_deducted_role_tag"], "Software Engineer")
+        self.assertEqual(db["u1"]["last_result_count"], 100)
+
+    def test_same_role_tag_and_count_on_refresh_is_skipped(self):
+        """Refresh with same role_tag + same result_count must be skipped."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
+        resp = self._call(db, "u1", 4800, result_count=100, role_tag="Software Engineer")
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 4900)
+
+    def test_different_role_tag_same_count_is_not_skipped(self):
+        """A new search with a different role_tag but same count must fire a new deduction."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
+        # Same count, different role → new search, should deduct
+        resp = self._call(db, "u1", 4800, result_count=100, role_tag="Product Manager")
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4800)
+        self.assertEqual(db["u1"]["last_deducted_role_tag"], "Product Manager")
+
+    def test_same_role_tag_different_count_is_not_skipped(self):
+        """A new search with a different result_count (same role_tag) must fire a new deduction."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
+        resp = self._call(db, "u1", 4750, result_count=150, role_tag="Software Engineer")
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4750)
+        self.assertEqual(db["u1"]["last_result_count"], 150)
+
+    def test_new_tab_same_role_tag_and_count_guarded_by_backend(self):
+        """
+        New-tab scenario: sessionStorage is empty so the frontend re-sends the same
+        role_tag and result_count. The backend compound guard must prevent the
+        second deduction.
+        """
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100, role_tag="Data Scientist")
+        # New tab — frontend resends same values
+        resp = self._call(db, "u1", 4800, result_count=100, role_tag="Data Scientist")
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 4900)
+
+    def test_legacy_row_no_stored_role_tag_still_guarded_by_count(self):
+        """
+        Existing users with NULL last_deducted_role_tag (pre-migration rows) must
+        still be protected by the count-only guard when no role_tag is sent.
+        """
+        db = {"u1": {"token": 5000, "last_result_count": 100, "last_deducted_role_tag": None}}
+        resp = self._call(db, "u1", 4900, result_count=100)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 5000)
+
+    def test_legacy_row_null_stored_role_tag_new_role_tag_request_not_skipped(self):
+        """
+        Legacy row has NULL last_deducted_role_tag. A new request that provides a
+        role_tag (same count) must NOT be skipped — the role_tag marks it as a
+        new session that should record the role for future guard checks.
+        """
+        db = {"u1": {"token": 5000, "last_result_count": 100, "last_deducted_role_tag": None}}
+        resp = self._call(db, "u1", 4900, result_count=100, role_tag="Software Engineer")
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4900)
+        self.assertEqual(db["u1"]["last_deducted_role_tag"], "Software Engineer")
 
 
 if __name__ == "__main__":
