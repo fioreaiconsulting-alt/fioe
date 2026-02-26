@@ -3256,6 +3256,55 @@ def user_resolve():
         return jsonify({"error": str(e)}), 500
 
 
+@app.post("/user/token_update")
+def user_token_update():
+    """
+    POST /user/token_update
+    Sets the token column in the login table to the supplied value.
+    Used to persist the current "tokens left" figure after each
+    token-consuming operation so the login table always reflects the
+    most up-to-date balance.
+
+    Body JSON: { "userid": "<id>", "token": <number> }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    userid = (data.get("userid") or "").strip()
+    token_val = data.get("token")
+    if not userid or token_val is None:
+        return jsonify({"error": "userid and token are required"}), 400
+    try:
+        token_int = int(token_val)
+    except (TypeError, ValueError):
+        return jsonify({"error": "token must be a number"}), 400
+    try:
+        import psycopg2
+        pg_host = os.getenv("PGHOST", "localhost")
+        pg_port = int(os.getenv("PGPORT", "5432"))
+        pg_user = os.getenv("PGUSER", "postgres")
+        pg_password = os.getenv("PGPASSWORD", "") or "orlha"
+        pg_db = os.getenv("PGDATABASE", "candidate_db")
+        conn = psycopg2.connect(
+            host=pg_host, port=pg_port, user=pg_user,
+            password=pg_password, dbname=pg_db
+        )
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE login SET token = %s WHERE userid = %s RETURNING token",
+                (token_int, userid)
+            )
+            row = cur.fetchone()
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+        if not row:
+            return jsonify({"error": "user not found"}), 404
+        return jsonify({"ok": True, "token": int(row[0])}), 200
+    except Exception as e:
+        logger.error(f"[TokenUpdate] {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 # ==================== Role Tag Update Endpoint ====================
 

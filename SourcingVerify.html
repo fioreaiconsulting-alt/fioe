@@ -461,6 +461,13 @@ function switchTab(tabId) {
         }
     } else if(tabId === 'tab-details') {
         document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+        // 2-second auto refresh via the View Details Refresh button
+        setTimeout(() => {
+            const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
+            if (viewDetailsRefreshBtn) {
+                viewDetailsRefreshBtn.click();
+            }
+        }, 2000);
     } else if (tabId === 'tab-research') {
         document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
         // Trigger Market Analytic logic when tab is activated to ensure data is present
@@ -2385,6 +2392,17 @@ function syncMetricTokens(backendToken){
   }
   __prevResults = effectiveTotal;
   if (!__metricsInitialized) __metricsInitialized = true;
+
+  // Persist the computed tokens-left value to the login table
+  const uid = window.__SV_ACTIVE_USERID || '';
+  if (uid) {
+    fetch(TOKEN_UPDATE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userid: uid, token: leftComputed }),
+      credentials: 'same-origin'
+    }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
+  }
 }
 
 function updateDisplayCounters() {
