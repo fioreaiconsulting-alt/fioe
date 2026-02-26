@@ -1256,12 +1256,15 @@ def gemini_analyze_jd():
             except Exception:
                 return None, ""
         
-        # Apply skillset-based sector derivation if we have skills, job title, or JD text, and at least one existing sector
-        if (skills or job_title or text_input) and sectors:
+        # Apply skillset-based sector derivation if we have skills, job title, or JD text
+        # This can serve as either primary sector (if no sectors exist) or secondary sector (if sectors already exist)
+        if (skills or job_title or text_input):
             skillset_sector, skillset_note = derive_sector_from_skills_and_title(skills, job_title, text_input, sectors)
             if skillset_sector:
                 sectors.append(skillset_sector)
-                heuristic_notes.append(f"second sector: {skillset_note}")
+                # Label appropriately based on whether this is first or second sector
+                sector_label = "primary sector" if len(sectors) == 1 else "second sector"
+                heuristic_notes.append(f"{sector_label}: {skillset_note}")
         
         # -------------------------
         # STEP 4.6: Enforce maximum of 2 sectors
@@ -1281,10 +1284,8 @@ def gemini_analyze_jd():
                 sectors = [derived_sector]
                 sector = derived_sector
                 heuristic_notes.append(f"sector derived (fallback): {note}")
-            else:
-                # Last resort: assign a generic sector based on job title keywords
-                sectors = ["Other"]
-                heuristic_notes.append("sector set to 'Other' as fallback")
+            # If still no sector after all attempts, leave empty rather than assigning arbitrary value
+            # Downstream code will handle empty sectors appropriately
 
         # Update justification/observation with company identification and filtering notes
         if company_identification_note:
@@ -1400,13 +1401,13 @@ def gemini_analyze_jd():
             else:
                 # No job title provided at all - use sector-specific defaults
                 # These are placeholder titles when no better inference is possible
-                if sectors and sectors[0] != "Other":
+                if sectors:
                     # Extract sector name for more specific title generation
                     sector_name = sectors[0].split(">")[-1].strip() if ">" in sectors[0] else sectors[0]
                     # Generate sector-appropriate titles (these are fallback placeholders)
                     job_titles = [f"{sector_name} Professional", f"Senior {sector_name} Professional"]
                 else:
-                    # Ultimate fallback for unknown sectors
+                    # Ultimate fallback when no sectors available
                     job_titles = ["Professional", "Senior Professional"]
         
         # Update justification to note job title inference
