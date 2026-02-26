@@ -2123,7 +2123,27 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None, 
         if role_tag:
             row["last_deducted_role_tag"] = role_tag
     else:
-        # Legacy path: no result_count — set unconditionally
+        # Legacy path: no result_count — use session+role_tag guard to prevent
+        # repeated deductions on page refresh or re-entry.
+        login_role_tag = (row.get("role_tag") or "").strip()
+        login_session_ts = row.get("session")
+        login_username = row.get("username")
+        # Auto-backfill: if role_tag is set but session is NULL, generate and transfer
+        if login_role_tag and login_session_ts is None:
+            session_ts = _dt.now(_tz.utc)
+            row["session"] = session_ts
+            login_session_ts = session_ts
+            if login_username and login_username in sourcing_table:
+                if sourcing_table[login_username].get("role_tag") == login_role_tag:
+                    sourcing_table[login_username]["session"] = session_ts
+        # Session+role_tag guard: skip if both tables have the same session and role_tag
+        if (login_session_ts is not None and login_role_tag and login_username
+                and login_username in sourcing_table):
+            src_row = sourcing_table[login_username]
+            if (src_row.get("session") is not None
+                    and src_row.get("session") == login_session_ts
+                    and src_row.get("role_tag") == login_role_tag):
+                return {"ok": True, "token": row["token"], "skipped": True}
         row["token"] = token_val
     return {"ok": True, "token": row["token"]}
 
@@ -2170,11 +2190,67 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self.assertEqual(db["login"]["u1"]["last_result_count"], 100)
 
     def test_first_call_without_result_count_updates_unconditionally(self):
-        """Legacy call without result_count must update token unconditionally."""
+        """Legacy call without result_count and no session set must update token."""
         db = self._fresh_db(5000)
         resp = self._call(db, "u1", 4800)
         self.assertEqual(resp["ok"], True)
         self.assertEqual(db["login"]["u1"]["token"], 4800)
+
+    # ------------------------------------------------------------------
+    # Legacy path — session+role_tag guard
+    # ------------------------------------------------------------------
+
+    def test_legacy_path_skips_when_session_and_role_tag_match(self):
+        """
+        Legacy call (no result_count) must be skipped when login.session ==
+        sourcing.session AND role_tags match — deduction already processed.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+        ts = _dt(2026, 2, 26, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db(4900, login_role_tag="Site Manager", login_session_ts=ts, username="u1")
+        db["sourcing"]["u1"] = {"role_tag": "Site Manager", "session": ts}
+        resp = self._call(db, "u1", 4800)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["login"]["u1"]["token"], 4900)  # unchanged
+
+    def test_legacy_path_allows_when_sourcing_session_is_none(self):
+        """Legacy call is allowed when sourcing.session is NULL (not yet transferred)."""
+        from datetime import datetime as _dt, timezone as _tz
+        ts = _dt(2026, 2, 26, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db(5000, login_role_tag="Site Manager", login_session_ts=ts, username="u1")
+        db["sourcing"]["u1"] = {"role_tag": "Site Manager", "session": None}
+        resp = self._call(db, "u1", 4800)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["login"]["u1"]["token"], 4800)
+
+    def test_legacy_path_allows_when_sessions_differ(self):
+        """Legacy call is allowed when login.session != sourcing.session (new session)."""
+        from datetime import datetime as _dt, timezone as _tz
+        old_ts = _dt(2026, 2, 25, 12, 0, 0, tzinfo=_tz.utc)
+        new_ts = _dt(2026, 2, 26, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db(5000, login_role_tag="Site Manager", login_session_ts=new_ts, username="u1")
+        db["sourcing"]["u1"] = {"role_tag": "Site Manager", "session": old_ts}
+        resp = self._call(db, "u1", 4800)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["login"]["u1"]["token"], 4800)
+
+    def test_legacy_path_refresh_is_skipped_after_first_call(self):
+        """
+        After a first legacy call with no session (no guard fired), a subsequent
+        call where sessions now match must be skipped.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+        ts = _dt(2026, 2, 26, 12, 0, 0, tzinfo=_tz.utc)
+        db = self._fresh_db(5000, login_role_tag="CRA", login_session_ts=ts, username="u1")
+        db["sourcing"]["u1"] = {"role_tag": "CRA", "session": ts}
+        # First call: sessions match → skip
+        resp = self._call(db, "u1", 4800)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["login"]["u1"]["token"], 5000)
+        # Second call (refresh): same result → still skipped
+        resp2 = self._call(db, "u1", 4800)
+        self.assertTrue(resp2.get("skipped"))
+        self.assertEqual(db["login"]["u1"]["token"], 5000)
 
     # ------------------------------------------------------------------
     # Repeated call — same result_count → backend guard fires
