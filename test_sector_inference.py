@@ -1892,5 +1892,127 @@ class TestSyncMetricTokensSessionGuard(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
 
+def _token_update_backend_guard(db_store, userid, token_val, result_count=None):
+    """
+    Python mirror of the backend guard in webbridge.user_token_update.
+
+    ``db_store``    – dict keyed by userid simulating the login table row:
+                      { userid: {"token": int, "last_result_count": int|None} }
+    ``userid``      – user identifier
+    ``token_val``   – new token value to persist
+    ``result_count``– optional idempotency key (mirrors request body field)
+
+    Returns a dict with keys "ok", "token", and optionally "skipped": True.
+    """
+    if userid not in db_store:
+        return {"error": "user not found"}
+    row = db_store[userid]
+    if result_count is not None:
+        stored_count = row.get("last_result_count")
+        if stored_count is not None and stored_count == result_count:
+            return {"ok": True, "token": row["token"], "skipped": True}
+        row["token"] = token_val
+        row["last_result_count"] = result_count
+    else:
+        # Legacy path: no result_count — set unconditionally
+        row["token"] = token_val
+    return {"ok": True, "token": row["token"]}
+
+
+class TestTokenUpdateBackendGuard(unittest.TestCase):
+    """
+    Verifies the backend idempotency guard in /user/token_update.
+
+    The guard uses a ``last_result_count`` column in the login table to ensure
+    the token deduction only fires once per unique search result count,
+    regardless of how many times the frontend calls the endpoint — including
+    across new tabs and browser restarts where sessionStorage is not available.
+    """
+
+    def _call(self, db_store, userid, token_val, result_count=None):
+        return _token_update_backend_guard(db_store, userid, token_val, result_count)
+
+    def _fresh_db(self, token=5000):
+        """Return a db_store with a single user whose last_result_count is unset."""
+        return {"u1": {"token": token, "last_result_count": None}}
+
+    # ------------------------------------------------------------------
+    # First call — no stored count yet
+    # ------------------------------------------------------------------
+
+    def test_first_call_with_result_count_updates(self):
+        """First call with result_count (no stored count) must update the token."""
+        db = self._fresh_db(5000)
+        resp = self._call(db, "u1", 4900, result_count=100)
+        self.assertEqual(resp["ok"], True)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4900)
+        self.assertEqual(db["u1"]["last_result_count"], 100)
+
+    def test_first_call_without_result_count_updates_unconditionally(self):
+        """Legacy call without result_count must update token unconditionally."""
+        db = self._fresh_db(5000)
+        resp = self._call(db, "u1", 4800)
+        self.assertEqual(resp["ok"], True)
+        self.assertEqual(db["u1"]["token"], 4800)
+
+    # ------------------------------------------------------------------
+    # Repeated call — same result_count → backend guard fires
+    # ------------------------------------------------------------------
+
+    def test_same_result_count_second_call_is_skipped(self):
+        """Sending the same result_count a second time must not update the token."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100)  # first persist
+        resp = self._call(db, "u1", 4800, result_count=100)  # repeat (page refresh)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 4900)  # unchanged
+
+    def test_multiple_repeated_calls_do_not_decrease_token(self):
+        """Ten repeated calls with the same result_count must leave the token unchanged."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100)
+        for _ in range(10):
+            self._call(db, "u1", 4800, result_count=100)
+        self.assertEqual(db["u1"]["token"], 4900)
+
+    # ------------------------------------------------------------------
+    # New search — different result_count → update fires
+    # ------------------------------------------------------------------
+
+    def test_new_result_count_allows_update(self):
+        """A different result_count must allow a new update."""
+        db = self._fresh_db(5000)
+        self._call(db, "u1", 4900, result_count=100)
+        resp = self._call(db, "u1", 4750, result_count=150)
+        self.assertNotIn("skipped", resp)
+        self.assertEqual(db["u1"]["token"], 4750)
+        self.assertEqual(db["u1"]["last_result_count"], 150)
+
+    # ------------------------------------------------------------------
+    # Cross-tab / browser-restart scenario
+    # ------------------------------------------------------------------
+
+    def test_new_tab_same_count_is_guarded_by_backend(self):
+        """
+        Simulates a new tab where sessionStorage is empty.
+        The frontend would attempt to persist again, but the backend guard
+        (last_result_count) must still prevent the deduction.
+        """
+        db = self._fresh_db(5000)
+        # First tab: initial search
+        self._call(db, "u1", 4900, result_count=100)
+        # New tab: sessionStorage empty → frontend calls backend again with same count
+        resp = self._call(db, "u1", 4800, result_count=100)
+        self.assertTrue(resp.get("skipped"))
+        self.assertEqual(db["u1"]["token"], 4900)  # still the original deducted value
+
+    def test_user_not_found_returns_error(self):
+        """Requesting an unknown userid must return an error dict."""
+        db = self._fresh_db()
+        resp = self._call(db, "unknown_user", 4900, result_count=100)
+        self.assertIn("error", resp)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

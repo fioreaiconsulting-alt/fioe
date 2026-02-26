@@ -3256,6 +3256,11 @@ def user_resolve():
         return jsonify({"error": str(e)}), 500
 
 
+# Module-level flag: ALTER TABLE to add last_result_count runs at most once per
+# server process so the idempotency guard column is created without per-request DDL.
+_token_guard_column_ensured = False
+
+
 @app.post("/user/token_update")
 def user_token_update():
     """
@@ -3265,8 +3270,14 @@ def user_token_update():
     token-consuming operation so the login table always reflects the
     most up-to-date balance.
 
-    Body JSON: { "userid": "<id>", "token": <number> }
+    Body JSON: { "userid": "<id>", "token": <number>, "result_count": <int|optional> }
+
+    When result_count is supplied the endpoint acts as an idempotent guard:
+    the update only fires if result_count differs from the stored
+    last_result_count, preventing the feedback loop where the same search
+    result count is deducted repeatedly on every page refresh or new-tab load.
     """
+    global _token_guard_column_ensured
     data = request.get_json(force=True, silent=True) or {}
     userid = (data.get("userid") or "").strip()
     token_val = data.get("token")
@@ -3276,6 +3287,13 @@ def user_token_update():
         token_int = int(token_val)
     except (TypeError, ValueError):
         return jsonify({"error": "token must be a number"}), 400
+    result_count_int = None
+    rc = data.get("result_count")
+    if rc is not None:
+        try:
+            result_count_int = int(rc)
+        except (TypeError, ValueError):
+            pass
     try:
         import psycopg2
         pg_host = os.getenv("PGHOST", "localhost")
@@ -3289,10 +3307,38 @@ def user_token_update():
         )
         cur = conn.cursor()
         try:
-            cur.execute(
-                "UPDATE login SET token = %s WHERE userid = %s RETURNING token",
-                (token_int, userid)
-            )
+            if result_count_int is not None:
+                # Ensure idempotency column exists — run at most once per process
+                if not _token_guard_column_ensured:
+                    cur.execute(
+                        "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_result_count INTEGER"
+                    )
+                    _token_guard_column_ensured = True
+                # Read current token and stored result count (no COALESCE so NULL is preserved)
+                cur.execute(
+                    "SELECT token, last_result_count FROM login WHERE userid = %s",
+                    (userid,)
+                )
+                existing = cur.fetchone()
+                if not existing:
+                    conn.commit()
+                    return jsonify({"error": "user not found"}), 404
+                current_token, stored_count = existing
+                # Backend idempotency guard: skip if same result_count was already persisted
+                if stored_count is not None and stored_count == result_count_int:
+                    conn.commit()
+                    return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
+                # New result_count — persist updated balance and record the count
+                cur.execute(
+                    "UPDATE login SET token = %s, last_result_count = %s WHERE userid = %s RETURNING token",
+                    (token_int, result_count_int, userid)
+                )
+            else:
+                # Legacy path: no result_count supplied — set token unconditionally
+                cur.execute(
+                    "UPDATE login SET token = %s WHERE userid = %s RETURNING token",
+                    (token_int, userid)
+                )
             row = cur.fetchone()
             conn.commit()
         finally:

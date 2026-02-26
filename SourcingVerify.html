@@ -2395,8 +2395,9 @@ function syncMetricTokens(backendToken){
 
   // Persist the computed tokens-left value to the login table, but only when
   // the result count has changed (i.e., a new search was executed).
-  // A sessionStorage guard prevents page refreshes from re-deducting the same
-  // results and causing the token balance to decrease on every reload.
+  // A sessionStorage guard (frontend) AND a last_result_count column guard (backend)
+  // together prevent page refreshes from re-deducting the same results, ensuring
+  // the token balance decreases exactly once per unique search result count.
   const uid = window.__SV_ACTIVE_USERID || '';
   if (uid) {
     const _lastCountKey = 'sv_token_last_result_count';
@@ -2406,7 +2407,7 @@ function syncMetricTokens(backendToken){
       fetch(TOKEN_UPDATE_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userid: uid, token: leftComputed }),
+        body: JSON.stringify({ userid: uid, token: leftComputed, result_count: effectiveTotal }),
         credentials: 'same-origin'
       }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
     }
