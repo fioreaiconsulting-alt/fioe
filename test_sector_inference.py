@@ -1422,5 +1422,69 @@ class TestRecalculateTenureAndExperience(unittest.TestCase):
         self.assertFalse(_should_skip_exp_write(0))
 
 
+def _cv_name_found(candidate_name: str, pdf_text: str) -> bool:
+    """
+    Mirror of the production name-validation logic in webbridge.process_upload_cv.
+    Returns True if candidate_name is present in the PDF text (case-insensitive).
+    Accepts a full-name match OR a match where every individual name token appears.
+    """
+    if not candidate_name:
+        return True  # No name to validate against; skip check
+    name_lower = candidate_name.lower()
+    text_lower = pdf_text.lower()
+    name_parts = name_lower.split()
+    return name_lower in text_lower or (
+        len(name_parts) >= 2 and all(part in text_lower for part in name_parts)
+    )
+
+
+class TestCvNameValidation(unittest.TestCase):
+    """
+    Tests for the PDF name-validation helper that mirrors the production
+    logic in webbridge.process_upload_cv.
+    """
+
+    def test_full_name_found(self):
+        self.assertTrue(_cv_name_found("Alice Smith", "Alice Smith is a software engineer."))
+
+    def test_full_name_found_case_insensitive(self):
+        self.assertTrue(_cv_name_found("alice smith", "ALICE SMITH\nSoftware Engineer"))
+
+    def test_split_tokens_both_present(self):
+        """First and last name appear separately but both are present."""
+        self.assertTrue(_cv_name_found("John Doe", "John A. Doe | Engineering Lead"))
+
+    def test_name_not_in_text(self):
+        self.assertFalse(_cv_name_found("Jane Doe", "Alice Smith\nSoftware Engineer"))
+
+    def test_partial_match_only_first_name(self):
+        """Only first name present — should fail for two-part names."""
+        self.assertFalse(_cv_name_found("John Doe", "John is an engineer at TechCorp."))
+
+    def test_partial_match_only_last_name(self):
+        """Only last name present — should fail for two-part names."""
+        self.assertFalse(_cv_name_found("John Doe", "Doe Corp | Business Development"))
+
+    def test_empty_candidate_name_skips_validation(self):
+        """Empty name means no validation needed; always returns True."""
+        self.assertTrue(_cv_name_found("", "Any PDF text here"))
+
+    def test_none_candidate_name_skips_validation(self):
+        self.assertTrue(_cv_name_found(None, "Any PDF text here"))
+
+    def test_single_token_name_full_match(self):
+        """Single-word name must appear verbatim (no split logic applied)."""
+        self.assertTrue(_cv_name_found("Cher", "Profile for Cher, Artist"))
+
+    def test_single_token_name_not_found(self):
+        self.assertFalse(_cv_name_found("Cher", "Alice Smith | Singer"))
+
+    def test_multiword_name_all_parts_present(self):
+        self.assertTrue(_cv_name_found("Maria Van Der Berg", "Maria Van Der Berg\nConsultant"))
+
+    def test_multiword_name_missing_one_part(self):
+        self.assertFalse(_cv_name_found("Maria Van Der Berg", "Maria Van Berg\nConsultant"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

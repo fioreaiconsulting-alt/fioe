@@ -6180,7 +6180,32 @@ def process_upload_cv():
                  return jsonify({"error": "linkedinurl required"}), 400
             
             file_bytes = file.read()
-            
+
+            # Validate that the candidate name appears in the PDF text
+            if candidate_name:
+                try:
+                    from pypdf import PdfReader as _PdfReader
+                    _reader = _PdfReader(io.BytesIO(file_bytes))
+                    _pdf_text = " ".join(
+                        (p.extract_text() or "") for p in _reader.pages
+                    ).lower()
+                    _name_lower = candidate_name.lower()
+                    # Check full name or all individual name parts appear in PDF text
+                    _name_parts = _name_lower.split()
+                    _name_found = _name_lower in _pdf_text or (
+                        len(_name_parts) >= 2 and all(part in _pdf_text for part in _name_parts)
+                    )
+                    if not _name_found:
+                        return jsonify({
+                            "error": "The profile name in the uploaded PDF is invalid. "
+                                     "Please ensure the name matches an entry in the search result.",
+                            "name_mismatch": True
+                        }), 400
+                except ImportError:
+                    logger.warning("[Upload CV] pypdf not available for name validation; skipping check")
+                except Exception as _e:
+                    logger.warning(f"[Upload CV] Name validation failed (non-fatal): {_e}")
+
             import psycopg2
             from psycopg2 import sql
             pg_host=os.getenv("PGHOST","localhost")

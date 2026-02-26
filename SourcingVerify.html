@@ -461,14 +461,6 @@ function switchTab(tabId) {
         }
     } else if(tabId === 'tab-details') {
         document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
-        // Auto-refresh View Details tab: trigger refresh button after 1 second
-        // The 1-second delay is intentional as per requirement specification
-        setTimeout(() => {
-            const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
-            if (viewDetailsRefreshBtn) {
-                viewDetailsRefreshBtn.click();
-            }
-        }, 1000);
     } else if (tabId === 'tab-research') {
         document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
         // Trigger Market Analytic logic when tab is activated to ensure data is present
@@ -1676,6 +1668,7 @@ function cleanNameForUpload(name) {
 // Helper function to disable/enable all action buttons during bulk operations
 function setSearchResultButtonsEnabled(enabled) {
     const buttons = [
+        'reloadBtn',
         'bulkAssessmentBtn',
         'exportExcelBtn',
         'exportCsvBtn',
@@ -2303,6 +2296,7 @@ const API_DOWNLOAD_CV = '/process/download_cv';
 const API_PARSE_CV_AND_UPDATE = '/process/parse_cv_and_update'; 
 const API_SCAN_AND_UPLOAD = '/process/scan_and_upload_cvs';
 const API_UPLOAD_MULTIPLE = '/process/upload_multiple_cvs'; // New bulk endpoint
+const MSG_CV_NAME_MISMATCH = 'The profile name in the uploaded PDF is invalid. Please ensure the name matches an entry in the search result.';
 
 const PROCESS_GEO_API = 'http://127.0.0.1:8091/process/geography'; 
 
@@ -3324,7 +3318,15 @@ function buildRow(row) {
                                 alert('Analysis failed: ' + analyzeData.error);
                             }
                         } else {
-                             throw new Error('Upload failed');
+                            const errData = await res.json().catch(() => ({}));
+                            if (errData.name_mismatch) {
+                                alert(errData.error || MSG_CV_NAME_MISMATCH);
+                                browseBtn.textContent = 'Upload CV';
+                                browseBtn.disabled = false;
+                                fileInput.value = '';
+                                return;
+                            }
+                             throw new Error(errData.error || 'Upload failed');
                         }
                     } catch(e) {
                         console.error("Row upload failed", e);
@@ -3991,7 +3993,8 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     }
     window.__sv_assessment_in_flight.add(anchor);
 
-    // Sync button state
+    // Disable action buttons during individual assessment
+    setSearchResultButtonsEnabled(false);
     let btn = null;
     try { btn = tr.querySelector('.view-btn'); } catch(e) {}
     if (btn) setAssessmentActive(btn);
@@ -4205,6 +4208,8 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         }
     } finally {
         window.__sv_assessment_in_flight.delete(anchor);
+        // Re-enable action buttons after individual assessment completes
+        setSearchResultButtonsEnabled(true);
     }
 }
 
@@ -5328,6 +5333,15 @@ function renderTable(){
 
         } else {
           const d = await res.json().catch(()=>({}));
+          if (d.name_mismatch) {
+            alert(d.error || MSG_CV_NAME_MISMATCH);
+            browseBtn.textContent = origText;
+            browseBtn.disabled = false;
+            browseBtn.style.color = '#24292f';
+            browseBtn.style.borderColor = '#d0d7de';
+            fileInput.value = '';
+            return;
+          }
           throw new Error(d.error || 'Upload failed');
         }
       } catch (err) {
@@ -6187,22 +6201,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Add hover-triggered refresh for View Details tab
+    // Refresh button activates only on click (no hover interaction)
     const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
     if (viewDetailsRefreshBtn) {
-        viewDetailsRefreshBtn.addEventListener('mouseenter', () => {
-            // Clear any existing timer
-            if (__refreshDebounceTimer) {
-                clearTimeout(__refreshDebounceTimer);
-            }
-            
-            // Set a debounce timer to prevent rapid triggers
-            __refreshDebounceTimer = setTimeout(() => {
-                refreshCurrentProfile();
-            }, 300); // 300ms debounce delay
-        });
-        
-        // Also support click for explicit refresh
         viewDetailsRefreshBtn.addEventListener('click', (e) => {
             e.preventDefault();
             if (__refreshDebounceTimer) {
