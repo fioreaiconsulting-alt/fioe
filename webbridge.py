@@ -3260,6 +3260,9 @@ def user_resolve():
 # server process so the idempotency guard column is created without per-request DDL.
 _token_guard_column_ensured = False
 
+# Module-level flag: ALTER TABLE to add role_tag_session column runs at most once
+# per server process for both login and sourcing tables.
+_role_tag_session_column_ensured = False
 
 @app.post("/user/token_update")
 def user_token_update():
@@ -3294,6 +3297,7 @@ def user_token_update():
             result_count_int = int(rc)
         except (TypeError, ValueError):
             pass
+    role_tag = (data.get("role_tag") or "").strip()
     try:
         import psycopg2
         pg_host = os.getenv("PGHOST", "localhost")
@@ -3308,31 +3312,44 @@ def user_token_update():
         cur = conn.cursor()
         try:
             if result_count_int is not None:
-                # Ensure idempotency column exists — run at most once per process
+                # Ensure idempotency columns exist — run at most once per process
                 if not _token_guard_column_ensured:
                     cur.execute(
                         "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_result_count INTEGER"
                     )
+                    cur.execute(
+                        "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT"
+                    )
                     _token_guard_column_ensured = True
-                # Read current token and stored result count (no COALESCE so NULL is preserved)
+                # Read current token, stored result count, and stored role_tag
                 cur.execute(
-                    "SELECT token, last_result_count FROM login WHERE userid = %s",
+                    "SELECT token, last_result_count, last_deducted_role_tag FROM login WHERE userid = %s",
                     (userid,)
                 )
                 existing = cur.fetchone()
                 if not existing:
                     conn.commit()
                     return jsonify({"error": "user not found"}), 404
-                current_token, stored_count = existing
-                # Backend idempotency guard: skip if same result_count was already persisted
+                current_token, stored_count, _stored_role_tag_raw = existing
+                stored_role_tag = (_stored_role_tag_raw or "").strip()
+                # Backend idempotency guard: skip if same result_count was already persisted.
+                # When role_tag is also provided, require that the stored role_tag also matches;
+                # a NULL/empty stored role_tag with a provided role_tag is treated as a new session.
                 if stored_count is not None and stored_count == result_count_int:
-                    conn.commit()
-                    return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
-                # New result_count — persist updated balance and record the count
-                cur.execute(
-                    "UPDATE login SET token = %s, last_result_count = %s WHERE userid = %s RETURNING token",
-                    (token_int, result_count_int, userid)
-                )
+                    if (not role_tag) or (stored_role_tag and stored_role_tag == role_tag):
+                        conn.commit()
+                        return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
+                # New deduction — persist updated balance, result count, and role_tag
+                if role_tag:
+                    cur.execute(
+                        "UPDATE login SET token = %s, last_result_count = %s, last_deducted_role_tag = %s WHERE userid = %s RETURNING token",
+                        (token_int, result_count_int, role_tag, userid)
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE login SET token = %s, last_result_count = %s WHERE userid = %s RETURNING token",
+                        (token_int, result_count_int, userid)
+                    )
             else:
                 # Legacy path: no result_count supplied — set token unconditionally
                 cur.execute(
@@ -3360,7 +3377,13 @@ def user_update_role_tag():
     POST/GET /user/update_role_tag
     Updates role_tag in both login and sourcing tables for the given username.
     The sourcing table is the authoritative source for role-based job title assessment.
+
+    Session tracking:
+    - A timestamp (role_tag_session) is generated and stored in login when role_tag is set.
+    - The same timestamp is transferred to sourcing only after validating that the
+      role_tag value matches in both tables, ensuring cross-table traceability.
     """
+    global _role_tag_session_column_ensured
     if request.method == "POST":
         data = request.get_json(force=True, silent=True) or {}
         username = (data.get("username") or "").strip()
@@ -3379,16 +3402,45 @@ def user_update_role_tag():
         pg_db=os.getenv("PGDATABASE","candidate_db")
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
-        cur.execute("UPDATE login SET role_tag=%s WHERE username=%s", (role_tag, username))
-        # Ensure role_tag column exists in sourcing table, then update all records for this user
-        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
-        if not cur.fetchone():
-            cur.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
+        # Ensure role_tag_session column exists in login and sourcing (once per process).
+        # NOTE: This flag mirrors the _token_guard_column_ensured pattern; it is intentionally
+        # not protected by a lock for the same reason — IF NOT EXISTS makes the DDL idempotent,
+        # so concurrent first-time executions are safe.
+        if not _role_tag_session_column_ensured:
+            cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+            cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+            _role_tag_session_column_ensured = True
+        # Step 1: Update login — set role_tag and generate session timestamp atomically
+        cur.execute(
+            "UPDATE login SET role_tag=%s, role_tag_session=NOW() WHERE username=%s",
+            (role_tag, username)
+        )
+        # Step 2: Read back the persisted role_tag and session timestamp from login
+        cur.execute(
+            "SELECT role_tag, role_tag_session FROM login WHERE username=%s",
+            (username,)
+        )
+        login_row = cur.fetchone()
+        login_role_tag = login_row[0] if login_row else None
+        login_session_ts = login_row[1] if login_row else None
+        # Step 3: Update sourcing role_tag for all records of this user
+        cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
         cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag, username))
+        # Step 4: Validate that role_tag matches in both login and sourcing, then transfer
+        # the session timestamp from login to sourcing for consistency and traceability.
+        if login_role_tag == role_tag and login_session_ts is not None:
+            cur.execute(
+                "UPDATE sourcing SET role_tag_session=%s WHERE username=%s AND role_tag=%s",
+                (login_session_ts, username, role_tag)
+            )
         conn.commit()
         cur.close(); conn.close()
-        logger.info(f"[UpdateRoleTag] Set role_tag='{role_tag}' for user='{username}' in login and sourcing tables")
-        return jsonify({"ok": True, "username": username, "role_tag": role_tag}), 200
+        logger.info(
+            f"[UpdateRoleTag] Set role_tag='{role_tag}' session_ts='{login_session_ts}' "
+            f"for user='{username}' in login and sourcing tables"
+        )
+        return jsonify({"ok": True, "username": username, "role_tag": role_tag,
+                        "role_tag_session": login_session_ts.isoformat() if login_session_ts else None}), 200
     except Exception as e:
         logger.warning(f"[UpdateRoleTag] Failed: {e}")
         return jsonify({"error": str(e)}), 500
@@ -4904,16 +4956,22 @@ def _write_outputs(job_id, rows):
                     # Transfer role_tag from login table into sourcing table for this user
                     if active_username:
                         try:
-                            cur.execute("SELECT role_tag FROM login WHERE username=%s LIMIT 1", (active_username,))
+                            cur.execute("SELECT role_tag, role_tag_session FROM login WHERE username=%s LIMIT 1", (active_username,))
                             rt_row = cur.fetchone()
                             login_role_tag = rt_row[0] if rt_row and rt_row[0] else ""
+                            login_session_ts = rt_row[1] if rt_row else None
                             if login_role_tag:
-                                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
-                                if not cur.fetchone():
-                                    cur.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
+                                cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
                                 cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (login_role_tag, active_username))
+                                # Transfer session timestamp from login to sourcing after validating role_tag matches.
+                                if login_session_ts is not None:
+                                    cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                                    cur.execute(
+                                        "UPDATE sourcing SET role_tag_session=%s WHERE username=%s AND role_tag=%s",
+                                        (login_session_ts, active_username, login_role_tag)
+                                    )
                                 conn.commit()
-                                logger.info(f"[Ingest] Transferred role_tag='{login_role_tag}' from login to sourcing for user='{active_username}'.")
+                                logger.info(f"[Ingest] Transferred role_tag='{login_role_tag}' session_ts='{login_session_ts}' from login to sourcing for user='{active_username}'.")
                         except Exception as e_rt:
                             logger.warning(f"[Ingest] Failed to transfer role_tag to sourcing: {e_rt}")
                     cur.close(); conn.close()
@@ -4960,6 +5018,7 @@ def _gemini_multi_sector(selected, user_job_title, user_company, languages=None)
 
 @app.post("/start_job")
 def start_job():
+    global _role_tag_session_column_ensured
     data=request.get_json(force=True, silent=True) or {}
     queries=data.get('queries') or []
     fallback_queries=data.get('fallbackQueries') or []
@@ -5022,13 +5081,27 @@ def start_job():
                 pg_db_l = os.getenv("PGDATABASE", "candidate_db")
                 conn_l = psycopg2.connect(host=pg_host_l, port=pg_port_l, user=pg_user_l, password=pg_password_l, dbname=pg_db_l)
                 cur_l = conn_l.cursor()
-                # Update login table
-                cur_l.execute("UPDATE login SET role_tag=%s WHERE username=%s", (role_tag_val, username))
+                # Ensure role_tag_session column exists (reuse global flag; ADD COLUMN IF NOT EXISTS is idempotent)
+                if not _role_tag_session_column_ensured:
+                    cur_l.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    cur_l.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    _role_tag_session_column_ensured = True
+                # Update login table — set role_tag and generate session timestamp
+                cur_l.execute("UPDATE login SET role_tag=%s, role_tag_session=NOW() WHERE username=%s", (role_tag_val, username))
+                # Read back the session timestamp
+                cur_l.execute("SELECT role_tag, role_tag_session FROM login WHERE username=%s", (username,))
+                _login_row = cur_l.fetchone()
+                _login_role_tag = _login_row[0] if _login_row else None
+                _login_session_ts = _login_row[1] if _login_row else None
                 # Transfer role_tag to sourcing table (authoritative source for assessments)
-                cur_l.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='role_tag'")
-                if not cur_l.fetchone():
-                    cur_l.execute("ALTER TABLE sourcing ADD COLUMN role_tag TEXT DEFAULT ''")
+                cur_l.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
                 cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag_val, username))
+                # Transfer session timestamp to sourcing after validating role_tag matches
+                if _login_role_tag == role_tag_val and _login_session_ts is not None:
+                    cur_l.execute(
+                        "UPDATE sourcing SET role_tag_session=%s WHERE username=%s AND role_tag=%s",
+                        (_login_session_ts, username, role_tag_val)
+                    )
                 conn_l.commit()
                 cur_l.close()
                 conn_l.close()
