@@ -2387,7 +2387,7 @@ function syncMetricTokens(backendToken){
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ userid: window.__SV_ACTIVE_USERID || '', username: window.__SV_ACTIVE_USERNAME || '', token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag })
+      body: JSON.stringify({ userid: window.__SV_ACTIVE_USERID || '', token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag })
     }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
   }
   return leftComputed;
