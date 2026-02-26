@@ -3325,6 +3325,7 @@ def user_token_update():
                 if not _role_tag_session_column_ensured:
                     cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
                     cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
+                    cur.execute("ALTER TABLE sourcing ALTER COLUMN session DROP DEFAULT")
                     _role_tag_session_column_ensured = True
                 # Read current token, stored result count, stored role_tag, login role_tag, session, and username.
                 # role_tag and role_tag_session are read so that we can auto-generate the session
@@ -3380,20 +3381,23 @@ def user_token_update():
                         (token_int, result_count_int, userid)
                     )
             else:
-                # Legacy path: no result_count supplied — set token unconditionally.
-                # Also run the role_tag_session backfill here so that SourcingVerify.html
-                # calls (which never send result_count) still trigger session population.
+                # Legacy path: no result_count supplied.
+                # Uses a session+role_tag guard: if login.session == sourcing.session
+                # AND role_tags match, the deduction for this session was already
+                # processed — skip to prevent repeated deductions on page refresh.
                 if not _role_tag_session_column_ensured:
                     cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
                     cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
+                    cur.execute("ALTER TABLE sourcing ALTER COLUMN session DROP DEFAULT")
                     _role_tag_session_column_ensured = True
                 cur.execute(
-                    "SELECT role_tag, session, username FROM login WHERE userid = %s",
+                    "SELECT role_tag, session, username, token FROM login WHERE userid = %s",
                     (userid,)
                 )
                 _legacy_row = cur.fetchone()
                 if _legacy_row:
-                    _legacy_role_tag, _legacy_session_ts, _legacy_username = _legacy_row
+                    _legacy_role_tag, _legacy_session_ts, _legacy_username, _legacy_token = _legacy_row
+                    # Auto-backfill: if role_tag is set but session is NULL, generate now
                     if (_legacy_role_tag or "").strip() and _legacy_session_ts is None:
                         cur.execute(
                             "UPDATE login SET session = NOW() WHERE userid = %s RETURNING session",
@@ -3401,15 +3405,33 @@ def user_token_update():
                         )
                         _legacy_ts_row = cur.fetchone()
                         _legacy_new_ts = _legacy_ts_row[0] if _legacy_ts_row else None
-                        if _legacy_new_ts is not None and _legacy_username:
-                            cur.execute(
-                                "UPDATE sourcing SET session = %s WHERE username = %s AND role_tag = %s",
-                                (_legacy_new_ts, _legacy_username, _legacy_role_tag)
-                            )
-                            logger.info(
-                                f"[TokenUpdate] Auto-backfilled role_tag_session='{_legacy_new_ts}' "
-                                f"for user='{_legacy_username}' (role_tag='{_legacy_role_tag}') via legacy path"
-                            )
+                        if _legacy_new_ts is not None:
+                            _legacy_session_ts = _legacy_new_ts
+                            if _legacy_username:
+                                cur.execute(
+                                    "UPDATE sourcing SET session = %s WHERE username = %s AND role_tag = %s",
+                                    (_legacy_new_ts, _legacy_username, _legacy_role_tag)
+                                )
+                                logger.info(
+                                    f"[TokenUpdate] Auto-backfilled role_tag_session='{_legacy_new_ts}' "
+                                    f"for user='{_legacy_username}' (role_tag='{_legacy_role_tag}') via legacy path"
+                                )
+                    # Session+role_tag guard: skip deduction when both tables have
+                    # the same session timestamp and role_tag (already processed).
+                    if (_legacy_session_ts is not None and (_legacy_role_tag or "").strip()
+                            and _legacy_username):
+                        cur.execute(
+                            "SELECT session FROM sourcing"
+                            " WHERE username = %s AND role_tag = %s LIMIT 1",
+                            (_legacy_username, _legacy_role_tag)
+                        )
+                        _src_row = cur.fetchone()
+                        _src_session = _src_row[0] if _src_row else None
+                        if _src_session is not None and _src_session == _legacy_session_ts:
+                            conn.commit()
+                            return jsonify({"ok": True,
+                                            "token": int(_legacy_token) if _legacy_token is not None else 0,
+                                            "skipped": True}), 200
                 cur.execute(
                     "UPDATE login SET token = %s WHERE userid = %s RETURNING token",
                     (token_int, userid)
@@ -3467,6 +3489,7 @@ def user_update_role_tag():
         if not _role_tag_session_column_ensured:
             cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
             cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
+            cur.execute("ALTER TABLE sourcing ALTER COLUMN session DROP DEFAULT")
             _role_tag_session_column_ensured = True
         # Step 1: Update login — set role_tag and generate session timestamp atomically
         cur.execute(
@@ -5024,6 +5047,7 @@ def _write_outputs(job_id, rows):
                                 # Transfer session timestamp from login to sourcing after validating role_tag matches.
                                 if login_session_ts is not None:
                                     cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
+                                    cur.execute("ALTER TABLE sourcing ALTER COLUMN session DROP DEFAULT")
                                     cur.execute(
                                         "UPDATE sourcing SET session=%s WHERE username=%s AND role_tag=%s",
                                         (login_session_ts, active_username, login_role_tag)
@@ -5143,6 +5167,7 @@ def start_job():
                 if not _role_tag_session_column_ensured:
                     cur_l.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
                     cur_l.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
+                    cur_l.execute("ALTER TABLE sourcing ALTER COLUMN session DROP DEFAULT")
                     _role_tag_session_column_ensured = True
                 # Update login table — set role_tag and generate session timestamp
                 cur_l.execute("UPDATE login SET role_tag=%s, session=NOW() WHERE username=%s", (role_tag_val, username))
@@ -9908,6 +9933,7 @@ def _startup_backfill_role_tag_session():
             # Ensure columns exist before touching them
             cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
             cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ")
+            cur.execute("ALTER TABLE sourcing ALTER COLUMN session DROP DEFAULT")
             # Find all login rows with role_tag set but role_tag_session NULL
             cur.execute(
                 "SELECT username, role_tag FROM login"
