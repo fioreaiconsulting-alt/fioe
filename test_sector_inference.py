@@ -2368,6 +2368,121 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self.assertIsNone(db["login"]["u1"]["role_tag_session"])
 
 
+def _startup_backfill_role_tag_session(db_store):
+    """
+    Python stub of the startup backfill in webbridge._startup_backfill_role_tag_session.
+
+    ``db_store`` – dict simulating login and sourcing tables:
+        {
+          "login":   { username: {"role_tag": str|None, "role_tag_session": datetime|None, ...} },
+          "sourcing": { username: {"role_tag": str|None, "role_tag_session": datetime|None} }
+        }
+
+    For every login row where role_tag is set but role_tag_session is NULL,
+    generates a timestamp and transfers it to matching sourcing rows.
+    Returns the number of users backfilled.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    login_table = db_store.get("login", {})
+    sourcing_table = db_store.get("sourcing", {})
+    count = 0
+    for username, row in login_table.items():
+        if not username:
+            continue
+        login_role_tag = (row.get("role_tag") or "").strip()
+        if login_role_tag and row.get("role_tag_session") is None:
+            session_ts = _dt.now(_tz.utc)
+            row["role_tag_session"] = session_ts
+            if username in sourcing_table:
+                if sourcing_table[username].get("role_tag") == login_role_tag:
+                    sourcing_table[username]["role_tag_session"] = session_ts
+            count += 1
+    return count
+
+
+class TestStartupBackfillRoleTagSession(unittest.TestCase):
+    """
+    Verifies the startup backfill in webbridge._startup_backfill_role_tag_session.
+
+    This covers the scenario where the server is restarted after data already
+    existed in the login/sourcing tables but before the role_tag_session column
+    was introduced.  The backfill should run at module-load time (before any
+    request is handled) so every role_tag entry is immediately tied to a session.
+    """
+
+    def _run(self, db_store):
+        return _startup_backfill_role_tag_session(db_store)
+
+    def _db(self, login_role_tag=None, login_session_ts=None, sourcing_role_tag=None,
+            sourcing_session_ts=None, username="alice"):
+        return {
+            "login": {username: {
+                "role_tag": login_role_tag,
+                "role_tag_session": login_session_ts,
+            }},
+            "sourcing": {username: {
+                "role_tag": sourcing_role_tag,
+                "role_tag_session": sourcing_session_ts,
+            }} if sourcing_role_tag is not None else {},
+        }
+
+    def test_backfills_login_session_when_role_tag_set(self):
+        """Login row with role_tag but NULL session must get a timestamp."""
+        db = self._db(login_role_tag="Site Activation Manager")
+        n = self._run(db)
+        self.assertEqual(n, 1)
+        self.assertIsNotNone(db["login"]["alice"]["role_tag_session"])
+
+    def test_transfers_session_to_sourcing_when_role_tags_match(self):
+        """When login and sourcing role_tag match, session is transferred to sourcing."""
+        db = self._db(login_role_tag="Site Activation Manager",
+                      sourcing_role_tag="Site Activation Manager")
+        self._run(db)
+        self.assertIsNotNone(db["sourcing"]["alice"]["role_tag_session"])
+        self.assertEqual(db["sourcing"]["alice"]["role_tag_session"],
+                         db["login"]["alice"]["role_tag_session"])
+
+    def test_does_not_transfer_session_when_role_tags_differ(self):
+        """When sourcing.role_tag differs from login.role_tag, no transfer occurs."""
+        db = self._db(login_role_tag="Site Activation Manager",
+                      sourcing_role_tag="Different Role")
+        self._run(db)
+        self.assertIsNone(db["sourcing"]["alice"]["role_tag_session"])
+
+    def test_skips_row_when_role_tag_empty(self):
+        """Row with NULL/empty role_tag must not get a session timestamp."""
+        db = self._db(login_role_tag=None)
+        n = self._run(db)
+        self.assertEqual(n, 0)
+        self.assertIsNone(db["login"]["alice"]["role_tag_session"])
+
+    def test_skips_row_when_session_already_set(self):
+        """Row that already has a role_tag_session must not be overwritten."""
+        from datetime import datetime as _dt, timezone as _tz
+        existing_ts = _dt(2024, 1, 1, tzinfo=_tz.utc)
+        db = self._db(login_role_tag="Engineer", login_session_ts=existing_ts)
+        n = self._run(db)
+        self.assertEqual(n, 0)
+        self.assertEqual(db["login"]["alice"]["role_tag_session"], existing_ts)
+
+    def test_backfills_multiple_users(self):
+        """All users missing a session must be backfilled in a single pass."""
+        db = {
+            "login": {
+                "u1": {"role_tag": "Engineer", "role_tag_session": None},
+                "u2": {"role_tag": "Manager", "role_tag_session": None},
+                "u3": {"role_tag": None, "role_tag_session": None},
+            },
+            "sourcing": {},
+        }
+        n = self._run(db)
+        self.assertEqual(n, 2)
+        self.assertIsNotNone(db["login"]["u1"]["role_tag_session"])
+        self.assertIsNotNone(db["login"]["u2"]["role_tag_session"])
+        self.assertIsNone(db["login"]["u3"]["role_tag_session"])
+
+
 def _update_role_tag(db_store, username, role_tag):
     """
     Python stub of the /user/update_role_tag endpoint session-tracking logic.

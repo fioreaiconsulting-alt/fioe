@@ -9853,6 +9853,73 @@ except Exception as e:
     logger.warning(f"Failed to integrate data_sorter: {e}")
 # --- END: Integration ---
 
+def _startup_backfill_role_tag_session():
+    """
+    One-time startup backfill: for every login row where role_tag is set but
+    role_tag_session is NULL, generate a timestamp (NOW()) and transfer it to
+    all matching sourcing rows (WHERE username matches AND role_tag matches).
+
+    This handles rows that existed before the role_tag_session column was
+    introduced via ALTER TABLE … ADD COLUMN IF NOT EXISTS (which sets NULL for
+    pre-existing rows).  Called once when the server process starts.
+    """
+    try:
+        import psycopg2
+        pg_host = os.getenv("PGHOST", "localhost")
+        pg_port = int(os.getenv("PGPORT", "5432"))
+        pg_user = os.getenv("PGUSER", "postgres")
+        pg_password = os.getenv("PGPASSWORD", "") or "orlha"
+        pg_db = os.getenv("PGDATABASE", "candidate_db")
+        conn = psycopg2.connect(
+            host=pg_host, port=pg_port, user=pg_user,
+            ****** dbname=pg_db
+        )
+        cur = conn.cursor()
+        try:
+            # Ensure columns exist before touching them
+            cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+            cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+            # Find all login rows with role_tag set but role_tag_session NULL
+            cur.execute(
+                "SELECT username, role_tag FROM login"
+                " WHERE role_tag IS NOT NULL AND role_tag <> '' AND role_tag_session IS NULL"
+            )
+            rows = cur.fetchall()
+            count = 0
+            for username, role_tag in rows:
+                if not username:
+                    continue
+                # Generate a timestamp for this row and write it to login
+                cur.execute(
+                    "UPDATE login SET role_tag_session = NOW()"
+                    " WHERE username = %s AND role_tag = %s AND role_tag_session IS NULL"
+                    " RETURNING role_tag_session",
+                    (username, role_tag)
+                )
+                ts_row = cur.fetchone()
+                if ts_row and ts_row[0] is not None:
+                    # Transfer the same timestamp to sourcing for matching rows
+                    cur.execute(
+                        "UPDATE sourcing SET role_tag_session = %s"
+                        " WHERE username = %s AND role_tag = %s",
+                        (ts_row[0], username, role_tag)
+                    )
+                    count += 1
+            conn.commit()
+            if count:
+                logger.info(f"[Startup] Backfilled role_tag_session for {count} user(s) missing a session timestamp.")
+            global _role_tag_session_column_ensured
+            _role_tag_session_column_ensured = True
+        finally:
+            cur.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"[Startup] role_tag_session backfill skipped: {e}")
+
+
+_startup_backfill_role_tag_session()
+
+
 if __name__ == '__main__':
     port=int(os.getenv("PORT","8091"))
     logger.info(f"Starting AutoSourcing webbridge on :{port}")
