@@ -3280,7 +3280,7 @@ def user_token_update():
     last_result_count, preventing the feedback loop where the same search
     result count is deducted repeatedly on every page refresh or new-tab load.
     """
-    global _token_guard_column_ensured
+    global _token_guard_column_ensured, _role_tag_session_column_ensured
     data = request.get_json(force=True, silent=True) or {}
     userid = (data.get("userid") or "").strip()
     token_val = data.get("token")
@@ -3321,17 +3321,46 @@ def user_token_update():
                         "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT"
                     )
                     _token_guard_column_ensured = True
-                # Read current token, stored result count, and stored role_tag
+                # Ensure session tracking columns exist — run at most once per process
+                if not _role_tag_session_column_ensured:
+                    cur.execute("ALTER TABLE login ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag_session TIMESTAMPTZ")
+                    _role_tag_session_column_ensured = True
+                # Read current token, stored result count, stored role_tag, login role_tag, session, and username.
+                # role_tag and role_tag_session are read so that we can auto-generate the session
+                # timestamp for rows where role_tag is already set but role_tag_session is NULL
+                # (e.g. rows that pre-existed before the role_tag_session column was added).
                 cur.execute(
-                    "SELECT token, last_result_count, last_deducted_role_tag FROM login WHERE userid = %s",
+                    "SELECT token, last_result_count, last_deducted_role_tag,"
+                    " role_tag, role_tag_session, username FROM login WHERE userid = %s",
                     (userid,)
                 )
                 existing = cur.fetchone()
                 if not existing:
                     conn.commit()
                     return jsonify({"error": "user not found"}), 404
-                current_token, stored_count, _stored_role_tag_raw = existing
+                current_token, stored_count, _stored_role_tag_raw, login_role_tag, login_session_ts, login_username = existing
                 stored_role_tag = (_stored_role_tag_raw or "").strip()
+                # Auto-backfill: if role_tag is already set in login but role_tag_session is NULL,
+                # generate a session timestamp now and transfer it to sourcing where role_tag matches.
+                # This ensures every role_tag entry is tied to a valid session reference even for
+                # rows that existed before the role_tag_session column was introduced.
+                if (login_role_tag or "").strip() and login_session_ts is None:
+                    cur.execute(
+                        "UPDATE login SET role_tag_session = NOW() WHERE userid = %s RETURNING role_tag_session",
+                        (userid,)
+                    )
+                    ts_row = cur.fetchone()
+                    login_session_ts = ts_row[0] if ts_row else None
+                    if login_session_ts is not None and login_username:
+                        cur.execute(
+                            "UPDATE sourcing SET role_tag_session = %s WHERE username = %s AND role_tag = %s",
+                            (login_session_ts, login_username, login_role_tag)
+                        )
+                        logger.info(
+                            f"[TokenUpdate] Auto-backfilled role_tag_session='{login_session_ts}' "
+                            f"for user='{login_username}' (role_tag='{login_role_tag}')"
+                        )
                 # Backend idempotency guard: skip if same result_count was already persisted.
                 # When role_tag is also provided, require that the stored role_tag also matches;
                 # a NULL/empty stored role_tag with a provided role_tag is treated as a new session.
