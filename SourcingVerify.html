@@ -2675,59 +2675,87 @@ function computeTenureFromExperienceText(text) {
     }
     
     const nowYear = new Date().getFullYear();
-    const employerDurations = new Map(); // Map<normalizedCompanyName, totalYears>
+    // Global period list for total experience (cross-employer merge to avoid double-counting)
+    const allPeriods = [];
+    // Per-employer periods for tenure (each company's own merged timeline)
+    const employerPeriodMap = new Map(); // normalizedCompany -> [[start,end],...]
     
     for (const line of lines) {
       // Expected format: "Job Title, Company, YYYY to YYYY|present"
-      // Extract company name (2nd comma-separated field) and duration
       const parts = line.split(',').map(s => s.trim());
       
       if (parts.length < 3) {
-        // Skip entries that don't match expected format - we can't reliably parse company
         continue;
       }
       
-      // Parse: parts[0] = Job Title, parts[1] = Company, parts[2] = Duration
       const jobTitle = parts[0];
       const company = parts[1];
       const durationStr = parts[2];
       
-      // Skip internship roles by checking job title field specifically
       if (isInternshipRole(jobTitle)) {
         continue;
       }
       
+      let start = null, end = null;
       const m = durationStr.match(/(\b\d{4})\s*(?:to|[-–—])\s*(present|\b\d{4}\b)/i);
-      
-      if (m && company) {
-        const start = parseInt(m[1], 10);
-        let endRaw = m[2].toLowerCase();
-        let end = (endRaw === 'present') ? nowYear : parseInt(endRaw, 10);
-        if (!isNaN(start) && !isNaN(end) && end >= start) {
-          const duration = end - start;
-          // Normalize company name to group similar names
-          const normalizedCompany = normalizeCompanyName(company);
-          if (normalizedCompany) {
-            // Accumulate duration for this employer
-            employerDurations.set(normalizedCompany, (employerDurations.get(normalizedCompany) || 0) + duration);
-          }
+      if (m) {
+        start = parseInt(m[1], 10);
+        const endRaw = m[2].toLowerCase();
+        end = (endRaw === 'present') ? nowYear : parseInt(endRaw, 10);
+      } else {
+        // Fallback: extract all 4-digit years for unusual formats (e.g. "15 Aug 2015 to 10 Dec 2020")
+        const years = durationStr.match(/\b(\d{4})\b/g);
+        const hasPresent = /\bpresent\b/i.test(durationStr);
+        if (years && years.length >= 2) {
+          start = parseInt(years[0], 10);
+          end = parseInt(years[years.length - 1], 10);
+        } else if (years && years.length === 1 && hasPresent) {
+          start = parseInt(years[0], 10);
+          end = nowYear;
         }
+      }
+      
+      if (start === null || end === null || isNaN(start) || isNaN(end)) continue;
+      if (start < 1950 || start > nowYear) continue;
+      if (end < start || (end - start) > 50) continue;
+      
+      const normalizedCompany = normalizeCompanyName(company);
+      if (normalizedCompany) {
+        allPeriods.push([start, end]);
+        if (!employerPeriodMap.has(normalizedCompany)) {
+          employerPeriodMap.set(normalizedCompany, []);
+        }
+        employerPeriodMap.get(normalizedCompany).push([start, end]);
       }
     }
     
-    if (employerDurations.size === 0) {
+    if (employerPeriodMap.size === 0) {
       return null;
     }
     
-    // Calculate total duration and count unique employers
-    let totalDuration = 0;
-    for (const duration of employerDurations.values()) {
-      totalDuration += duration;
-    }
-    const uniqueEmployers = employerDurations.size;
+    // Helper: sort-merge a list of [start,end] pairs
+    const mergePeriods = (periods) => {
+      periods.sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      for (const [s, e] of periods) {
+        if (merged.length > 0 && s <= merged[merged.length - 1][1]) {
+          merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e);
+        } else {
+          merged.push([s, e]);
+        }
+      }
+      return merged;
+    };
     
-    // Tenure = total duration / unique employers
-    const tenure = totalDuration / uniqueEmployers;
+    // Per-employer merge + inclusive counting → tenure
+    let perEmployerTotal = 0;
+    for (const periods of employerPeriodMap.values()) {
+      for (const [s, e] of mergePeriods(periods)) {
+        perEmployerTotal += e - s + 1;
+      }
+    }
+    const uniqueEmployers = employerPeriodMap.size;
+    const tenure = perEmployerTotal / uniqueEmployers;
     return Math.round(tenure * 10) / 10;
   } catch (e) {
     console.warn('computeTenureFromExperienceText error', e);
@@ -6854,38 +6882,71 @@ function escapeHtml(str){
   return String(str||'').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 }
 
+// Per-text cache: keyed by normalized text, value is the resolved formatted string.
+// Prevents duplicate Gemini calls when the same experience text is processed
+// multiple times within one page session.
+if (!window.__sv_expfmt_cache) window.__sv_expfmt_cache = new Map();
+
+// In-flight dedup: keyed by normalized text, value is a Promise.
+// If a Gemini call is already in progress for this text, callers await the same Promise.
+if (!window.__sv_expfmt_inflight) window.__sv_expfmt_inflight = new Map();
+
 async function formatExperienceText(raw){
   const text = (raw||'').toString().trim();
   if(!text) return '';
-  
-  if(!window.__GEMINI_EXPERIENCE_FORMAT_API) window.__GEMINI_EXPERIENCE_FORMAT_API = '/gemini/experience_format';
-  
-  try {
-    const res = await fetch(window.__GEMINI_EXPERIENCE_FORMAT_API, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ text })
-    });
-    if(!res.ok) throw new Error('Experience format API failed');
-    const data = await res.json();
-    
-    // Construct simplified string that includes the full experience and education arrays
-    let out = '';
-    if(data.experience && data.experience.length) {
-      out += 'Experience\n' + data.experience.join('\n') + '\n\n';
-    }
-    if(data.education && data.education.length) {
-      out += 'Education\n' + data.education.join('\n') + '\n\n';
-    }
-    if(data.language && data.language.length) {
-      out += 'Language\n' + data.language.join('\n');
-    }
-    // Return the combined formatted content (not truncated to one record)
-    return out.trim() || text; // fallback to raw
-  } catch(e) {
-    console.warn('Experience format error', e);
-    return text;
+
+  // 1. Return from cache if already resolved for this text
+  if (window.__sv_expfmt_cache.has(text)) {
+    return window.__sv_expfmt_cache.get(text);
   }
+
+  // 2. If a Gemini call is already in flight for this text, await it
+  if (window.__sv_expfmt_inflight.has(text)) {
+    return window.__sv_expfmt_inflight.get(text);
+  }
+
+  if(!window.__GEMINI_EXPERIENCE_FORMAT_API) window.__GEMINI_EXPERIENCE_FORMAT_API = '/gemini/experience_format';
+
+  const promise = (async () => {
+    try {
+      const res = await fetch(window.__GEMINI_EXPERIENCE_FORMAT_API, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ text })
+      });
+      if(!res.ok) throw new Error('Experience format API failed');
+      const data = await res.json();
+      
+      // Construct simplified string that includes the full experience and education arrays
+      let out = '';
+      if(data.experience && data.experience.length) {
+        out += 'Experience\n' + data.experience.join('\n') + '\n\n';
+      }
+      if(data.education && data.education.length) {
+        out += 'Education\n' + data.education.join('\n') + '\n\n';
+      }
+      if(data.language && data.language.length) {
+        out += 'Language\n' + data.language.join('\n');
+      }
+      const result = out.trim() || text; // fallback to raw
+
+      // Store in resolved cache and propagate total_years/tenure to namecard cache
+      window.__sv_expfmt_cache.set(text, result);
+      if (typeof data.total_years !== 'undefined' || typeof data.tenure !== 'undefined') {
+        window.__sv_expfmt_cache.set(text + '__meta', { total_years: data.total_years, tenure: data.tenure });
+      }
+      return result;
+    } catch(e) {
+      console.warn('Experience format error', e);
+      return text;
+    } finally {
+      window.__sv_expfmt_inflight.delete(text);
+    }
+  })();
+
+  // 3. Register in-flight promise so concurrent callers share it
+  window.__sv_expfmt_inflight.set(text, promise);
+  return promise;
 }
 
 /* ========================================================= */
