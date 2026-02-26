@@ -1789,5 +1789,108 @@ class TestFormatExperienceTextCache(unittest.TestCase):
         self.assertEqual(cache[meta_key]["tenure"], 7.0)
 
 
+def _sync_metric_tokens(backend_token, effective_total, session_store, calls):
+    """
+    Python mirror of the syncMetricTokens sessionStorage guard in SourcingVerify.html.
+
+    ``session_store``  – dict simulating sessionStorage (persists across reloads).
+    ``calls``          – list that records each TOKEN_UPDATE_API payload emitted,
+                         allowing tests to assert how many persists occurred.
+    Returns leftComputed (int).
+    """
+    TOTAL_SEARCH_TOKEN_BASE = 5000
+    LAST_COUNT_KEY = "sv_token_last_result_count"
+
+    try:
+        acct_token = int(backend_token)
+        if acct_token < 0:
+            raise ValueError
+        left_computed = max(0, acct_token - effective_total)
+    except (TypeError, ValueError):
+        left_computed = max(0, TOTAL_SEARCH_TOKEN_BASE - effective_total)
+
+    stored_raw = session_store.get(LAST_COUNT_KEY)
+    stored_count = int(stored_raw) if stored_raw is not None else None
+    if stored_count is None or stored_count != effective_total:
+        session_store[LAST_COUNT_KEY] = str(effective_total)
+        calls.append({"token": left_computed})
+
+    return left_computed
+
+
+class TestSyncMetricTokensSessionGuard(unittest.TestCase):
+    """
+    Verifies the sessionStorage guard that prevents TOKEN_UPDATE_API from being
+    called on every page refresh.
+
+    The guard (sv_token_last_result_count in sessionStorage) ensures the persist
+    only fires when effective_total changes — i.e. a new search was executed.
+    """
+
+    def _run(self, backend_token, effective_total, session_store, calls):
+        return _sync_metric_tokens(backend_token, effective_total, session_store, calls)
+
+    # ------------------------------------------------------------------
+    # First load
+    # ------------------------------------------------------------------
+
+    def test_first_load_persists_once(self):
+        """On first page load (empty sessionStorage) the token is persisted exactly once."""
+        store, calls = {}, []
+        self._run(5000, 100, store, calls)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["token"], 4900)
+
+    # ------------------------------------------------------------------
+    # Page refresh — same result count
+    # ------------------------------------------------------------------
+
+    def test_page_refresh_same_count_no_additional_deduction(self):
+        """Refreshing the page (same result count) must NOT trigger another persist."""
+        store, calls = {}, []
+        self._run(5000, 100, store, calls)   # initial load
+        self._run(4900, 100, store, calls)   # refresh — acctToken already reduced
+        # Only the first call should have triggered a persist
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["token"], 4900)
+
+    def test_multiple_refreshes_no_extra_deductions(self):
+        """Ten consecutive page refreshes must not increase the number of persists."""
+        store, calls = {}, []
+        self._run(5000, 100, store, calls)   # initial search
+        for _ in range(10):
+            self._run(4900, 100, store, calls)   # simulate F5 ten times
+        self.assertEqual(len(calls), 1)
+
+    def test_token_value_does_not_decrease_on_refresh(self):
+        """The persisted token value must remain at the initial leftComputed on refresh."""
+        store, calls = {}, []
+        self._run(5000, 200, store, calls)   # leftComputed = 4800
+        self._run(4800, 200, store, calls)   # refresh
+        self._run(4800, 200, store, calls)   # refresh again
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["token"], 4800)
+
+    # ------------------------------------------------------------------
+    # New search — different result count
+    # ------------------------------------------------------------------
+
+    def test_new_search_triggers_new_persist(self):
+        """A new search returning a different result count must produce a new persist."""
+        store, calls = {}, []
+        self._run(5000, 100, store, calls)   # first search: 100 results
+        self._run(4900, 150, store, calls)   # second search: 150 results
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["token"], 4750)  # 4900 - 150
+
+    def test_result_count_returning_to_original_triggers_persist(self):
+        """If a follow-up search returns the original count again, a persist fires."""
+        store, calls = {}, []
+        self._run(5000, 100, store, calls)   # first search
+        self._run(4900, 50, store, calls)    # second search — different count
+        self._run(4850, 100, store, calls)   # third search — back to 100
+        self.assertEqual(len(calls), 3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
