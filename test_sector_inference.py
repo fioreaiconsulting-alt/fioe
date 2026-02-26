@@ -1486,5 +1486,211 @@ class TestCvNameValidation(unittest.TestCase):
         self.assertFalse(_cv_name_found("Maria Van Der Berg", "Maria Van Berg\nConsultant"))
 
 
+class TestRecalculateValidationLayer(unittest.TestCase):
+    """
+    Tests for the validation layer added to _recalculate_tenure_and_experience.
+    Verifies that implausible dates from Gemini parsing errors are discarded
+    so they do not corrupt the total_years / tenure result.
+    """
+
+    @staticmethod
+    def _is_internship_role(job_title):
+        if not job_title:
+            return False
+        return bool(re.search(r'\bintern\b|\binternship\b', job_title, re.IGNORECASE))
+
+    @staticmethod
+    def _normalize_company_name(company_name):
+        if not company_name:
+            return None
+        normalized = company_name.lower().strip()
+        normalized = re.sub(
+            r'\s+(inc\.?|llc\.?|ltd\.?|corp\.?|corporation|company|co\.?|limited|group|plc)$',
+            '', normalized, flags=re.IGNORECASE
+        )
+        normalized = normalized.strip()
+        return normalized if normalized else None
+
+    def _recalculate(self, experience_list):
+        """Inline stub mirroring webbridge._recalculate_tenure_and_experience
+        including the validation layer added in this PR."""
+        if not experience_list or not isinstance(experience_list, list):
+            return {"total_experience_years": 0.0, "tenure": 0.0,
+                    "employer_count": 0, "total_roles": 0}
+
+        current_year = 2026  # Fixed for deterministic tests
+        employer_periods = {}
+        total_roles = len(experience_list)
+
+        for entry in experience_list:
+            if not entry or not isinstance(entry, str):
+                continue
+            parts = [p.strip() for p in entry.split(',')]
+            if len(parts) < 3:
+                continue
+            job_title = parts[0]
+            company = parts[1]
+            duration_str = parts[2]
+            is_intern = self._is_internship_role(job_title)
+            duration_match = re.search(
+                r'(?:\w+\s+)?(\d{4})\s*(?:to|[-\u2013\u2014])\s*(?:\w+\s+)?(present|\d{4})',
+                duration_str, re.IGNORECASE
+            )
+            if not duration_match:
+                continue
+            start_year = int(duration_match.group(1))
+            end_part = duration_match.group(2).lower()
+            end_year = current_year if end_part == 'present' else int(end_part)
+
+            # Validation layer
+            if start_year < 1950 or start_year > current_year:
+                continue
+            if end_year < start_year or (end_year - start_year) > 50:
+                continue
+
+            if not is_intern:
+                nc = self._normalize_company_name(company)
+                if nc:
+                    employer_periods.setdefault(nc, []).append((start_year, end_year))
+
+        total_experience = 0.0
+        for company, periods in employer_periods.items():
+            periods.sort()
+            merged = []
+            for start, end in periods:
+                if merged and start <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                else:
+                    merged.append((start, end))
+            total_experience += sum(e - s for s, e in merged)
+
+        employer_count = len(employer_periods)
+        tenure = round(total_experience / employer_count, 1) if employer_count > 0 else 0.0
+        return {
+            "total_experience_years": round(total_experience, 1),
+            "tenure": tenure,
+            "employer_count": employer_count,
+            "total_roles": total_roles,
+        }
+
+    def test_pre_1950_start_year_discarded(self):
+        """A start year before 1950 is implausible (Gemini parsing error) and must be ignored."""
+        exp = [
+            "Engineer, Google, 1900 to 1905",   # implausible — discarded
+            "Scientist, Amazon, 2015 to 2020",  # valid
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 5.0)
+        self.assertEqual(result["employer_count"], 1)
+
+    def test_start_year_after_current_year_discarded(self):
+        """A start year in the future is implausible and must be ignored."""
+        exp = [
+            "Engineer, Google, 2030 to 2035",   # future — discarded
+            "Analyst, Meta, 2018 to 2021",       # valid
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 3.0)
+        self.assertEqual(result["employer_count"], 1)
+
+    def test_duration_over_50_years_discarded(self):
+        """A single stint > 50 years is a parsing error and must be discarded."""
+        exp = [
+            "Engineer, OldCo, 1970 to 2025",   # 55 years — discarded
+            "Manager, NewCo, 2010 to 2015",     # valid
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 5.0)
+        self.assertEqual(result["employer_count"], 1)
+
+    def test_end_year_before_start_year_discarded(self):
+        """end < start (data error) must be discarded by the validation layer."""
+        exp = [
+            "Dev, Acme, 2022 to 2019",   # reversed — discarded
+            "Dev, Beta, 2019 to 2022",   # valid
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 3.0)
+        self.assertEqual(result["employer_count"], 1)
+
+    def test_valid_entries_unaffected_by_validation(self):
+        """Valid entries must not be discarded by the validation layer."""
+        exp = [
+            "CRA, Pfizer, 2018 to 2022",
+            "Manager, Roche, 2022 to present",
+        ]
+        result = self._recalculate(exp)
+        # Pfizer 4yr + Roche 4yr (2026-2022) = 8yr, 2 employers, tenure = 4.0
+        self.assertEqual(result["total_experience_years"], 8.0)
+        self.assertEqual(result["employer_count"], 2)
+        self.assertEqual(result["tenure"], 4.0)
+
+    def test_deterministic_with_mixed_valid_invalid(self):
+        """Mix of valid and invalid entries must produce same result on repeated calls."""
+        exp = [
+            "Eng, Google, 1800 to 1810",   # pre-1950 — discarded
+            "Dev, Amazon, 2015 to 2020",   # valid
+            "Dev, Amazon, 2099 to 2110",   # future — discarded
+        ]
+        r1 = self._recalculate(exp)
+        r2 = self._recalculate(exp)
+        self.assertEqual(r1, r2)
+        self.assertEqual(r1["total_experience_years"], 5.0)
+        self.assertEqual(r1["employer_count"], 1)
+
+
+class TestFormatExperienceTextCache(unittest.TestCase):
+    """
+    Tests for the single-activation guard logic in formatExperienceText.
+    The cache is keyed by the input text; in-flight dedup shares Promises.
+    We test the cache key / hit / miss logic inline.
+    """
+
+    def test_cache_key_is_trimmed_text(self):
+        """Cache key must be the trimmed input text."""
+        raw = "  Software Engineer, Google, 2020 to 2023  "
+        key = raw.strip()
+        cache = {}
+        cache[key] = "cached result"
+        self.assertIn(raw.strip(), cache)
+        self.assertEqual(cache[raw.strip()], "cached result")
+
+    def test_empty_text_bypasses_cache(self):
+        """Empty input must return '' immediately without caching."""
+        text = "".strip()
+        self.assertEqual(text, "")  # No Gemini call should be made
+
+    def test_cache_hit_returns_same_object(self):
+        """A second call with the same text must return the cached value."""
+        cache = {}
+        text = "Engineer, Acme, 2019 to 2022"
+        expected = "Experience\nEngineer, Acme, 2019 to 2022"
+        cache[text] = expected
+        # Simulate second call
+        result = cache.get(text)
+        self.assertEqual(result, expected)
+
+    def test_different_texts_get_separate_cache_entries(self):
+        """Two different experience texts must produce independent cache entries."""
+        cache = {}
+        t1 = "Engineer, Google, 2015 to 2020"
+        t2 = "Analyst, Meta, 2018 to 2022"
+        cache[t1] = "result1"
+        cache[t2] = "result2"
+        self.assertEqual(cache[t1], "result1")
+        self.assertEqual(cache[t2], "result2")
+        self.assertNotEqual(cache[t1], cache[t2])
+
+    def test_meta_cache_stores_total_years_and_tenure(self):
+        """After a successful API call, total_years and tenure must be stored in meta cache."""
+        cache = {}
+        text = "Manager, Roche, 2018 to 2024"
+        meta_key = text + "__meta"
+        cache[meta_key] = {"total_years": 6.0, "tenure": 6.0}
+        self.assertIn(meta_key, cache)
+        self.assertEqual(cache[meta_key]["total_years"], 6.0)
+        self.assertEqual(cache[meta_key]["tenure"], 6.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

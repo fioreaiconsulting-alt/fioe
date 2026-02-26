@@ -6962,10 +6962,18 @@ def _recalculate_tenure_and_experience(experience_list):
         else:
             end_year = int(end_part)
         
+        # Validation layer: discard implausible dates to prevent parsing errors
+        # from propagating into the calculation.
+        if start_year < 1950 or start_year > current_year:
+            continue
+        if end_year < start_year or (end_year - start_year) > 50:
+            continue
+        
         # Calculate duration in years
         # Note: This calculates full years only (2020 to 2021 = 1 year)
         # Partial years are not accounted for due to limited date precision in CV format
-        if end_year >= start_year and not is_intern:
+        # (end_year >= start_year is already guaranteed by the validation layer above)
+        if not is_intern:
             # Track periods per employer to handle overlaps
             normalized_company = _normalize_company_name(company)
             if normalized_company:

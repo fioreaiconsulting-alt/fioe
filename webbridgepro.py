@@ -1625,7 +1625,18 @@ def gemini_experience_format():
         edu_out = [str(x).strip() for x in education if str(x).strip()]
         lang_out = [str(x).strip() for x in language if str(x).strip()]
 
-        return jsonify({"experience": exp_out, "education": edu_out, "language": lang_out}), 200
+        # Deterministic recalculation: override Gemini's numeric values with
+        # the authoritative rule-based function so every caller gets consistent
+        # total_years and tenure regardless of Gemini variance.
+        recalc = _recalculate_tenure_and_experience(exp_out)
+
+        return jsonify({
+            "experience": exp_out,
+            "education": edu_out,
+            "language": lang_out,
+            "total_years": recalc["total_experience_years"],
+            "tenure": recalc["tenure"],
+        }), 200
     except Exception as e:
         logger.warning(f"[Gemini Experience Format] {e}")
         return jsonify({"error": str(e)}), 500
@@ -5815,17 +5826,25 @@ def _recalculate_tenure_and_experience(experience_list):
         else:
             end_year = int(end_part)
         
+        # Validation layer: discard implausible dates to prevent parsing errors
+        # from propagating into the calculation.
+        if start_year < 1950 or start_year > current_year:
+            continue
+        if end_year < start_year or (end_year - start_year) > 50:
+            continue
+        
         # Calculate duration in years
         # Note: This calculates full years only (2020 to 2021 = 1 year)
         # Partial years are not accounted for due to limited date precision in CV format
-        if end_year >= start_year and not is_intern:
+        # (end_year >= start_year is already guaranteed by the validation layer above)
+        if not is_intern:
             # Track periods per employer to handle overlaps
             normalized_company = _normalize_company_name(company)
             if normalized_company:
                 if normalized_company not in employer_periods:
                     employer_periods[normalized_company] = []
                 employer_periods[normalized_company].append((start_year, end_year))
-    
+
     # Merge overlapping/duplicate periods for each employer
     total_experience = 0.0
     for company, periods in employer_periods.items():
