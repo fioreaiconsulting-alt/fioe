@@ -9872,7 +9872,7 @@ def _startup_backfill_role_tag_session():
         pg_db = os.getenv("PGDATABASE", "candidate_db")
         conn = psycopg2.connect(
             host=pg_host, port=pg_port, user=pg_user,
-            ****** dbname=pg_db
+            password=pg_password, dbname=pg_db
         )
         cur = conn.cursor()
         try:
