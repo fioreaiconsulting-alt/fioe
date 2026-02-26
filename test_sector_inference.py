@@ -1253,11 +1253,11 @@ class TestRecalculateTenureAndExperience(unittest.TestCase):
 
     def _recalculate(self, experience_list):
         """Inline stub mirroring webbridge._recalculate_tenure_and_experience.
-        Uses global merge + inclusive year counting to eliminate underestimation."""
+        Uses two-step approach: baseline range + detailed global-merge adjustment."""
         from datetime import datetime
         if not experience_list or not isinstance(experience_list, list):
-            return {"total_experience_years": 0.0, "tenure": 0.0,
-                    "employer_count": 0, "total_roles": 0}
+            return {"total_experience_years": 0.0, "baseline_years": 0.0,
+                    "tenure": 0.0, "employer_count": 0, "total_roles": 0}
 
         current_year = 2026  # Fixed for deterministic tests
         all_periods = []        # global for total_experience_years
@@ -1301,7 +1301,15 @@ class TestRecalculateTenureAndExperience(unittest.TestCase):
                     employer_periods.setdefault(nc, []).append((start_year, end_year))
                     all_periods.append((start_year, end_year))
 
-        # Global merge + inclusive counting for total experience
+        # Step 1: Baseline range (earliest start → latest end/present)
+        if all_periods:
+            baseline_years = float(
+                max(e for _, e in all_periods) - min(s for s, _ in all_periods) + 1
+            )
+        else:
+            baseline_years = 0.0
+
+        # Step 2: Global merge + inclusive counting for total experience
         all_periods.sort()
         merged_global = []
         for s, e in all_periods:
@@ -1327,6 +1335,7 @@ class TestRecalculateTenureAndExperience(unittest.TestCase):
         tenure = round(per_employer_total / employer_count, 1) if employer_count > 0 else 0.0
         return {
             "total_experience_years": round(total_experience, 1),
+            "baseline_years": baseline_years,
             "tenure": tenure,
             "employer_count": employer_count,
             "total_roles": total_roles,
@@ -1495,6 +1504,119 @@ class TestRecalculateTenureAndExperience(unittest.TestCase):
         self.assertEqual(result["total_experience_years"], 6.0)  # 2020-2015+1
         self.assertEqual(result["employer_count"], 1)
 
+    # ----------------------------------------------------------------
+    # Two-step method: baseline range + detailed adjustment
+    # ----------------------------------------------------------------
+
+    def test_two_step_contiguous_career_total_equals_baseline(self):
+        """When there are no gaps, total_experience_years must equal baseline_years.
+        Google 2015-2018 + Amazon 2018-2021 (touching boundary): baseline = 2021-2015+1 = 7,
+        merged total = 7 (no gap), so both steps agree."""
+        exp = [
+            "Engineer, Google, 2015 to 2018",
+            "Scientist, Amazon, 2018 to 2021",
+        ]
+        result = self._recalculate(exp)
+        # Baseline: 2021 - 2015 + 1 = 7 years
+        self.assertEqual(result["baseline_years"], 7.0)
+        # Detailed (Step 2): merged to (2015,2021) = 7 years — matches baseline
+        self.assertEqual(result["total_experience_years"], 7.0)
+        self.assertEqual(result["total_experience_years"], result["baseline_years"])
+
+    def test_two_step_career_with_gap_detailed_less_than_baseline(self):
+        """When there is a gap between jobs, total_experience_years < baseline_years.
+        Google 2015-2017, then Alpha 2020-2022 (3-year gap): baseline = 8 but actual = 6."""
+        exp = [
+            "Engineer, Google, 2015 to 2017",
+            "Manager, Alpha Corp, 2020 to 2022",
+        ]
+        result = self._recalculate(exp)
+        # Baseline: 2022 - 2015 + 1 = 8 years (full span including gap)
+        self.assertEqual(result["baseline_years"], 8.0)
+        # Detailed (Step 2): (2015,2017)=3yr + (2020,2022)=3yr = 6yr (gap deducted)
+        self.assertEqual(result["total_experience_years"], 6.0)
+        self.assertLess(result["total_experience_years"], result["baseline_years"])
+
+    def test_two_step_overlapping_roles_total_less_than_naive_sum(self):
+        """Overlapping concurrent roles must not double-count years.
+        Baseline = 2021-2015+1 = 7; naive sum = 10; merged = 7."""
+        exp = [
+            "Engineer, Google, 2015 to 2019",
+            "Consultant, McKinsey, 2017 to 2021",
+        ]
+        result = self._recalculate(exp)
+        # Baseline: 2021 - 2015 + 1 = 7 years
+        self.assertEqual(result["baseline_years"], 7.0)
+        # Detailed (Step 2): merged (2015,2021) = 7 years — no double-counting
+        self.assertEqual(result["total_experience_years"], 7.0)
+        # Verify it's strictly less than the naive (non-merged) sum of 5 + 5 = 10
+        naive_sum = (2019 - 2015 + 1) + (2021 - 2017 + 1)
+        self.assertLess(result["total_experience_years"], naive_sum)
+
+    def test_two_step_baseline_is_full_span(self):
+        """baseline_years = max_end_year − min_start_year + 1 regardless of gaps."""
+        exp = [
+            "Dev, Alpha, 2010 to 2012",
+            "Dev, Beta, 2018 to 2020",
+        ]
+        result = self._recalculate(exp)
+        # Baseline: 2020 - 2010 + 1 = 11 (includes the 5-year gap 2013-2017)
+        self.assertEqual(result["baseline_years"], 11.0)
+        # Detailed: (2010,2012)=3yr + (2018,2020)=3yr = 6yr
+        self.assertEqual(result["total_experience_years"], 6.0)
+
+    # ----------------------------------------------------------------
+    # No-underestimation property
+    # ----------------------------------------------------------------
+
+    def test_no_underestimation_single_job_inclusive_counting(self):
+        """A single job must contribute end_year - start_year + 1 years (inclusive).
+        2020 to 2020 = 1 year, not 0. 2020 to 2023 = 4 years, not 3."""
+        single_year = self._recalculate(["Analyst, Co, 2020 to 2020"])
+        self.assertEqual(single_year["total_experience_years"], 1.0,
+                         "Single-year role must count as 1 year (inclusive), not 0")
+
+        four_year = self._recalculate(["Engineer, Co, 2020 to 2023"])
+        self.assertEqual(four_year["total_experience_years"], 4.0,
+                         "2020-2023 must count as 4 years (inclusive), not 3")
+
+    def test_no_underestimation_boundary_year_counted_once(self):
+        """The shared boundary year between consecutive jobs must count once, not be dropped.
+        Alpha 2015-2018 + Beta 2018-2020: boundary year 2018 is part of merged (2015,2020)=6yr."""
+        exp = [
+            "Engineer, Alpha Corp, 2015 to 2018",
+            "Manager, Beta Inc, 2018 to 2020",
+        ]
+        result = self._recalculate(exp)
+        # 2015,2016,2017,2018,2019,2020 = 6 unique working years
+        self.assertEqual(result["total_experience_years"], 6.0,
+                         "Boundary year 2018 must be counted once, not dropped")
+        # Ensure we are NOT getting 7 (double-count) or 5 (drop boundary)
+        self.assertNotEqual(result["total_experience_years"], 5.0)
+        self.assertNotEqual(result["total_experience_years"], 7.0)
+
+    def test_no_underestimation_current_year_present_role(self):
+        """A role 'to present' must use current_year (2026) and count inclusive.
+        2020 to present = 2026 - 2020 + 1 = 7 years."""
+        exp = ["Lead, Co, 2020 to present"]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 7.0,
+                         "2020-to-present must equal 7 years (2026-2020+1), not 6")
+
+    def test_no_underestimation_bulk_multiple_employers(self):
+        """Bulk scenario: three non-overlapping employers must sum correctly.
+        A: 2012-2015=4yr, B: 2016-2018=3yr, C: 2019-2022=4yr → total=11yr."""
+        exp = [
+            "Analyst, A Corp, 2012 to 2015",
+            "Specialist, B Ltd, 2016 to 2018",
+            "Manager, C Inc, 2019 to 2022",
+        ]
+        result = self._recalculate(exp)
+        self.assertEqual(result["total_experience_years"], 11.0)
+        self.assertEqual(result["employer_count"], 3)
+        # Baseline: 2022-2012+1 = 11 (the three non-overlapping periods sum to the full span)
+        self.assertEqual(result["baseline_years"], 11.0)
+
 
 def _cv_name_found(candidate_name: str, pdf_text: str) -> bool:
     """
@@ -1587,10 +1709,10 @@ class TestRecalculateValidationLayer(unittest.TestCase):
 
     def _recalculate(self, experience_list):
         """Inline stub mirroring webbridge._recalculate_tenure_and_experience
-        including both the validation layer and the inclusive-counting fix."""
+        including both the validation layer and the two-step baseline + adjustment."""
         if not experience_list or not isinstance(experience_list, list):
-            return {"total_experience_years": 0.0, "tenure": 0.0,
-                    "employer_count": 0, "total_roles": 0}
+            return {"total_experience_years": 0.0, "baseline_years": 0.0,
+                    "tenure": 0.0, "employer_count": 0, "total_roles": 0}
 
         current_year = 2026  # Fixed for deterministic tests
         all_periods = []
@@ -1637,7 +1759,15 @@ class TestRecalculateValidationLayer(unittest.TestCase):
                     employer_periods.setdefault(nc, []).append((start_year, end_year))
                     all_periods.append((start_year, end_year))
 
-        # Global merge + inclusive counting
+        # Step 1: Baseline range (earliest start → latest end/present)
+        if all_periods:
+            baseline_years = float(
+                max(e for _, e in all_periods) - min(s for s, _ in all_periods) + 1
+            )
+        else:
+            baseline_years = 0.0
+
+        # Step 2: Global merge + inclusive counting
         all_periods.sort()
         merged_global = []
         for s, e in all_periods:
@@ -1663,6 +1793,7 @@ class TestRecalculateValidationLayer(unittest.TestCase):
         tenure = round(per_employer_total / employer_count, 1) if employer_count > 0 else 0.0
         return {
             "total_experience_years": round(total_experience, 1),
+            "baseline_years": baseline_years,
             "tenure": tenure,
             "employer_count": employer_count,
             "total_roles": total_roles,

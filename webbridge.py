@@ -6943,18 +6943,28 @@ def _recalculate_tenure_and_experience(experience_list):
     """
     Recalculate total_experience_years and tenure from experience list.
 
+    Two-step calculation approach:
+      Step 1 – Baseline range: Compute max_end_year − min_start_year + 1 as the
+               upper-bound reference.  This represents the full career span from
+               the earliest start to the latest end/present date.
+      Step 2 – Detailed adjustment: Apply a global timeline merge across all
+               employers to account for overlapping concurrent roles and gaps
+               (periods of non-employment).  The merged sum is the refined total
+               and is always ≤ baseline_years (gaps reduce it below the ceiling).
+
     Calculation rules:
     1. Internship roles are excluded from both total_experience and employer count.
-    2. total_experience_years uses a GLOBAL timeline merge (across all employers) so that
+    2. total_experience_years uses the Step 2 globally-merged timeline so that
        cross-employer overlapping or boundary-sharing years are counted only once.
-       Inclusive year counting is used: a segment [s, e] contributes (e - s + 1) years
-       because both the start year and the end year represent working years.
-    3. Tenure uses a PER-EMPLOYER timeline merge with inclusive counting, then averages
-       across unique employer count.  This reflects how long the person typically commits
-       to each organisation, independent of concurrency with other employers.
-    4. Implausible dates (start < 1950, start > current_year, end < start, span > 50 yr)
-       are discarded before the calculation to prevent Gemini parsing errors from
-       corrupting results.
+       Inclusive year counting is used: a segment [s, e] contributes (e - s + 1)
+       years because both the start year and the end year represent working years.
+    3. Tenure uses a PER-EMPLOYER timeline merge with inclusive counting, then
+       averages across unique employer count.  This reflects how long the person
+       typically commits to each organisation, independent of concurrency with
+       other employers.
+    4. Implausible dates (start < 1950, start > current_year, end < start,
+       span > 50 yr) are discarded before the calculation to prevent Gemini
+       parsing errors from corrupting results.
 
     Args:
         experience_list: List of experience strings in format
@@ -6963,7 +6973,8 @@ def _recalculate_tenure_and_experience(experience_list):
 
     Returns:
         dict: {
-            "total_experience_years": float,  # Globally-merged inclusive total
+            "total_experience_years": float,  # Step-2 globally-merged inclusive total
+            "baseline_years": float,          # Step-1 full career span (max−min+1)
             "tenure": float,  # Average per-employer inclusive tenure (excl. internships)
             "employer_count": int,  # Unique non-intern employer count
             "total_roles": int      # All roles including internships
@@ -6972,6 +6983,7 @@ def _recalculate_tenure_and_experience(experience_list):
     if not experience_list or not isinstance(experience_list, list):
         return {
             "total_experience_years": 0.0,
+            "baseline_years": 0.0,
             "tenure": 0.0,
             "employer_count": 0,
             "total_roles": 0
@@ -7036,7 +7048,17 @@ def _recalculate_tenure_and_experience(experience_list):
                 employer_periods.setdefault(normalized_company, []).append((start_year, end_year))
                 all_periods.append((start_year, end_year))
 
-    # ── Total experience: global timeline merge + inclusive counting ──────────
+    # ── Step 1: Baseline range (earliest start → latest end/present) ─────────
+    # Provides a reference ceiling: total_experience_years can never exceed
+    # max_end_year − min_start_year + 1 (the full career span).
+    if all_periods:
+        baseline_years = float(
+            max(e for _, e in all_periods) - min(s for s, _ in all_periods) + 1
+        )
+    else:
+        baseline_years = 0.0
+
+    # ── Step 2: Detailed adjustment (overlaps and gaps) ───────────────────────
     # Global merge ensures cross-employer boundary years (e.g. end 2020 / start 2020)
     # are counted only once, and overlapping concurrent roles don't inflate totals.
     all_periods.sort()
@@ -7068,6 +7090,7 @@ def _recalculate_tenure_and_experience(experience_list):
 
     return {
         "total_experience_years": round(total_experience, 1),
+        "baseline_years": baseline_years,
         "tenure": tenure,
         "employer_count": employer_count,
         "total_roles": total_roles
