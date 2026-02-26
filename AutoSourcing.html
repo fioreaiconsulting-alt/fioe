@@ -848,7 +848,18 @@ async function updateRoleTagOnServer(tag) {
         } else {
           res = await fetch(a.url, { method: 'GET', credentials: 'same-origin' });
         }
-        if (res && res.ok) return;
+        if (res && res.ok) {
+          try {
+            const data = await res.json();
+            if (data && data.role_tag_session) {
+              try {
+                sessionStorage.setItem('role_tag_session', data.role_tag_session);
+                localStorage.setItem('role_tag_session', data.role_tag_session);
+              } catch (_) {}
+            }
+          } catch (_) {}
+          return;
+        }
         if (res && (res.status === 405 || res.status === 404)) { continue; }
       } catch(e){ continue; }
     }
