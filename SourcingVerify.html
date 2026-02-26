@@ -2342,46 +2342,55 @@ let __metricsInitialized = false;
 let __prevResults = null;
 async function persistFinalToken(_left){}
 function schedulePersist(_left){}
+// Updated syncMetricTokens: don't persist to TOKEN_UPDATE_API when backend token is unknown.
+// Wait until account_token is available to call the backend, preventing double-deductions.
 function syncMetricTokens(backendToken){
   const totalTokenEl = document.getElementById('totalToken');
   const tokensLeftEl = document.getElementById('tokensLeft');
   const totalResultsEl = document.getElementById('totalResults');
+
   const effectiveTotal = typeof totalRowCount === 'number' && totalRowCount > 0 ? totalRowCount : rowsData.length;
   totalResultsEl.textContent = String(effectiveTotal);
-  const acctToken = Number(backendToken);
-  let leftComputed = 0;
-  if(!isNaN(acctToken) && acctToken >= 0){
-    totalTokenEl.textContent = String(acctToken);
-    leftComputed = Math.max(0, acctToken - effectiveTotal);
-    tokensLeftEl.textContent = String(leftComputed);
-  } else {
-    totalTokenEl.textContent = String(TOTAL_SEARCH_TOKEN_BASE);
-    leftComputed = Math.max(0, TOTAL_SEARCH_TOKEN_BASE - effectiveTotal);
-    tokensLeftEl.textContent = String(leftComputed);
-  }
-  __prevResults = effectiveTotal;
-  if (!__metricsInitialized) __metricsInitialized = true;
 
-  // Persist the computed tokens-left value to the login table, but only when
-  // the result count has changed (i.e., a new search was executed).
-  // A sessionStorage guard (frontend) AND a last_result_count column guard (backend)
-  // together prevent page refreshes from re-deducting the same results, ensuring
-  // the token balance decreases exactly once per unique search result count.
-  const uid = window.__SV_ACTIVE_USERID || '';
-  if (uid) {
-    const _lastCountKey = 'sv_token_last_result_count';
-    const _storedCount = sessionStorage.getItem(_lastCountKey);
-    if (_storedCount === null || parseInt(_storedCount, 10) !== effectiveTotal) {
-      sessionStorage.setItem(_lastCountKey, String(effectiveTotal));
-      const _roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-      fetch(TOKEN_UPDATE_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userid: uid, token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag }),
-        credentials: 'same-origin'
-      }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
-    }
+  // If backendToken is not available or not numeric, just update UI and defer persistence.
+  // This avoids sending a "deduction" based on the local fallback TOTAL_SEARCH_TOKEN_BASE.
+  const acctTokenRaw = backendToken;
+  const acctTokenNum = (acctTokenRaw == null || acctTokenRaw === '') ? NaN : Number(acctTokenRaw);
+
+  if (Number.isNaN(acctTokenNum)) {
+    // Update UI from fallback base but DO NOT persist to server
+    totalTokenEl.textContent = String(TOTAL_SEARCH_TOKEN_BASE);
+    const leftComputed = Math.max(0, TOTAL_SEARCH_TOKEN_BASE - effectiveTotal);
+    tokensLeftEl.textContent = String(leftComputed);
+    // Do not call backend update when we don't have authoritative backend token.
+    return leftComputed;
   }
+
+  // We have authoritative backend token -> compute left and possibly persist
+  totalTokenEl.textContent = String(acctTokenNum);
+  const leftComputed = Math.max(0, acctTokenNum - effectiveTotal);
+  tokensLeftEl.textContent = String(leftComputed);
+
+  // Session guard key prevents repeated persists for same result_count within this browser session/tab.
+  const _lastCountKey = 'sv_token_last_result_count';
+  const _storedCount = sessionStorage.getItem(_lastCountKey);
+  if (_storedCount === null || parseInt(_storedCount, 10) !== effectiveTotal) {
+    // Persist the new result_count and leftComputed to the backend.
+    // Include role_tag (may be empty string) to support compound idempotency guard.
+    try {
+      sessionStorage.setItem(_lastCountKey, String(effectiveTotal));
+    } catch (e) {
+      console.warn('[Token update] sessionStorage write failed:', e);
+    }
+    const _roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+    fetch(TOKEN_UPDATE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ userid: window.__SV_ACTIVE_USERID || '', token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag })
+    }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
+  }
+  return leftComputed;
 }
 
 function updateDisplayCounters() {

@@ -3327,12 +3327,13 @@ def user_token_update():
                 if not existing:
                     conn.commit()
                     return jsonify({"error": "user not found"}), 404
-                current_token, stored_count, stored_role_tag = existing
+                current_token, stored_count, _stored_role_tag_raw = existing
+                stored_role_tag = (_stored_role_tag_raw or "").strip()
                 # Backend idempotency guard: skip if same result_count was already persisted.
                 # When role_tag is also provided, require that the stored role_tag also matches;
-                # a NULL stored role_tag with a provided role_tag is treated as a new session.
+                # a NULL/empty stored role_tag with a provided role_tag is treated as a new session.
                 if stored_count is not None and stored_count == result_count_int:
-                    if (not role_tag) or (stored_role_tag is not None and stored_role_tag == role_tag):
+                    if (not role_tag) or (stored_role_tag and stored_role_tag == role_tag):
                         conn.commit()
                         return jsonify({"ok": True, "token": int(current_token) if current_token is not None else 0, "skipped": True}), 200
                 # New deduction — persist updated balance, result count, and role_tag

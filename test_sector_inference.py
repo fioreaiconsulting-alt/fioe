@@ -1927,23 +1927,39 @@ def _sync_metric_tokens(backend_token, effective_total, session_store, calls):
     ``session_store``  – dict simulating sessionStorage (persists across reloads).
     ``calls``          – list that records each TOKEN_UPDATE_API payload emitted,
                          allowing tests to assert how many persists occurred.
+
+    When backend_token is None, empty, or non-numeric the function updates the UI
+    only (using the fallback base) and returns without persisting to the server.
+
     Returns leftComputed (int).
     """
     TOTAL_SEARCH_TOKEN_BASE = 5000
     LAST_COUNT_KEY = "sv_token_last_result_count"
 
-    try:
-        acct_token = int(backend_token)
-        if acct_token < 0:
-            raise ValueError
-        left_computed = max(0, acct_token - effective_total)
-    except (TypeError, ValueError):
-        left_computed = max(0, TOTAL_SEARCH_TOKEN_BASE - effective_total)
+    # Mirror JS: treat None/empty as NaN — no persist when backend token is unknown
+    acct_token_num = None
+    if backend_token is not None and backend_token != '':
+        try:
+            v = float(backend_token)
+            if v == v:  # exclude NaN (IEEE 754: NaN is the only value not equal to itself)
+                acct_token_num = int(v)
+        except (TypeError, ValueError):
+            pass
 
+    if acct_token_num is None:
+        # No authoritative token — update UI only, do not persist
+        left_computed = max(0, TOTAL_SEARCH_TOKEN_BASE - effective_total)
+        return left_computed
+
+    # Authoritative token — compute left and possibly persist
+    left_computed = max(0, acct_token_num - effective_total)
     stored_raw = session_store.get(LAST_COUNT_KEY)
     stored_count = int(stored_raw) if stored_raw is not None else None
     if stored_count is None or stored_count != effective_total:
-        session_store[LAST_COUNT_KEY] = str(effective_total)
+        try:
+            session_store[LAST_COUNT_KEY] = str(effective_total)
+        except (TypeError, AttributeError):
+            pass  # session_store is a plain dict in tests; guard is for completeness
         calls.append({"token": left_computed})
 
     return left_computed
@@ -1956,6 +1972,10 @@ class TestSyncMetricTokensSessionGuard(unittest.TestCase):
 
     The guard (sv_token_last_result_count in sessionStorage) ensures the persist
     only fires when effective_total changes — i.e. a new search was executed.
+
+    Additionally, when the authoritative backend token (account_token) is not yet
+    available (None / empty / non-numeric) the function defers all server persists
+    and only updates the UI counters from the local fallback base.
     """
 
     def _run(self, backend_token, effective_total, session_store, calls):
@@ -1971,6 +1991,36 @@ class TestSyncMetricTokensSessionGuard(unittest.TestCase):
         self._run(5000, 100, store, calls)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["token"], 4900)
+
+    # ------------------------------------------------------------------
+    # No authoritative token — defer persist
+    # ------------------------------------------------------------------
+
+    def test_no_backend_token_none_does_not_persist(self):
+        """When backend_token is None the persist must be deferred (no API call)."""
+        store, calls = {}, []
+        self._run(None, 100, store, calls)
+        self.assertEqual(len(calls), 0)
+
+    def test_no_backend_token_empty_string_does_not_persist(self):
+        """When backend_token is empty string the persist must be deferred (no API call)."""
+        store, calls = {}, []
+        self._run('', 100, store, calls)
+        self.assertEqual(len(calls), 0)
+
+    def test_no_backend_token_returns_fallback_leftcomputed(self):
+        """When backend_token is None the fallback leftComputed (base − total) is returned."""
+        store, calls = {}, []
+        result = self._run(None, 200, store, calls)
+        self.assertEqual(result, 4800)  # 5000 - 200
+
+    def test_deferred_persist_then_authoritative_token_persists(self):
+        """After a deferred load, providing the real token triggers exactly one persist."""
+        store, calls = {}, []
+        self._run(None, 100, store, calls)   # no token yet — no persist
+        self._run(4900, 100, store, calls)   # token arrives — should persist
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["token"], 4800)  # 4900 - 100
 
     # ------------------------------------------------------------------
     # Page refresh — same result count
@@ -2042,11 +2092,11 @@ def _token_update_backend_guard(db_store, userid, token_val, result_count=None, 
     row = db_store[userid]
     if result_count is not None:
         stored_count = row.get("last_result_count")
-        stored_role_tag = row.get("last_deducted_role_tag")
+        stored_role_tag = (row.get("last_deducted_role_tag") or "").strip()
         if stored_count is not None and stored_count == result_count:
             # Guard fires: skip if no role_tag is involved, or stored role_tag matches.
-            # A NULL stored_role_tag with a provided role_tag is a new session — do not skip.
-            if (not role_tag) or (stored_role_tag is not None and stored_role_tag == role_tag):
+            # A NULL/empty stored_role_tag with a provided role_tag is a new session — do not skip.
+            if (not role_tag) or (stored_role_tag and stored_role_tag == role_tag):
                 return {"ok": True, "token": row["token"], "skipped": True}
         row["token"] = token_val
         row["last_result_count"] = result_count
