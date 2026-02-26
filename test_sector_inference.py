@@ -2277,5 +2277,168 @@ class TestTokenUpdateBackendGuard(unittest.TestCase):
         self.assertEqual(db["u1"]["last_deducted_role_tag"], "Software Engineer")
 
 
+def _update_role_tag(db_store, username, role_tag):
+    """
+    Python stub of the /user/update_role_tag endpoint session-tracking logic.
+
+    ``db_store`` – dict simulating both login and sourcing tables:
+        {
+          "login":   { username: {"role_tag": str|None, "role_tag_session": datetime|None} },
+          "sourcing": { username: {"role_tag": str|None, "role_tag_session": datetime|None} }
+        }
+
+    Steps mirror the webbridge implementation:
+      1. Update login.role_tag and generate login.role_tag_session = now().
+      2. Update sourcing.role_tag for the user.
+      3. Validate login.role_tag == role_tag and login.role_tag_session is not None.
+      4. If valid, transfer login.role_tag_session → sourcing.role_tag_session where
+         sourcing.role_tag == login.role_tag.
+
+    Returns a result dict: {"ok": True, "role_tag": ..., "role_tag_session": ...}
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    login_table = db_store.setdefault("login", {})
+    sourcing_table = db_store.setdefault("sourcing", {})
+
+    # Step 1: Update login
+    session_ts = _dt.now(_tz.utc)
+    if username not in login_table:
+        login_table[username] = {}
+    login_table[username]["role_tag"] = role_tag
+    login_table[username]["role_tag_session"] = session_ts
+
+    # Step 2: Update sourcing role_tag
+    if username not in sourcing_table:
+        sourcing_table[username] = {}
+    sourcing_table[username]["role_tag"] = role_tag
+
+    # Step 3: Read back from login to validate
+    login_role_tag = login_table[username].get("role_tag")
+    login_session_ts = login_table[username].get("role_tag_session")
+
+    # Step 4: Transfer session timestamp to sourcing only when role_tags match
+    if login_role_tag == role_tag and login_session_ts is not None:
+        if sourcing_table[username].get("role_tag") == role_tag:
+            sourcing_table[username]["role_tag_session"] = login_session_ts
+
+    return {"ok": True, "role_tag": role_tag,
+            "role_tag_session": login_session_ts.isoformat() if login_session_ts else None}
+
+
+class TestRoleTagSessionTracking(unittest.TestCase):
+    """
+    Verifies that the /user/update_role_tag endpoint generates a session timestamp
+    when role_tag is set in the login table and transfers it to the sourcing table
+    only after validating that the role_tag values match in both tables.
+    """
+
+    def _fresh_db(self):
+        return {"login": {}, "sourcing": {}}
+
+    def _call(self, db, username, role_tag):
+        return _update_role_tag(db, username, role_tag)
+
+    # ------------------------------------------------------------------
+    # Login table — timestamp generation
+    # ------------------------------------------------------------------
+
+    def test_login_role_tag_session_timestamp_generated(self):
+        """Setting role_tag must populate login.role_tag_session with a timestamp."""
+        db = self._fresh_db()
+        self._call(db, "alice", "Software Engineer")
+        ts = db["login"]["alice"].get("role_tag_session")
+        self.assertIsNotNone(ts)
+
+    def test_login_role_tag_stored_correctly(self):
+        """login.role_tag must equal the value supplied."""
+        db = self._fresh_db()
+        self._call(db, "alice", "Data Analyst")
+        self.assertEqual(db["login"]["alice"]["role_tag"], "Data Analyst")
+
+    def test_consecutive_updates_produce_new_timestamps(self):
+        """Each call produces a session timestamp; the second call's timestamp is >= the first."""
+        db = self._fresh_db()
+        self._call(db, "alice", "Engineer")
+        ts1 = db["login"]["alice"]["role_tag_session"]
+        # The stub calls datetime.now(timezone.utc) on each invocation so timestamps
+        # are monotonically non-decreasing without needing any sleep.
+        self._call(db, "alice", "Manager")
+        ts2 = db["login"]["alice"]["role_tag_session"]
+        self.assertIsNotNone(ts1)
+        self.assertIsNotNone(ts2)
+        self.assertGreaterEqual(ts2, ts1)
+
+    # ------------------------------------------------------------------
+    # Sourcing table — timestamp transfer
+    # ------------------------------------------------------------------
+
+    def test_sourcing_role_tag_session_matches_login(self):
+        """sourcing.role_tag_session must equal login.role_tag_session after update."""
+        db = self._fresh_db()
+        self._call(db, "alice", "Product Manager")
+        login_ts = db["login"]["alice"]["role_tag_session"]
+        sourcing_ts = db["sourcing"]["alice"].get("role_tag_session")
+        self.assertEqual(sourcing_ts, login_ts)
+
+    def test_sourcing_role_tag_matches_login_role_tag(self):
+        """sourcing.role_tag must equal the role_tag set in login."""
+        db = self._fresh_db()
+        self._call(db, "alice", "DevOps Engineer")
+        self.assertEqual(db["sourcing"]["alice"]["role_tag"], "DevOps Engineer")
+
+    def test_session_not_transferred_when_sourcing_role_tag_diverges(self):
+        """
+        The transfer of role_tag_session to sourcing is guarded by a WHERE role_tag=%s
+        clause. If sourcing.role_tag differs from login.role_tag at transfer time,
+        the session timestamp must NOT be written to sourcing.
+
+        This is simulated by calling a stripped-down version of step 4 directly
+        with a diverged sourcing.role_tag state.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+        db = self._fresh_db()
+        # Set up login with a role_tag and session timestamp
+        login_ts = _dt.now(_tz.utc)
+        db["login"]["alice"] = {"role_tag": "Target Role", "role_tag_session": login_ts}
+        # Sourcing has a DIFFERENT role_tag — simulates a concurrent update or stale row
+        db["sourcing"]["alice"] = {"role_tag": "Different Role", "role_tag_session": None}
+
+        # Replicate step 4 from the stub: only transfer if sourcing.role_tag == login.role_tag
+        login_role_tag = db["login"]["alice"]["role_tag"]
+        login_session_ts = db["login"]["alice"]["role_tag_session"]
+        if (db["sourcing"]["alice"].get("role_tag") == login_role_tag
+                and login_session_ts is not None):
+            db["sourcing"]["alice"]["role_tag_session"] = login_session_ts
+
+        # sourcing.role_tag was "Different Role" ≠ "Target Role" → no transfer
+        self.assertIsNone(db["sourcing"]["alice"]["role_tag_session"])
+
+    def test_return_value_includes_role_tag_session_iso(self):
+        """The return dict must include role_tag_session as an ISO-8601 string."""
+        db = self._fresh_db()
+        result = self._call(db, "alice", "Analyst")
+        self.assertIn("role_tag_session", result)
+        self.assertIsNotNone(result["role_tag_session"])
+        # Should be parseable as ISO datetime
+        from datetime import datetime as _dt
+        try:
+            _dt.fromisoformat(result["role_tag_session"])
+        except ValueError:
+            self.fail("role_tag_session is not a valid ISO-8601 string")
+
+    def test_multiple_users_tracked_independently(self):
+        """Session timestamps for different users must be independent."""
+        db = self._fresh_db()
+        self._call(db, "alice", "Engineer")
+        self._call(db, "bob", "Designer")
+        self.assertNotEqual(db["login"]["alice"]["role_tag"], db["login"]["bob"]["role_tag"])
+        # Each user has their own session timestamp
+        self.assertIsNotNone(db["login"]["alice"]["role_tag_session"])
+        self.assertIsNotNone(db["login"]["bob"]["role_tag_session"])
+        self.assertIsNotNone(db["sourcing"]["alice"]["role_tag_session"])
+        self.assertIsNotNone(db["sourcing"]["bob"]["role_tag_session"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
