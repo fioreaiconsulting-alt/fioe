@@ -2393,15 +2393,23 @@ function syncMetricTokens(backendToken){
   __prevResults = effectiveTotal;
   if (!__metricsInitialized) __metricsInitialized = true;
 
-  // Persist the computed tokens-left value to the login table
+  // Persist the computed tokens-left value to the login table, but only when
+  // the result count has changed (i.e., a new search was executed).
+  // A sessionStorage guard prevents page refreshes from re-deducting the same
+  // results and causing the token balance to decrease on every reload.
   const uid = window.__SV_ACTIVE_USERID || '';
   if (uid) {
-    fetch(TOKEN_UPDATE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userid: uid, token: leftComputed }),
-      credentials: 'same-origin'
-    }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
+    const _lastCountKey = 'sv_token_last_result_count';
+    const _storedCount = sessionStorage.getItem(_lastCountKey);
+    if (_storedCount === null || parseInt(_storedCount, 10) !== effectiveTotal) {
+      sessionStorage.setItem(_lastCountKey, String(effectiveTotal));
+      fetch(TOKEN_UPDATE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userid: uid, token: leftComputed }),
+        credentials: 'same-origin'
+      }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
+    }
   }
 }
 
