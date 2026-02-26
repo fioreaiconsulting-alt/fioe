@@ -461,13 +461,13 @@ function switchTab(tabId) {
         }
     } else if(tabId === 'tab-details') {
         document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
-        // 2-second auto refresh via the View Details Refresh button
+        // 1-second auto refresh via the View Details Refresh button
         setTimeout(() => {
             const viewDetailsRefreshBtn = document.getElementById('viewDetailsRefreshBtn');
             if (viewDetailsRefreshBtn) {
                 viewDetailsRefreshBtn.click();
             }
-        }, 2000);
+        }, 1000);
     } else if (tabId === 'tab-research') {
         document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
         // Trigger Market Analytic logic when tab is activated to ensure data is present
@@ -5065,155 +5065,6 @@ function renderTable(){
     browseBtn.style.color = '#24292f'; 
     browseBtn.style.border = '1px solid #d0d7de'; 
 
-    // Insert Assess Button Here (respects L1/L2 toggle)
-    const assessBtn2 = document.createElement('button');
-    assessBtn2.className = 'sv-assess-btn';
-    assessBtn2.type = 'button';
-    assessBtn2.textContent = 'Assess';
-    assessBtn2.title = 'Run Fresh Assessment (respects current toggle mode)';
-    assessBtn2.style.width = '100%'; // Full width
-    assessBtn2.style.backgroundColor = '#f0fdf4'; 
-    assessBtn2.style.color = '#15803d'; 
-    assessBtn2.style.border = '1px solid #bbf7d0';
-
-    // Check if assessment was already completed for this profile
-    // Also migrate old level2AssessmentState data to new assessmentState
-    try {
-        let assessState = JSON.parse(localStorage.getItem('assessmentState') || '{}');
-        
-        // Migrate old level2AssessmentState data if it exists
-        try {
-            const oldL2State = JSON.parse(localStorage.getItem('level2AssessmentState') || '{}');
-            if (Object.keys(oldL2State).length > 0) {
-                // Merge old L2 data into new assessState with mode: 'L2'
-                Object.keys(oldL2State).forEach(key => {
-                    if (!assessState[key]) {
-                        assessState[key] = { ...oldL2State[key], mode: 'L2' };
-                    }
-                });
-                localStorage.setItem('assessmentState', JSON.stringify(assessState));
-                // Optionally clear old state after migration
-                localStorage.removeItem('level2AssessmentState');
-            }
-        } catch (migrationError) {
-            console.warn('Failed to migrate old assessment state:', migrationError);
-        }
-        
-        const profileAnchor = tr.dataset.linkedinurl || linkedinurl || '';
-        const currentMode = 'L2';  // Always use L2 (inference mode)
-        
-        if (assessState[profileAnchor] && assessState[profileAnchor].completed) {
-            const storedMode = assessState[profileAnchor].mode || 'L2'; // Default to L2 for old data
-            
-            // Only show as "Assessed" if mode matches current mode
-            if (storedMode === currentMode) {
-                assessBtn2.textContent = 'Assessed';
-                assessBtn2.disabled = true;
-            } else {
-                // Different mode - allow re-assessment
-                assessBtn2.title = `Run Fresh ${currentMode} Assessment (previously assessed in ${storedMode} mode)`;
-            }
-        }
-        // Also check card cache: if assessment HTML is already cached (e.g. from bulk assessment),
-        // treat the profile as assessed so the button shows "Assessed" and stays disabled.
-        if (!assessBtn2.disabled && cachedCard && cachedCard.assessmentHTML) {
-            assessBtn2.textContent = 'Assessed';
-            assessBtn2.disabled = true;
-            // Backfill assessmentState so future loads don't need the card cache check
-            try {
-                if (!assessState[profileAnchor] || !assessState[profileAnchor].completed) {
-                    assessState[profileAnchor] = { completed: true, timestamp: Date.now(), mode: currentMode };
-                    localStorage.setItem('assessmentState', JSON.stringify(assessState));
-                }
-            } catch (e) { /* ignore */ }
-        }
-        // Final fallback: check tr.dataset.rating (DB-backed, survives localStorage clear / browser restart)
-        if (!assessBtn2.disabled) {
-            try {
-                const rawRating = tr.dataset.rating;
-                if (rawRating && rawRating !== 'null' && rawRating !== '{}') {
-                    const rObj = typeof rawRating === 'string' ? JSON.parse(rawRating) : rawRating;
-                    if (rObj && rObj.total_score) {
-                        assessBtn2.textContent = 'Assessed';
-                        assessBtn2.disabled = true;
-                        // Backfill localStorage caches
-                        try {
-                            if (!assessState[profileAnchor] || !assessState[profileAnchor].completed) {
-                                assessState[profileAnchor] = { completed: true, timestamp: Date.now(), mode: currentMode };
-                                localStorage.setItem('assessmentState', JSON.stringify(assessState));
-                            }
-                        } catch (_) { /* ignore */ }
-                        cacheAssessmentHTML(profileAnchor, rObj);
-                    }
-                }
-            } catch (_) { /* ignore malformed rating */ }
-        }
-    } catch (e) {
-        console.warn('Failed to load assessment state:', e);
-    }
-
-    assessBtn2.addEventListener('click', async () => {
-        const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
-        if(!anchor) return;
-        
-        // All assessments use L2 (inference mode) by default
-        const useL2 = true;
-        const assessmentMode = 'L2';
-        
-        assessBtn2.disabled = true;
-        assessBtn2.textContent = 'Preparing...';
-        // Global setStatus if available
-        if(typeof setStatus === 'function') setStatus(`Preparing ${assessmentMode} analysis...`, 'info');
-
-        try {
-            const res = await fetch('/process/parse_cv_and_update', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ linkedinurl: anchor })
-            });
-            const analyzeData = await res.json();
-
-            if (res.ok) {
-                if(typeof setStatus === 'function') setStatus(`Running ${assessmentMode} Assessment...`, 'info');
-                
-                // Trigger assessment based on current toggle state
-                await performCombinedAssessment(tr, anchor, analyzeData, useL2);
-                
-                assessBtn2.textContent = 'Assessed';
-                assessBtn2.disabled = true;  // Keep button disabled after successful completion
-                
-                // Persist disabled state in localStorage
-                try {
-                    const assessState = JSON.parse(localStorage.getItem('assessmentState') || '{}');
-                    assessState[anchor] = { completed: true, timestamp: Date.now(), mode: assessmentMode };
-                    localStorage.setItem('assessmentState', JSON.stringify(assessState));
-                } catch (e) {
-                    console.warn('Failed to persist assessment state:', e);
-                }
-                
-                if(typeof setStatus === 'function') setStatus(`${assessmentMode} Assessment Complete`, 'success');
-                
-                // Auto-refresh after individual assessment completion
-                // Wait 1 second then simulate click on Refresh button
-                setTimeout(() => {
-                    const reloadBtn = document.getElementById('reloadBtn');
-                    if (reloadBtn) {
-                        reloadBtn.click();
-                    }
-                }, 1000);
-            } else {
-                assessBtn2.textContent = 'Failed';
-                assessBtn2.disabled = false;
-                if(typeof setStatus === 'function') setStatus('Analysis failed: ' + (analyzeData.error || 'Unknown'), 'error');
-            }
-        } catch(e) {
-            console.error("Assessment click error", e);
-            assessBtn2.textContent = 'Error';
-            assessBtn2.disabled = false;
-            if(typeof setStatus === 'function') setStatus('Assessment Error', 'error');
-        }
-    });
-
     const downloadBtn = document.createElement('button');
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
@@ -5433,7 +5284,6 @@ function renderTable(){
     actionButtonsContainer.appendChild(matchingLevelContainer);
     actionButtonsContainer.appendChild(assessBtn);
     actionButtonsContainer.appendChild(browseBtn);
-    actionButtonsContainer.appendChild(assessBtn2); // Renamed from level2Btn
     actionButtonsContainer.appendChild(downloadBtn);
     actionButtonsContainer.appendChild(fileInput);
 
