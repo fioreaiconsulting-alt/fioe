@@ -1048,12 +1048,12 @@ function CandidatesTable({
     { key: 'organisation', label: 'Company', type: 'text', editable: true },
     { key: 'type', label: 'Product', type: 'text', editable: false },
     { key: 'sector', label: 'Sector', type: 'text', editable: true },
-    { key: 'personal', label: 'Personal', type: 'text', editable: true },
     { key: 'seniority', label: 'Seniority', type: 'text', editable: true },
     { key: 'job_family', label: 'Job Family', type: 'text', editable: true },
     { key: 'skillset', label: 'Skillset', type: 'text', editable: false },
     { key: 'geographic', label: 'Geographic', type: 'text', editable: true },
     { key: 'country', label: 'Country', type: 'text', editable: true },
+    { key: 'personal', label: 'Compensation', type: 'text', editable: true },
     { key: 'email', label: 'Email', type: 'email', editable: true },
     { key: 'mobile', label: 'Mobile', type: 'text', editable: true },
     { key: 'office', label: 'Office', type: 'text', editable: true },
@@ -1282,6 +1282,7 @@ function CandidatesTable({
         'Company': 'organisation',
         'Sector': 'sector',
         'Personal': 'personal',
+        'Compensation': 'personal',
         'Job Family': 'job_family',
         'Geographic': 'geographic',
         'Country': 'country'
@@ -1425,6 +1426,7 @@ function CandidatesTable({
   }
 
   const [colResizing, setColResizing] = useState({ active: false, field: '', startX: 0, startW: 0 });
+  const [frozenColKeys, setFrozenColKeys] = useState(new Set());
   const onMouseDown = (field, e) => {
     e.preventDefault();
     setColResizing({ active: true, field, startX: e.clientX, startW: colWidths[field] });
@@ -1536,10 +1538,22 @@ function CandidatesTable({
   };
   const nonSticky = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
+  const isColFrozen = (fieldKey) => frozenColKeys.has(fieldKey);
+  const getFrozenLeft = (fieldIndex) => {
+    // Sum the widths of the checkbox column (44px) plus all frozen columns that appear before this one
+    let left = 44;
+    for (let i = 0; i < fieldIndex; i++) {
+      if (frozenColKeys.has(visibleFields[i].key)) {
+        left += colWidths[visibleFields[i].key] || DEFAULT_WIDTH;
+      }
+    }
+    return left;
+  };
+
   return (
     <>
       <div className="app-card" style={{
-        overflowX: 'auto', width: '100%', maxWidth: '100%', position: 'relative', padding: 16
+        width: '100%', maxWidth: '100%', position: 'relative', padding: 16
       }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           {selectedIds.length > 0 && (
@@ -1645,7 +1659,7 @@ function CandidatesTable({
               <option value="Job Title">Job Title</option>
               <option value="Company">Company</option>
               <option value="Sector">Sector</option>
-              <option value="Personal">Personal</option>
+              <option value="Compensation">Compensation</option>
               <option value="Job Family">Job Family</option>
               <option value="Geographic">Geographic</option>
               <option value="Country">Country</option>
@@ -1723,21 +1737,28 @@ function CandidatesTable({
                     />
                   </div>
                 </th>
-                {visibleFields.map(f => {
+                {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const isName = f.key === 'name';
-                  const stickyStyle = isName ? {
+                  const frozen = isColFrozen(f.key);
+                  const stickyStyle = frozen ? {
                       position: 'sticky',
-                      left: 44,
+                      left: getFrozenLeft(fieldIndex),
                       top: 0,
-                      zIndex: 39,
-                      borderRight: '1px solid var(--neutral-border)'
+                      zIndex: 38,
+                      borderRight: '1px solid var(--neutral-border)',
+                      background: '#dbeafe'
                   } : {};
                   return (
                     <th
                       key={f.key}
                       data-field={f.key}
                       onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
+                      onClick={() => setFrozenColKeys(prev => {
+                        const next = new Set(prev);
+                        if (next.has(f.key)) next.delete(f.key); else next.add(f.key);
+                        return next;
+                      })}
+                      title={frozen ? 'Click to unfreeze column' : 'Click to freeze column'}
                       style={{
                         position: 'sticky',
                         top: 0,
@@ -1754,11 +1775,15 @@ function CandidatesTable({
                         borderBottom: '1px solid var(--neutral-border)',
                         borderRight: '1px solid var(--neutral-border)',
                         fontFamily: "Orbitron",
+                        cursor: 'pointer',
                         ...stickyStyle
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                        <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}</span>
+                        <span className="header-label" style={{ flex: '1 1 auto' }}>
+                          {f.label}
+                          {frozen && <span title="Frozen" style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
+                        </span>
                         <span
                           role="separator"
                           tabIndex={0}
@@ -1773,7 +1798,7 @@ function CandidatesTable({
                             lineHeight: 1,
                             color: 'var(--argent)'
                           }}
-                          onMouseDown={e => onMouseDown(f.key, e)}
+                          onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
                           onKeyDown={e => handleResizerKey(e, f.key)}
                         >▕</span>
                       </div>
@@ -1797,15 +1822,16 @@ function CandidatesTable({
                 <th style={{ ...stickyFilterCell, borderBottom: '1px solid var(--neutral-border)' }}>
                   <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
                 </th>
-                {visibleFields.map(f => {
+                {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const isName = f.key === 'name';
-                  const stickyStyle = isName ? {
+                  const frozen = isColFrozen(f.key);
+                  const stickyStyle = frozen ? {
                       position: 'sticky',
-                      left: 44,
+                      left: getFrozenLeft(fieldIndex),
                       top: HEADER_ROW_HEIGHT,
-                      zIndex: 29,
-                      borderRight: '1px solid var(--neutral-border)'
+                      zIndex: 28,
+                      borderRight: '1px solid var(--neutral-border)',
+                      background: '#eff6ff'
                   } : {};
                   return (
                     <th
@@ -1853,15 +1879,16 @@ function CandidatesTable({
                       style={{ cursor: 'pointer' }}
                     />
                   </td>
-                  {visibleFields.map(f => {
+                  {visibleFields.map((f, fieldIndex) => {
                     const readOnly = ['skillset', 'type'].includes(f.key);
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                    const isName = f.key === 'name';
-                    const stickyStyle = isName ? {
+                    const frozen = isColFrozen(f.key);
+                    const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
+                    const stickyStyle = frozen ? {
                         position: 'sticky',
-                        left: 44,
-                        zIndex: 9,
-                        background: idx % 2 ? '#ffffff' : '#f9faffb',
+                        left: getFrozenLeft(fieldIndex),
+                        zIndex: 8,
+                        background: idx % 2 ? '#eff6ff' : '#e8f4fd',
                         borderRight: '1px solid #eef2f5',
                         boxShadow: '2px 0 0 rgba(0,0,0,0.02)'
                     } : {};
@@ -1929,6 +1956,29 @@ function CandidatesTable({
                                 <option key={opt} value={opt}>{opt}</option>
                               ))}
                             </select>
+                          ) : f.key === 'seniority' ? (
+                            <select
+                              value={displayValue || ''}
+                              onChange={e => handleEditChange(c.id, f.key, e.target.value)}
+                              style={{
+                                width: '100%',
+                                boxSizing: 'border-box',
+                                padding: '4px 8px',
+                                font: 'inherit',
+                                fontSize: 12,
+                                background: '#ffffff',
+                                border: '1px solid var(--desired-dawn)',
+                                borderRadius: 6
+                              }}
+                            >
+                              <option value="">-- Select --</option>
+                              <option value="Junior">Junior</option>
+                              <option value="Mid">Mid</option>
+                              <option value="Senior">Senior</option>
+                              <option value="Manager">Manager</option>
+                              <option value="Director">Director</option>
+                              <option value="Executive">Executive</option>
+                            </select>
                           ) : (
                             <input
                               type={f.type}
@@ -1979,11 +2029,11 @@ function CandidatesTable({
               )}
             </tbody>
           </table>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 4, alignItems: 'center' }}>
-            <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Prev</button>
-            <span style={{ fontSize: 13, color: 'var(--muted)', fontFamily: 'Orbitron' }}>Page {page} of {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Next</button>
-          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 4, alignItems: 'center' }}>
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Prev</button>
+          <span style={{ fontSize: 13, color: 'var(--muted)', fontFamily: 'Orbitron' }}>Page {page} of {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Next</button>
         </div>
       </div>
       <EmailComposeModal 
@@ -2049,6 +2099,7 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
           id:p.id, name:p.name, seniority:tier,
           roleTag:(p.role_tag||'').trim(),
           personal:(p.personal||'').trim(), 
+          jobtitle:(p.jobtitle||'').trim(),
           jobFamily:p.job_family||'',
           country:(p.country||'').trim(),
           geographic:(p.geographic||'').trim(),
@@ -2179,46 +2230,14 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
         onManualDrop(draggedId,target.id);
       };
 
-      /* NodeCard: improved rendering to avoid duplicated seniority words and use short badge labels (Sr / Jr) */
+      /* NodeCard: show job title directly from process table jobtitle field; seniority shown only in badge */
       const NodeCard=({node})=>{
-        const normalizedSen = normalizeTier(node.seniority);
-        const isMgr=['Lead','Manager','Sr Manager','Director','Sr Director','Executive'].includes(normalizedSen);
-
-        // Build base role: prefer personal (standardized), then roleTag, then raw.role
-        let baseRole = (node.personal||'').trim() || (node.roleTag||'').trim() || (node.raw?.role ? String(node.raw.role).trim() : '') || '';
-
-        // Remove leading seniority tokens from baseRole to avoid duplication when we prefix seniority
-        function stripLeadingSeniority(s){
-          if(!s) return s;
-          return s.replace(/^(?:(sr|senior|lead|principal|expert|manager|mgr|director|dir|executive|exec|jr|junior|mid)\b[\s\.\-:]*)+/i, '').trim();
-        }
-        function collapseDuplicates(s){
-          if(!s) return s;
-          const toks = s.split(/\s+/);
-          const dedup = toks.filter((t,i)=> i===0 || t.toLowerCase() !== toks[i-1].toLowerCase());
-          return dedup.join(' ');
-        }
-
-        baseRole = baseRole.replace(/\s{2,}/g,' ').trim();
-        if (isMgr && baseRole) baseRole = stripLeadingSeniority(baseRole);
-        baseRole = collapseDuplicates(baseRole);
-
-        // If baseRole emptied, fallback to raw.role trimmed
-        if(!baseRole && node.raw?.role) baseRole = String(node.raw.role).trim();
-
-        // Compose title
-        let title;
-        if (isMgr && normalizedSen) {
-          const baseLower = (baseRole||'').toLowerCase();
-          const senLower = normalizedSen.toLowerCase();
-          if (baseLower.startsWith(senLower)) {
-            title = baseRole;
-          } else {
-            title = `${normalizedSen}${baseRole ? ' ' + baseRole : ''}`;
-          }
-        } else {
-          title = baseRole || normalizedSen || '';
-        }
+        // Title: use jobtitle from process table directly, then fallback to personal, roleTag, raw.role
+        const title = (node.jobtitle||'').trim()
+          || (node.personal||'').trim()
+          || (node.roleTag||'').trim()
+          || (node.raw?.role ? String(node.raw.role).trim() : '')
+          || '';
 
         // Badge text mapping: use short tokens (Sr, Jr, Mid, Lead, Mgr, Dir, Exec, Expert)
         const badge = (() => {
@@ -2771,6 +2790,7 @@ function CandidateUpload({ onUpload }) {
   const [file,setFile] = useState(null);
   const [uploading,setUploading] = useState(false);
   const [error,setError] = useState('');
+  const [expanded, setExpanded] = useState(false);
 
   const first = (row, ...keys) => {
     for (const k of keys) {
@@ -2875,26 +2895,37 @@ function CandidateUpload({ onUpload }) {
     }
   };
   return (
-    <div style={{ marginBottom:24, padding:12, border:'1px solid var(--neutral-border)', borderRadius:8, background:'#fff', boxShadow: 'var(--shadow)' }}>
-      <h2 style={{color: 'var(--azure-dragon)'}}>Bulk Upload Candidates (CSV/XLSX/XLS)</h2>
-      <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
-      <button
-        onClick={handleUpload}
-        disabled={uploading}
-        style={{
-          marginLeft:8,
-          background:'var(--cool-blue)',
-          color:'#fff',
-          border: 'none',
-          padding:'6px 14px',
-          borderRadius:4,
-          cursor:uploading?'not-allowed':'pointer'
-        }}
-      >{uploading?'Uploading...':'Upload'}</button>
-      {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
-      <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
-        Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+    <div className="vskillset-section">
+      <div
+        className="vskillset-header"
+        onClick={() => setExpanded(!expanded)}
+        style={{ cursor: 'pointer' }}
+      >
+        <span className="vskillset-title">Bulk Upload Candidates (CSV/XLSX/XLS)</span>
+        <span className="vskillset-arrow">{expanded ? '▼' : '▶'}</span>
       </div>
+      {expanded && (
+        <div style={{ padding: '8px 0' }}>
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
+          <button
+            onClick={handleUpload}
+            disabled={uploading}
+            style={{
+              marginLeft:8,
+              background:'var(--cool-blue)',
+              color:'#fff',
+              border: 'none',
+              padding:'6px 14px',
+              borderRadius:4,
+              cursor:uploading?'not-allowed':'pointer'
+            }}
+          >{uploading?'Uploading...':'Upload'}</button>
+          {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
+          <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
+            Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
