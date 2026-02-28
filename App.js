@@ -1425,6 +1425,7 @@ function CandidatesTable({
   }
 
   const [colResizing, setColResizing] = useState({ active: false, field: '', startX: 0, startW: 0 });
+  const [frozenColKey, setFrozenColKey] = useState(null);
   const onMouseDown = (field, e) => {
     e.preventDefault();
     setColResizing({ active: true, field, startX: e.clientX, startW: colWidths[field] });
@@ -1535,6 +1536,10 @@ function CandidatesTable({
     minWidth: 44, width: 44, height: 38, overflow: 'hidden', boxShadow: '2px 0 0 var(--neutral-border)'
   };
   const nonSticky = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+
+  const frozenColIndex = frozenColKey ? visibleFields.findIndex(f => f.key === frozenColKey) : -1;
+  const isColFrozen = (fieldIndex) => fieldIndex === 0 || (frozenColIndex >= 0 && fieldIndex <= frozenColIndex);
+  const getColFrozenLeft = (fieldIndex) => 44 + visibleFields.slice(0, fieldIndex).reduce((sum, f) => sum + (colWidths[f.key] || DEFAULT_WIDTH), 0);
 
   return (
     <>
@@ -1723,21 +1728,25 @@ function CandidatesTable({
                     />
                   </div>
                 </th>
-                {visibleFields.map(f => {
+                {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                   const isName = f.key === 'name';
-                  const stickyStyle = isName ? {
+                  const frozen = isColFrozen(fieldIndex);
+                  const stickyStyle = frozen ? {
                       position: 'sticky',
-                      left: 44,
+                      left: getColFrozenLeft(fieldIndex),
                       top: 0,
-                      zIndex: 39,
-                      borderRight: '1px solid var(--neutral-border)'
+                      zIndex: isName ? 39 : 38,
+                      borderRight: '1px solid var(--neutral-border)',
+                      ...(frozenColKey === f.key ? { background: '#dbeafe' } : {})
                   } : {};
                   return (
                     <th
                       key={f.key}
                       data-field={f.key}
                       onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
+                      onClick={() => setFrozenColKey(prev => prev === f.key ? null : f.key)}
+                      title={frozenColKey === f.key ? 'Click to unfreeze column' : 'Click to freeze column'}
                       style={{
                         position: 'sticky',
                         top: 0,
@@ -1754,11 +1763,15 @@ function CandidatesTable({
                         borderBottom: '1px solid var(--neutral-border)',
                         borderRight: '1px solid var(--neutral-border)',
                         fontFamily: "Orbitron",
+                        cursor: 'pointer',
                         ...stickyStyle
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                        <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}</span>
+                        <span className="header-label" style={{ flex: '1 1 auto' }}>
+                          {f.label}
+                          {frozenColKey === f.key && <span title="Frozen" style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
+                        </span>
                         <span
                           role="separator"
                           tabIndex={0}
@@ -1773,7 +1786,7 @@ function CandidatesTable({
                             lineHeight: 1,
                             color: 'var(--argent)'
                           }}
-                          onMouseDown={e => onMouseDown(f.key, e)}
+                          onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
                           onKeyDown={e => handleResizerKey(e, f.key)}
                         >▕</span>
                       </div>
@@ -1797,15 +1810,17 @@ function CandidatesTable({
                 <th style={{ ...stickyFilterCell, borderBottom: '1px solid var(--neutral-border)' }}>
                   <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
                 </th>
-                {visibleFields.map(f => {
+                {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                   const isName = f.key === 'name';
-                  const stickyStyle = isName ? {
+                  const frozen = isColFrozen(fieldIndex);
+                  const stickyStyle = frozen ? {
                       position: 'sticky',
-                      left: 44,
+                      left: getColFrozenLeft(fieldIndex),
                       top: HEADER_ROW_HEIGHT,
-                      zIndex: 29,
-                      borderRight: '1px solid var(--neutral-border)'
+                      zIndex: isName ? 29 : 28,
+                      borderRight: '1px solid var(--neutral-border)',
+                      ...(frozenColKey === f.key ? { background: '#eff6ff' } : {})
                   } : {};
                   return (
                     <th
@@ -1853,15 +1868,17 @@ function CandidatesTable({
                       style={{ cursor: 'pointer' }}
                     />
                   </td>
-                  {visibleFields.map(f => {
+                  {visibleFields.map((f, fieldIndex) => {
                     const readOnly = ['skillset', 'type'].includes(f.key);
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                     const isName = f.key === 'name';
-                    const stickyStyle = isName ? {
+                    const frozen = isColFrozen(fieldIndex);
+                    const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
+                    const stickyStyle = frozen ? {
                         position: 'sticky',
-                        left: 44,
-                        zIndex: 9,
-                        background: idx % 2 ? '#ffffff' : '#f9faffb',
+                        left: getColFrozenLeft(fieldIndex),
+                        zIndex: isName ? 9 : 8,
+                        background: frozenColKey === f.key ? (idx % 2 ? '#eff6ff' : '#e8f4fd') : rowBg,
                         borderRight: '1px solid #eef2f5',
                         boxShadow: '2px 0 0 rgba(0,0,0,0.02)'
                     } : {};
@@ -2049,6 +2066,7 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
           id:p.id, name:p.name, seniority:tier,
           roleTag:(p.role_tag||'').trim(),
           personal:(p.personal||'').trim(), 
+          jobtitle:(p.jobtitle||'').trim(),
           jobFamily:p.job_family||'',
           country:(p.country||'').trim(),
           geographic:(p.geographic||'').trim(),
@@ -2184,8 +2202,8 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
         const normalizedSen = normalizeTier(node.seniority);
         const isMgr=['Lead','Manager','Sr Manager','Director','Sr Director','Executive'].includes(normalizedSen);
 
-        // Build base role: prefer personal (standardized), then roleTag, then raw.role
-        let baseRole = (node.personal||'').trim() || (node.roleTag||'').trim() || (node.raw?.role ? String(node.raw.role).trim() : '') || '';
+        // Build base role: prefer jobtitle from process table, then personal (standardized), then roleTag, then raw.role
+        let baseRole = (node.jobtitle||'').trim() || (node.personal||'').trim() || (node.roleTag||'').trim() || (node.raw?.role ? String(node.raw.role).trim() : '') || '';
 
         // Remove leading seniority tokens from baseRole to avoid duplication when we prefix seniority
         function stripLeadingSeniority(s){
