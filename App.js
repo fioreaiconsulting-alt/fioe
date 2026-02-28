@@ -999,6 +999,14 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
 }
 
 /* ========================= CANDIDATES TABLE ========================= */
+// Sticky column color constants (defined outside component to avoid recreation on each render)
+const FROZEN_ACTIONS_WIDTH = 110;
+const FROZEN_BORDER_COLOR = '#93c5fd';
+const FROZEN_HEADER_BG = '#dbeafe';
+const FROZEN_FILTER_BG = '#eff6ff';
+const FROZEN_ROW_BG_EVEN = '#e8f4fd';
+const FROZEN_ROW_BG_ODD = '#eff6ff';
+
 function CandidatesTable({
   candidates = [],
   onDelete, deleteError, onSave, onAutoSave, type, page, setPage, totalPages, editRows, setEditRows,
@@ -1048,12 +1056,12 @@ function CandidatesTable({
     { key: 'organisation', label: 'Company', type: 'text', editable: true },
     { key: 'type', label: 'Product', type: 'text', editable: false },
     { key: 'sector', label: 'Sector', type: 'text', editable: true },
-    { key: 'personal', label: 'Personal', type: 'text', editable: true },
     { key: 'seniority', label: 'Seniority', type: 'text', editable: true },
     { key: 'job_family', label: 'Job Family', type: 'text', editable: true },
     { key: 'skillset', label: 'Skillset', type: 'text', editable: false },
     { key: 'geographic', label: 'Geographic', type: 'text', editable: true },
     { key: 'country', label: 'Country', type: 'text', editable: true },
+    { key: 'personal', label: 'Compensation', type: 'text', editable: true },
     { key: 'email', label: 'Email', type: 'email', editable: true },
     { key: 'mobile', label: 'Mobile', type: 'text', editable: true },
     { key: 'office', label: 'Office', type: 'text', editable: true },
@@ -1282,6 +1290,7 @@ function CandidatesTable({
         'Company': 'organisation',
         'Sector': 'sector',
         'Personal': 'personal',
+        'Compensation': 'personal',
         'Job Family': 'job_family',
         'Geographic': 'geographic',
         'Country': 'country'
@@ -1509,37 +1518,58 @@ function CandidatesTable({
     }
   }
 
-  // Sticky header & name column constants
   const HEADER_ROW_HEIGHT = 38;
-  const stickyHeaderCell = {
-    width: 44,
-    minWidth: 44,
-    textAlign: 'center',
-    background: '#f1f5f9',
-    position: 'sticky',
-    left: 0,
-    top: 0,
-    zIndex: 40,
-    cursor: 'default',
-    userSelect: 'none',
-    borderRight: '1px solid var(--neutral-border)'
+
+  // Three-region layout: left (checkbox + Name), middle (scrollable), right (Sourcing Status + Actions)
+  const leftFields  = useMemo(() => visibleFields.filter(f => f.key === 'name'), [visibleFields]);
+  const middleFields = useMemo(() => visibleFields.filter(f => f.key !== 'name' && f.key !== 'sourcing_status'), [visibleFields]);
+  const rightFields = useMemo(() => visibleFields.filter(f => f.key === 'sourcing_status'), [visibleFields]);
+
+  const getDisplayValue = (c, f) => {
+    let v = editRows[c.id]?.[f.key] ?? '';
+    if (v === '' || v == null) {
+      v = f.key === 'type' ? (c.type ?? c.product ?? '') : (c[f.key] ?? '');
+    }
+    if (f.key === 'skillset') v = prettifySkillset(v);
+    return v;
   };
-  const stickyFilterCell = {
-    ...stickyHeaderCell,
-    top: HEADER_ROW_HEIGHT,
-    zIndex: 39,
-    background: '#ffffff'
+
+  const renderBodyCell = (c, f, idx, frozen = false) => {
+    const readOnly = ['skillset', 'type'].includes(f.key);
+    const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
+    const displayValue = getDisplayValue(c, f);
+    const cellBg = frozen
+      ? (idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN)
+      : (idx % 2 ? '#ffffff' : '#f9fafb');
+    return (
+      <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg }}>
+        {readOnly
+          ? <span style={{ display: 'block', width: '100%', background: f.key === 'skillset' ? '#fff' : '#f1f5f9', padding: '3px 8px', border: '1px solid var(--neutral-border)', borderRadius: 4, boxSizing: 'border-box', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={displayValue}>{displayValue}</span>
+          : f.key === 'sourcing_status'
+            ? <select value={displayValue || ''} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', border: '1px solid var(--desired-dawn)', borderRadius: 6 }}>
+                <option value="">-- Select Status --</option>
+                {statusOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            : f.key === 'seniority'
+              ? <select value={displayValue || ''} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', border: '1px solid var(--desired-dawn)', borderRadius: 6 }}>
+                  <option value="">-- Select --</option>
+                  <option value="Junior">Junior</option>
+                  <option value="Mid">Mid</option>
+                  <option value="Senior">Senior</option>
+                  <option value="Manager">Manager</option>
+                  <option value="Director">Director</option>
+                  <option value="Executive">Executive</option>
+                </select>
+              : <input type={f.type} value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
+        }
+      </td>
+    );
   };
-  const stickyBodyCell = {
-    textAlign: 'center', background: '#fff', position: 'sticky', left: 0, zIndex: 9,
-    minWidth: 44, width: 44, height: 38, overflow: 'hidden', boxShadow: '2px 0 0 var(--neutral-border)'
-  };
-  const nonSticky = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
   return (
     <>
       <div className="app-card" style={{
-        overflowX: 'auto', width: '100%', maxWidth: '100%', position: 'relative', padding: 16
+        width: '100%', maxWidth: '100%', position: 'relative', padding: 16
       }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           {selectedIds.length > 0 && (
@@ -1645,7 +1675,7 @@ function CandidatesTable({
               <option value="Job Title">Job Title</option>
               <option value="Company">Company</option>
               <option value="Sector">Sector</option>
-              <option value="Personal">Personal</option>
+              <option value="Compensation">Compensation</option>
               <option value="Job Family">Job Family</option>
               <option value="Geographic">Geographic</option>
               <option value="Country">Country</option>
@@ -1696,294 +1726,164 @@ function CandidatesTable({
           </div>
         )}
 
-        <div style={{ overflowX: 'auto', width: '100%', maxWidth: '100%' }}>
-          <table
-            ref={tableRef}
-            style={{
-              minWidth: visibleFields.length * 110 + 110,
-              width: '100%',
-              borderCollapse: 'separate',
-              borderSpacing: 0,
-              marginBottom: 12,
-              tableLayout: 'fixed'
-            }}
-          >
-            <thead>
-              <tr>
-                <th
-                  style={{ ...stickyHeaderCell, background: '#f1f5f9', fontSize: 12, fontWeight: 700, fontFamily: "Orbitron" }}
-                  onDoubleClick={(e) => handleHeaderDoubleClick(e, '__ALL__')}
-                >
-                  <div style={{ position: 'relative', height: HEADER_ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={candidates.length > 0 && selectedIds.length === candidates.length}
-                      onChange={handleSelectAll}
-                      style={{ cursor: 'pointer' }}
-                    />
-                  </div>
-                </th>
-                {visibleFields.map(f => {
-                  const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const isName = f.key === 'name';
-                  const stickyStyle = isName ? {
-                      position: 'sticky',
-                      left: 44,
-                      top: 0,
-                      zIndex: 39,
-                      borderRight: '1px solid var(--neutral-border)'
-                  } : {};
-                  return (
-                    <th
-                      key={f.key}
-                      data-field={f.key}
-                      onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
-                      style={{
-                        position: 'sticky',
-                        top: 0,
-                        width: colWidths[f.key],
-                        minWidth: MIN_WIDTH,
-                        maxWidth: maxForField,
-                        background: '#f1f5f9',
-                        userSelect: 'none',
-                        padding: '6px 8px 4px',
-                        verticalAlign: 'bottom',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: 'var(--muted)',
-                        borderBottom: '1px solid var(--neutral-border)',
-                        borderRight: '1px solid var(--neutral-border)',
-                        fontFamily: "Orbitron",
-                        ...stickyStyle
-                      }}
-                    >
+        {/* Three-region table: LEFT frozen | MIDDLE scrollable | RIGHT frozen */}
+        <div ref={tableRef} style={{ display: 'flex', width: '100%', marginBottom: 12 }}>
+
+          {/* LEFT PANEL: checkbox + Name */}
+          <div style={{ flexShrink: 0, borderRight: `2px solid ${FROZEN_BORDER_COLOR}`, zIndex: 2 }}>
+            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible' }}>
+              <thead>
+                <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                  <th style={{ position: 'sticky', top: 0, zIndex: 40, width: 44, minWidth: 44, textAlign: 'center', background: FROZEN_HEADER_BG, userSelect: 'none', borderRight: '1px solid var(--neutral-border)', borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
+                      onDoubleClick={(e) => handleHeaderDoubleClick(e, '__ALL__')}>
+                    <div style={{ height: HEADER_ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <input type="checkbox" checked={candidates.length > 0 && selectedIds.length === candidates.length} onChange={handleSelectAll} style={{ cursor: 'pointer' }} />
+                    </div>
+                  </th>
+                  {leftFields.map(f => (
+                    <th key={f.key} data-field={f.key} onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
+                        style={{ position: 'sticky', top: 0, zIndex: 40, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, background: FROZEN_HEADER_BG, userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: 'default', height: HEADER_ROW_HEIGHT }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                         <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}</span>
-                        <span
-                          role="separator"
-                          tabIndex={0}
-                          style={{
-                            cursor: 'col-resize',
-                            padding: '0 4px',
-                            userSelect: 'none',
-                            height: '100%',
-                            display: 'flex',
-                            alignItems: 'center',
-                            fontSize: 14,
-                            lineHeight: 1,
-                            color: 'var(--argent)'
-                          }}
-                          onMouseDown={e => onMouseDown(f.key, e)}
-                          onKeyDown={e => handleResizerKey(e, f.key)}
-                        >▕</span>
+                        <span role="separator" tabIndex={0} style={{ cursor: 'col-resize', padding: '0 4px', userSelect: 'none', height: '100%', display: 'flex', alignItems: 'center', fontSize: 14, lineHeight: 1, color: 'var(--argent)' }}
+                              onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
+                              onKeyDown={e => handleResizerKey(e, f.key)}>▕</span>
                       </div>
                     </th>
-                  );
-                })}
-                <th style={{
-                  width: 110, 
-                  position: 'sticky',
-                  top: 0,
-                  background: '#f1f5f9',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: 'var(--muted)',
-                  borderBottom: '1px solid var(--neutral-border)',
-                  fontFamily: "Orbitron",
-                  zIndex: 38
-                }}>Actions</th>
-              </tr>
-              <tr>
-                <th style={{ ...stickyFilterCell, borderBottom: '1px solid var(--neutral-border)' }}>
-                  <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
-                </th>
-                {visibleFields.map(f => {
-                  const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const isName = f.key === 'name';
-                  const stickyStyle = isName ? {
-                      position: 'sticky',
-                      left: 44,
-                      top: HEADER_ROW_HEIGHT,
-                      zIndex: 29,
-                      borderRight: '1px solid var(--neutral-border)'
-                  } : {};
-                  return (
-                    <th
-                      key={'filter-' + f.key}
-                      style={{
-                        position: 'sticky',
-                        top: HEADER_ROW_HEIGHT,
-                        width: colWidths[f.key],
-                        minWidth: MIN_WIDTH,
-                        maxWidth: maxForField,
-                        background: '#ffffff',
-                        padding: 4,
-                        borderBottom: '1px solid var(--neutral-border)',
-                        borderRight: '1px solid #f1f5f9',
-                        ...stickyStyle
-                      }}
-                    >
-                      <input
-                        type="text"
-                        value={filters[f.key] || ''}
-                        onChange={e => onChangeFilter(f.key, e.target.value)}
-                        placeholder="Filter..."
-                        style={{
-                          width: '100%',
-                          boxSizing: 'border-box',
-                          padding: '4px 6px',
-                          fontSize: 12,
-                          background: '#f8fafc'
-                        }}
-                      />
+                  ))}
+                </tr>
+                <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                  <th style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: 39, width: 44, minWidth: 44, textAlign: 'center', background: FROZEN_FILTER_BG, borderBottom: '1px solid var(--neutral-border)', height: HEADER_ROW_HEIGHT }}>
+                    <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
+                  </th>
+                  {leftFields.map(f => (
+                    <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: 39, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, background: FROZEN_FILTER_BG, padding: 4, borderBottom: '1px solid var(--neutral-border)', height: HEADER_ROW_HEIGHT }}>
+                      <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
                     </th>
-                  );
-                })}
-                <th style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)' }} />
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((c, idx) => (
-                <tr key={c.id} style={{ background: idx % 2 ? '#ffffff' : '#f9fafb' }}>
-                  <td style={stickyBodyCell}>
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(c.id)}
-                      onChange={() => handleCheckboxChange(c.id)}
-                      style={{ cursor: 'pointer' }}
-                    />
-                  </td>
-                  {visibleFields.map(f => {
-                    const readOnly = ['skillset', 'type'].includes(f.key);
-                    const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                    const isName = f.key === 'name';
-                    const stickyStyle = isName ? {
-                        position: 'sticky',
-                        left: 44,
-                        zIndex: 9,
-                        background: idx % 2 ? '#ffffff' : '#f9faffb',
-                        borderRight: '1px solid #eef2f5',
-                        boxShadow: '2px 0 0 rgba(0,0,0,0.02)'
-                    } : {};
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {candidates.map((c, idx) => (
+                  <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: idx % 2 ? '#ffffff' : '#f9fafb' }}>
+                    <td style={{ textAlign: 'center', background: idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN, minWidth: 44, width: 44, height: HEADER_ROW_HEIGHT, overflow: 'hidden' }}>
+                      <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => handleCheckboxChange(c.id)} style={{ cursor: 'pointer' }} />
+                    </td>
+                    {leftFields.map(f => renderBodyCell(c, f, idx, true))}
+                  </tr>
+                ))}
+                {!candidates.length && (
+                  <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                    <td colSpan={leftFields.length + 1} />
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
 
-                    let displayValue = editRows[c.id]?.[f.key] ?? '';
-                    if (displayValue === '' || displayValue == null) {
-                      if (f.key === 'type') displayValue = c.type ?? c.product ?? '';
-                      else displayValue = c[f.key] ?? '';
-                    }
-                    if (f.key === 'skillset') {
-                      displayValue = prettifySkillset(displayValue);
-                    }
+          {/* MIDDLE PANEL: scrollable columns (overflow-y:clip keeps sticky-top working via page scroll) */}
+          <div style={{ flex: '1 1 0', minWidth: 0, overflowX: 'auto', overflowY: 'clip' }}>
+            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', minWidth: middleFields.length * 110 }}>
+              <thead>
+                <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                  {middleFields.map(f => {
+                    const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                     return (
-                      <td
-                        key={f.key}
-                        data-field={f.key}
-                        style={{
-                          ...nonSticky,
-                          width: colWidths[f.key],
-                          maxWidth: maxForField,
-                          minWidth: MIN_WIDTH,
-                          padding: '4px 6px',
-                          verticalAlign: 'middle',
-                          fontSize: 13,
-                          color: 'var(--muted)',
-                          borderBottom: '1px solid #eef2f5',
-                          ...stickyStyle
-                        }}
-                      >
-                        {readOnly
-                          ? <span style={{
-                            display: 'block',
-                            width: '100%',
-                            background: f.key === 'skillset' ? '#fff' : '#f1f5f9',
-                            padding: '3px 8px',
-                            border: '1px solid var(--neutral-border)',
-                            borderRadius: 4,
-                            boxSizing: 'border-box',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            fontSize: 12
-                          }}
-                            title={displayValue}
-                          >
-                            {displayValue}
-                          </span>
-                          : f.key === 'sourcing_status' ? (
-                            <select
-                              value={displayValue || ''}
-                              onChange={e => handleEditChange(c.id, f.key, e.target.value)}
-                              style={{
-                                width: '100%',
-                                boxSizing: 'border-box',
-                                padding: '4px 8px',
-                                font: 'inherit',
-                                fontSize: 12,
-                                background: '#ffffff',
-                                border: '1px solid var(--desired-dawn)',
-                                borderRadius: 6
-                              }}
-                            >
-                              <option value="">-- Select Status --</option>
-                              {statusOptions.map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type={f.type}
-                              value={displayValue}
-                              onChange={e => handleEditChange(c.id, f.key, e.target.value)}
-                              style={{
-                                width: '100%',
-                                boxSizing: 'border-box',
-                                padding: '4px 8px',
-                                font: 'inherit',
-                                fontSize: 12,
-                                background: '#ffffff'
-                              }}
-                            />
-                          )
-                        }
-                      </td>
+                      <th key={f.key} data-field={f.key} onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
+                          style={{ position: 'sticky', top: 0, zIndex: 10, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, maxWidth: maxForField, background: '#f1f5f9', userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: 'default', height: HEADER_ROW_HEIGHT }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                          <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}</span>
+                          <span role="separator" tabIndex={0} style={{ cursor: 'col-resize', padding: '0 4px', userSelect: 'none', height: '100%', display: 'flex', alignItems: 'center', fontSize: 14, lineHeight: 1, color: 'var(--argent)' }}
+                                onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
+                                onKeyDown={e => handleResizerKey(e, f.key)}>▕</span>
+                        </div>
+                      </th>
                     );
                   })}
-                  <td style={{ background: '#ffffff', textAlign: 'center', borderBottom: '1px solid #eef2f5' }}>
-                   <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:4}}>
-                    <button
-                        onClick={() => onViewProfile && onViewProfile(c)}
-                        title="View Resume & Profile"
-                        style={{
-                            background: 'var(--azure-dragon)',
-                            color: '#fff',
-                            border: 'none',
-                            padding: '6px 10px',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            fontSize: 12,
-                            fontWeight: 700
-                        }}
-                    >
-                        Profile
-                    </button>
-                   </div>
-                  </td>
                 </tr>
-              ))}
-              {!candidates.length && (
-                <tr>
-                  <td colSpan={visibleFields.length + 2} style={{ padding: 16, textAlign: 'center', color: 'var(--argent)', fontSize: 14 }}>
-                    No candidates match current filters.
-                  </td>
+                <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                  {middleFields.map(f => {
+                    const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
+                    return (
+                      <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: 9, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, maxWidth: maxForField, background: '#ffffff', padding: 4, borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT }}>
+                        <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
+                      </th>
+                    );
+                  })}
                 </tr>
-              )}
-            </tbody>
-          </table>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 4, alignItems: 'center' }}>
-            <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Prev</button>
-            <span style={{ fontSize: 13, color: 'var(--muted)', fontFamily: 'Orbitron' }}>Page {page} of {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Next</button>
+              </thead>
+              <tbody>
+                {candidates.map((c, idx) => (
+                  <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: idx % 2 ? '#ffffff' : '#f9fafb' }}>
+                    {middleFields.map(f => renderBodyCell(c, f, idx, false))}
+                  </tr>
+                ))}
+                {!candidates.length && (
+                  <tr>
+                    <td colSpan={middleFields.length} style={{ padding: 16, textAlign: 'center', color: 'var(--argent)', fontSize: 14 }}>
+                      No candidates match current filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
+
+          {/* RIGHT PANEL: Sourcing Status + Actions */}
+          <div style={{ flexShrink: 0, borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`, zIndex: 2 }}>
+            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible' }}>
+              <thead>
+                <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                  {rightFields.map(f => (
+                    <th key={f.key} data-field={f.key} onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
+                        style={{ position: 'sticky', top: 0, zIndex: 40, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, background: FROZEN_HEADER_BG, userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: 'default', height: HEADER_ROW_HEIGHT }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                        <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}</span>
+                        <span role="separator" tabIndex={0} style={{ cursor: 'col-resize', padding: '0 4px', userSelect: 'none', height: '100%', display: 'flex', alignItems: 'center', fontSize: 14, lineHeight: 1, color: 'var(--argent)' }}
+                              onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
+                              onKeyDown={e => handleResizerKey(e, f.key)}>▕</span>
+                      </div>
+                    </th>
+                  ))}
+                  <th style={{ position: 'sticky', top: 0, zIndex: 40, width: FROZEN_ACTIONS_WIDTH, background: FROZEN_HEADER_BG, fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}>Actions</th>
+                </tr>
+                <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                  {rightFields.map(f => (
+                    <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: 39, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, background: FROZEN_FILTER_BG, padding: 4, borderBottom: '1px solid var(--neutral-border)', height: HEADER_ROW_HEIGHT }}>
+                      <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
+                    </th>
+                  ))}
+                  <th style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: 39, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', height: HEADER_ROW_HEIGHT }} />
+                </tr>
+              </thead>
+              <tbody>
+                {candidates.map((c, idx) => (
+                  <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: idx % 2 ? '#ffffff' : '#f9fafb' }}>
+                    {rightFields.map(f => renderBodyCell(c, f, idx, true))}
+                    <td style={{ textAlign: 'center', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                        <button onClick={() => onViewProfile && onViewProfile(c)} title="View Resume & Profile"
+                                style={{ background: 'var(--azure-dragon)', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                          Profile
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!candidates.length && (
+                  <tr style={{ height: HEADER_ROW_HEIGHT }}>
+                    <td colSpan={rightFields.length + 1} />
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 4, alignItems: 'center' }}>
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Prev</button>
+          <span style={{ fontSize: 13, color: 'var(--muted)', fontFamily: 'Orbitron' }}>Page {page} of {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Next</button>
         </div>
       </div>
       <EmailComposeModal 
@@ -2049,6 +1949,7 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
           id:p.id, name:p.name, seniority:tier,
           roleTag:(p.role_tag||'').trim(),
           personal:(p.personal||'').trim(), 
+          jobtitle:(p.jobtitle||'').trim(),
           jobFamily:p.job_family||'',
           country:(p.country||'').trim(),
           geographic:(p.geographic||'').trim(),
@@ -2179,46 +2080,14 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
         onManualDrop(draggedId,target.id);
       };
 
-      /* NodeCard: improved rendering to avoid duplicated seniority words and use short badge labels (Sr / Jr) */
+      /* NodeCard: show job title directly from process table jobtitle field; seniority shown only in badge */
       const NodeCard=({node})=>{
-        const normalizedSen = normalizeTier(node.seniority);
-        const isMgr=['Lead','Manager','Sr Manager','Director','Sr Director','Executive'].includes(normalizedSen);
-
-        // Build base role: prefer personal (standardized), then roleTag, then raw.role
-        let baseRole = (node.personal||'').trim() || (node.roleTag||'').trim() || (node.raw?.role ? String(node.raw.role).trim() : '') || '';
-
-        // Remove leading seniority tokens from baseRole to avoid duplication when we prefix seniority
-        function stripLeadingSeniority(s){
-          if(!s) return s;
-          return s.replace(/^(?:(sr|senior|lead|principal|expert|manager|mgr|director|dir|executive|exec|jr|junior|mid)\b[\s\.\-:]*)+/i, '').trim();
-        }
-        function collapseDuplicates(s){
-          if(!s) return s;
-          const toks = s.split(/\s+/);
-          const dedup = toks.filter((t,i)=> i===0 || t.toLowerCase() !== toks[i-1].toLowerCase());
-          return dedup.join(' ');
-        }
-
-        baseRole = baseRole.replace(/\s{2,}/g,' ').trim();
-        if (isMgr && baseRole) baseRole = stripLeadingSeniority(baseRole);
-        baseRole = collapseDuplicates(baseRole);
-
-        // If baseRole emptied, fallback to raw.role trimmed
-        if(!baseRole && node.raw?.role) baseRole = String(node.raw.role).trim();
-
-        // Compose title
-        let title;
-        if (isMgr && normalizedSen) {
-          const baseLower = (baseRole||'').toLowerCase();
-          const senLower = normalizedSen.toLowerCase();
-          if (baseLower.startsWith(senLower)) {
-            title = baseRole;
-          } else {
-            title = `${normalizedSen}${baseRole ? ' ' + baseRole : ''}`;
-          }
-        } else {
-          title = baseRole || normalizedSen || '';
-        }
+        // Title: use jobtitle from process table directly, then fallback to personal, roleTag, raw.role
+        const title = (node.jobtitle||'').trim()
+          || (node.personal||'').trim()
+          || (node.roleTag||'').trim()
+          || (node.raw?.role ? String(node.raw.role).trim() : '')
+          || '';
 
         // Badge text mapping: use short tokens (Sr, Jr, Mid, Lead, Mgr, Dir, Exec, Expert)
         const badge = (() => {
@@ -2543,6 +2412,10 @@ function OrgChartDisplay({
         el.style.maxWidth='unset';
         el.style.maxHeight='unset';
       });
+      // Wait for fonts and images to finish loading before capturing
+      await document.fonts.ready;
+      const imgs=Array.from(root.querySelectorAll('img'));
+      await Promise.all(imgs.map(img=>img.complete ? Promise.resolve() : new Promise(r=>{ img.onload=r; img.onerror=r; })));
       await new Promise(r=>requestAnimationFrame(r));
       const fullWidth=root.scrollWidth;
       const fullHeight=root.scrollHeight;
@@ -2550,13 +2423,14 @@ function OrgChartDisplay({
         backgroundColor:'#ffffff',
         useCORS:true,
         allowTaint:true,
-        foreignObjectRendering:true,
+        foreignObjectRendering:false,
         logging:false,
         imageTimeout:0,
+        scale: (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1,
         width:fullWidth,
         height:fullHeight,
-        scrollX:0,
-        scrollY:0
+        scrollX: -window.pageXOffset,
+        scrollY: -window.pageYOffset
       });
       const url=canvas.toDataURL('image/png');
       const a=document.createElement('a');
@@ -2771,6 +2645,7 @@ function CandidateUpload({ onUpload }) {
   const [file,setFile] = useState(null);
   const [uploading,setUploading] = useState(false);
   const [error,setError] = useState('');
+  const [expanded, setExpanded] = useState(false);
 
   const first = (row, ...keys) => {
     for (const k of keys) {
@@ -2875,26 +2750,37 @@ function CandidateUpload({ onUpload }) {
     }
   };
   return (
-    <div style={{ marginBottom:24, padding:12, border:'1px solid var(--neutral-border)', borderRadius:8, background:'#fff', boxShadow: 'var(--shadow)' }}>
-      <h2 style={{color: 'var(--azure-dragon)'}}>Bulk Upload Candidates (CSV/XLSX/XLS)</h2>
-      <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
-      <button
-        onClick={handleUpload}
-        disabled={uploading}
-        style={{
-          marginLeft:8,
-          background:'var(--cool-blue)',
-          color:'#fff',
-          border: 'none',
-          padding:'6px 14px',
-          borderRadius:4,
-          cursor:uploading?'not-allowed':'pointer'
-        }}
-      >{uploading?'Uploading...':'Upload'}</button>
-      {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
-      <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
-        Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+    <div className="vskillset-section">
+      <div
+        className="vskillset-header"
+        onClick={() => setExpanded(!expanded)}
+        style={{ cursor: 'pointer' }}
+      >
+        <span className="vskillset-title">Bulk Upload Candidates (CSV/XLSX/XLS)</span>
+        <span className="vskillset-arrow">{expanded ? '▼' : '▶'}</span>
       </div>
+      {expanded && (
+        <div style={{ padding: '8px 0' }}>
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
+          <button
+            onClick={handleUpload}
+            disabled={uploading}
+            style={{
+              marginLeft:8,
+              background:'var(--cool-blue)',
+              color:'#fff',
+              border: 'none',
+              padding:'6px 14px',
+              borderRadius:4,
+              cursor:uploading?'not-allowed':'pointer'
+            }}
+          >{uploading?'Uploading...':'Upload'}</button>
+          {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
+          <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
+            Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
