@@ -1425,7 +1425,7 @@ function CandidatesTable({
   }
 
   const [colResizing, setColResizing] = useState({ active: false, field: '', startX: 0, startW: 0 });
-  const [frozenColKey, setFrozenColKey] = useState(null);
+  const [frozenColKeys, setFrozenColKeys] = useState(new Set());
   const onMouseDown = (field, e) => {
     e.preventDefault();
     setColResizing({ active: true, field, startX: e.clientX, startW: colWidths[field] });
@@ -1537,9 +1537,17 @@ function CandidatesTable({
   };
   const nonSticky = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
-  const frozenColIndex = frozenColKey ? visibleFields.findIndex(f => f.key === frozenColKey) : -1;
-  const isColFrozen = (fieldIndex) => fieldIndex === 0 || (frozenColIndex >= 0 && fieldIndex <= frozenColIndex);
-  const getColFrozenLeft = (fieldIndex) => 44 + visibleFields.slice(0, fieldIndex).reduce((sum, f) => sum + (colWidths[f.key] || DEFAULT_WIDTH), 0);
+  const isColFrozen = (fieldKey) => frozenColKeys.has(fieldKey);
+  const getFrozenLeft = (fieldIndex) => {
+    // Sum the widths of the checkbox column (44px) plus all frozen columns that appear before this one
+    let left = 44;
+    for (let i = 0; i < fieldIndex; i++) {
+      if (frozenColKeys.has(visibleFields[i].key)) {
+        left += colWidths[visibleFields[i].key] || DEFAULT_WIDTH;
+      }
+    }
+    return left;
+  };
 
   return (
     <>
@@ -1730,23 +1738,26 @@ function CandidatesTable({
                 </th>
                 {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const isName = f.key === 'name';
-                  const frozen = isColFrozen(fieldIndex);
+                  const frozen = isColFrozen(f.key);
                   const stickyStyle = frozen ? {
                       position: 'sticky',
-                      left: getColFrozenLeft(fieldIndex),
+                      left: getFrozenLeft(fieldIndex),
                       top: 0,
-                      zIndex: isName ? 39 : 38,
+                      zIndex: 38,
                       borderRight: '1px solid var(--neutral-border)',
-                      ...(frozenColKey === f.key ? { background: '#dbeafe' } : {})
+                      background: '#dbeafe'
                   } : {};
                   return (
                     <th
                       key={f.key}
                       data-field={f.key}
                       onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
-                      onClick={() => setFrozenColKey(prev => prev === f.key ? null : f.key)}
-                      title={frozenColKey === f.key ? 'Click to unfreeze column' : 'Click to freeze column'}
+                      onClick={() => setFrozenColKeys(prev => {
+                        const next = new Set(prev);
+                        if (next.has(f.key)) next.delete(f.key); else next.add(f.key);
+                        return next;
+                      })}
+                      title={frozen ? 'Click to unfreeze column' : 'Click to freeze column'}
                       style={{
                         position: 'sticky',
                         top: 0,
@@ -1770,7 +1781,7 @@ function CandidatesTable({
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                         <span className="header-label" style={{ flex: '1 1 auto' }}>
                           {f.label}
-                          {frozenColKey === f.key && <span title="Frozen" style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
+                          {frozen && <span title="Frozen" style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
                         </span>
                         <span
                           role="separator"
@@ -1812,15 +1823,14 @@ function CandidatesTable({
                 </th>
                 {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const isName = f.key === 'name';
-                  const frozen = isColFrozen(fieldIndex);
+                  const frozen = isColFrozen(f.key);
                   const stickyStyle = frozen ? {
                       position: 'sticky',
-                      left: getColFrozenLeft(fieldIndex),
+                      left: getFrozenLeft(fieldIndex),
                       top: HEADER_ROW_HEIGHT,
-                      zIndex: isName ? 29 : 28,
+                      zIndex: 28,
                       borderRight: '1px solid var(--neutral-border)',
-                      ...(frozenColKey === f.key ? { background: '#eff6ff' } : {})
+                      background: '#eff6ff'
                   } : {};
                   return (
                     <th
@@ -1871,14 +1881,13 @@ function CandidatesTable({
                   {visibleFields.map((f, fieldIndex) => {
                     const readOnly = ['skillset', 'type'].includes(f.key);
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                    const isName = f.key === 'name';
-                    const frozen = isColFrozen(fieldIndex);
+                    const frozen = isColFrozen(f.key);
                     const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
                     const stickyStyle = frozen ? {
                         position: 'sticky',
-                        left: getColFrozenLeft(fieldIndex),
-                        zIndex: isName ? 9 : 8,
-                        background: frozenColKey === f.key ? (idx % 2 ? '#eff6ff' : '#e8f4fd') : rowBg,
+                        left: getFrozenLeft(fieldIndex),
+                        zIndex: 8,
+                        background: idx % 2 ? '#eff6ff' : '#e8f4fd',
                         borderRight: '1px solid #eef2f5',
                         boxShadow: '2px 0 0 rgba(0,0,0,0.02)'
                     } : {};
@@ -2197,46 +2206,14 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
         onManualDrop(draggedId,target.id);
       };
 
-      /* NodeCard: improved rendering to avoid duplicated seniority words and use short badge labels (Sr / Jr) */
+      /* NodeCard: show job title directly from process table jobtitle field; seniority shown only in badge */
       const NodeCard=({node})=>{
-        const normalizedSen = normalizeTier(node.seniority);
-        const isMgr=['Lead','Manager','Sr Manager','Director','Sr Director','Executive'].includes(normalizedSen);
-
-        // Build base role: prefer jobtitle from process table, then personal (standardized), then roleTag, then raw.role
-        let baseRole = (node.jobtitle||'').trim() || (node.personal||'').trim() || (node.roleTag||'').trim() || (node.raw?.role ? String(node.raw.role).trim() : '') || '';
-
-        // Remove leading seniority tokens from baseRole to avoid duplication when we prefix seniority
-        function stripLeadingSeniority(s){
-          if(!s) return s;
-          return s.replace(/^(?:(sr|senior|lead|principal|expert|manager|mgr|director|dir|executive|exec|jr|junior|mid)\b[\s\.\-:]*)+/i, '').trim();
-        }
-        function collapseDuplicates(s){
-          if(!s) return s;
-          const toks = s.split(/\s+/);
-          const dedup = toks.filter((t,i)=> i===0 || t.toLowerCase() !== toks[i-1].toLowerCase());
-          return dedup.join(' ');
-        }
-
-        baseRole = baseRole.replace(/\s{2,}/g,' ').trim();
-        if (isMgr && baseRole) baseRole = stripLeadingSeniority(baseRole);
-        baseRole = collapseDuplicates(baseRole);
-
-        // If baseRole emptied, fallback to raw.role trimmed
-        if(!baseRole && node.raw?.role) baseRole = String(node.raw.role).trim();
-
-        // Compose title
-        let title;
-        if (isMgr && normalizedSen) {
-          const baseLower = (baseRole||'').toLowerCase();
-          const senLower = normalizedSen.toLowerCase();
-          if (baseLower.startsWith(senLower)) {
-            title = baseRole;
-          } else {
-            title = `${normalizedSen}${baseRole ? ' ' + baseRole : ''}`;
-          }
-        } else {
-          title = baseRole || normalizedSen || '';
-        }
+        // Title: use jobtitle from process table directly, then fallback to personal, roleTag, raw.role
+        const title = (node.jobtitle||'').trim()
+          || (node.personal||'').trim()
+          || (node.roleTag||'').trim()
+          || (node.raw?.role ? String(node.raw.role).trim() : '')
+          || '';
 
         // Badge text mapping: use short tokens (Sr, Jr, Mid, Lead, Mgr, Dir, Exec, Expert)
         const badge = (() => {
