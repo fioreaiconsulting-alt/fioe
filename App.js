@@ -1731,7 +1731,7 @@ function CandidatesTable({
 
           {/* LEFT PANEL: checkbox + Name */}
           <div style={{ flexShrink: 0, borderRight: `2px solid ${FROZEN_BORDER_COLOR}`, zIndex: 2 }}>
-            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible' }}>
+            <table style={{ tableLayout: 'auto', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', width: 'auto', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
               <thead>
                 <tr style={{ height: HEADER_ROW_HEIGHT }}>
                   <th style={{ position: 'sticky', top: 0, zIndex: 40, width: 44, minWidth: 44, textAlign: 'center', background: FROZEN_HEADER_BG, userSelect: 'none', borderRight: '1px solid var(--neutral-border)', borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
@@ -1781,9 +1781,9 @@ function CandidatesTable({
             </table>
           </div>
 
-          {/* MIDDLE PANEL: scrollable columns (overflow-y:clip keeps sticky-top working via page scroll) */}
+          {/* MIDDLE PANEL: scrollable columns */}
           <div style={{ flex: '1 1 0', minWidth: 0, overflowX: 'auto', overflowY: 'clip' }}>
-            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', minWidth: middleFields.length * 110 }}>
+            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', minWidth: middleFields.length * 110, border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
               <thead>
                 <tr style={{ height: HEADER_ROW_HEIGHT }}>
                   {middleFields.map(f => {
@@ -1831,7 +1831,7 @@ function CandidatesTable({
 
           {/* RIGHT PANEL: Sourcing Status + Actions */}
           <div style={{ flexShrink: 0, borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`, zIndex: 2 }}>
-            <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible' }}>
+            <table style={{ tableLayout: 'auto', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', width: 'auto', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
               <thead>
                 <tr style={{ height: HEADER_ROW_HEIGHT }}>
                   {rightFields.map(f => (
