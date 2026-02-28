@@ -1048,12 +1048,12 @@ function CandidatesTable({
     { key: 'organisation', label: 'Company', type: 'text', editable: true },
     { key: 'type', label: 'Product', type: 'text', editable: false },
     { key: 'sector', label: 'Sector', type: 'text', editable: true },
-    { key: 'personal', label: 'Personal', type: 'text', editable: true },
     { key: 'seniority', label: 'Seniority', type: 'text', editable: true },
     { key: 'job_family', label: 'Job Family', type: 'text', editable: true },
     { key: 'skillset', label: 'Skillset', type: 'text', editable: false },
     { key: 'geographic', label: 'Geographic', type: 'text', editable: true },
     { key: 'country', label: 'Country', type: 'text', editable: true },
+    { key: 'personal', label: 'Compensation', type: 'text', editable: true },
     { key: 'email', label: 'Email', type: 'email', editable: true },
     { key: 'mobile', label: 'Mobile', type: 'text', editable: true },
     { key: 'office', label: 'Office', type: 'text', editable: true },
@@ -1282,6 +1282,7 @@ function CandidatesTable({
         'Company': 'organisation',
         'Sector': 'sector',
         'Personal': 'personal',
+        'Compensation': 'personal',
         'Job Family': 'job_family',
         'Geographic': 'geographic',
         'Country': 'country'
@@ -1658,7 +1659,7 @@ function CandidatesTable({
               <option value="Job Title">Job Title</option>
               <option value="Company">Company</option>
               <option value="Sector">Sector</option>
-              <option value="Personal">Personal</option>
+              <option value="Compensation">Compensation</option>
               <option value="Job Family">Job Family</option>
               <option value="Geographic">Geographic</option>
               <option value="Country">Country</option>
@@ -1955,6 +1956,29 @@ function CandidatesTable({
                                 <option key={opt} value={opt}>{opt}</option>
                               ))}
                             </select>
+                          ) : f.key === 'seniority' ? (
+                            <select
+                              value={displayValue || ''}
+                              onChange={e => handleEditChange(c.id, f.key, e.target.value)}
+                              style={{
+                                width: '100%',
+                                boxSizing: 'border-box',
+                                padding: '4px 8px',
+                                font: 'inherit',
+                                fontSize: 12,
+                                background: '#ffffff',
+                                border: '1px solid var(--desired-dawn)',
+                                borderRadius: 6
+                              }}
+                            >
+                              <option value="">-- Select --</option>
+                              <option value="Junior">Junior</option>
+                              <option value="Mid">Mid</option>
+                              <option value="Senior">Senior</option>
+                              <option value="Manager">Manager</option>
+                              <option value="Director">Director</option>
+                              <option value="Executive">Executive</option>
+                            </select>
                           ) : (
                             <input
                               type={f.type}
@@ -2005,11 +2029,11 @@ function CandidatesTable({
               )}
             </tbody>
           </table>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 4, alignItems: 'center' }}>
-            <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Prev</button>
-            <span style={{ fontSize: 13, color: 'var(--muted)', fontFamily: 'Orbitron' }}>Page {page} of {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Next</button>
-          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 4, alignItems: 'center' }}>
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Prev</button>
+          <span style={{ fontSize: 13, color: 'var(--muted)', fontFamily: 'Orbitron' }}>Page {page} of {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="btn-secondary" style={{ padding: '6px 14px' }}>Next</button>
         </div>
       </div>
       <EmailComposeModal 
