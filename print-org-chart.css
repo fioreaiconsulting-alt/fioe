@@ -1,0 +1,23 @@
+@media print {
+  body * {
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+  #org-chart-root, #org-chart-root * {
+    visibility: visible !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  #org-chart-root {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100vw !important;
+    background: #fff !important;
+    z-index: 9999 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+}

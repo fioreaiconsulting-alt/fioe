@@ -3273,6 +3273,18 @@ export default function App() {
     setLoading(true);
     try{
       const res=await fetch('http://localhost:4000/candidates', { credentials: 'include' });
+      if (res.status === 401) {
+        // Session cookie is missing or expired; force re-login
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+      if (!res.ok) {
+        console.error('[fetchCandidates] server error', res.status);
+        setCandidates([]);
+        setLoading(false);
+        return;
+      }
       const raw=await res.json();
       const candidatesList = Array.isArray(raw)?raw:[];
       
