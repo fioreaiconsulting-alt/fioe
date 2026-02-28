@@ -1553,7 +1553,7 @@ function CandidatesTable({
   return (
     <>
       <div className="app-card" style={{
-        overflowX: 'auto', width: '100%', maxWidth: '100%', position: 'relative', padding: 16
+        width: '100%', maxWidth: '100%', position: 'relative', padding: 16
       }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           {selectedIds.length > 0 && (
@@ -2790,6 +2790,7 @@ function CandidateUpload({ onUpload }) {
   const [file,setFile] = useState(null);
   const [uploading,setUploading] = useState(false);
   const [error,setError] = useState('');
+  const [expanded, setExpanded] = useState(false);
 
   const first = (row, ...keys) => {
     for (const k of keys) {
@@ -2894,26 +2895,37 @@ function CandidateUpload({ onUpload }) {
     }
   };
   return (
-    <div style={{ marginBottom:24, padding:12, border:'1px solid var(--neutral-border)', borderRadius:8, background:'#fff', boxShadow: 'var(--shadow)' }}>
-      <h2 style={{color: 'var(--azure-dragon)'}}>Bulk Upload Candidates (CSV/XLSX/XLS)</h2>
-      <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
-      <button
-        onClick={handleUpload}
-        disabled={uploading}
-        style={{
-          marginLeft:8,
-          background:'var(--cool-blue)',
-          color:'#fff',
-          border: 'none',
-          padding:'6px 14px',
-          borderRadius:4,
-          cursor:uploading?'not-allowed':'pointer'
-        }}
-      >{uploading?'Uploading...':'Upload'}</button>
-      {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
-      <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
-        Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+    <div className="vskillset-section">
+      <div
+        className="vskillset-header"
+        onClick={() => setExpanded(!expanded)}
+        style={{ cursor: 'pointer' }}
+      >
+        <span className="vskillset-title">Bulk Upload Candidates (CSV/XLSX/XLS)</span>
+        <span className="vskillset-arrow">{expanded ? '▼' : '▶'}</span>
       </div>
+      {expanded && (
+        <div style={{ padding: '8px 0' }}>
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
+          <button
+            onClick={handleUpload}
+            disabled={uploading}
+            style={{
+              marginLeft:8,
+              background:'var(--cool-blue)',
+              color:'#fff',
+              border: 'none',
+              padding:'6px 14px',
+              borderRadius:4,
+              cursor:uploading?'not-allowed':'pointer'
+            }}
+          >{uploading?'Uploading...':'Upload'}</button>
+          {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
+          <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
+            Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
