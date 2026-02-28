@@ -1829,11 +1829,11 @@ function CandidatesTable({
                       const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
                       let extraStyle;
                       if (isLeft) {
-                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
+                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, background: rowBg, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
                       } else if (isRight) {
-                        extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
+                        extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, background: rowBg, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
                       } else if (isPinned) {
-                        extraStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 5, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}` };
+                        extraStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 5, background: rowBg, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}` };
                       } else {
                         extraStyle = {};
                       }
@@ -3741,7 +3741,7 @@ export default function App() {
       flexDirection: 'column',
       alignItems: 'stretch',
       justifyContent: 'flex-start',
-      overflowX: 'hidden' // Ensure no horizontal body scroll
+      overflowX: 'clip' // clip (not hidden) so sticky children anchor to the table's own scroll container
     }}>
       {/* Updated Session Banner UI */}
       <div style={{
