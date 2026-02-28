@@ -999,13 +999,10 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
 }
 
 /* ========================= CANDIDATES TABLE ========================= */
-// Sticky column color constants (defined outside component to avoid recreation on each render)
+// Sticky column constants (defined outside component to avoid recreation on each render)
 const FROZEN_ACTIONS_WIDTH = 110;
-const FROZEN_BORDER_COLOR = '#93c5fd';
-const FROZEN_HEADER_BG = '#dbeafe';
-const FROZEN_FILTER_BG = '#eff6ff';
-const FROZEN_ROW_BG_EVEN = '#e8f4fd';
-const FROZEN_ROW_BG_ODD = '#eff6ff';
+const FROZEN_EDGE_BORDER_COLOR = '#cbd5e1'; // subtle separator for permanent edge columns
+const FROZEN_COL_BORDER_COLOR = '#93c5fd';  // blue separator for user-pinned columns (📌)
 
 function CandidatesTable({
   candidates = [],
@@ -1049,6 +1046,14 @@ function CandidatesTable({
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
   const tableRef = useRef(null);
+
+  // User-pinned middle columns (click header to toggle freeze)
+  const [frozenMiddleCols, setFrozenMiddleCols] = useState(() => new Set());
+  const toggleFrozenMiddleCol = key => setFrozenMiddleCols(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const fields = [
     { key: 'name', label: 'Name', type: 'text', editable: true },
@@ -1520,6 +1525,20 @@ function CandidatesTable({
 
   const HEADER_ROW_HEIGHT = 38;
 
+  // Computes { fieldKey: leftOffset } for all user-pinned middle columns in order
+  const computePinnedLeftOffsets = useMemo(() => {
+    const nameWidth = colWidths['name'] || DEFAULT_WIDTH;
+    let acc = 44 + nameWidth;
+    const map = {};
+    visibleFields.forEach(f => {
+      if (f.key === 'name' || f.key === 'sourcing_status') return;
+      if (frozenMiddleCols.has(f.key)) {
+        map[f.key] = acc;
+        acc += colWidths[f.key] || DEFAULT_WIDTH;
+      }
+    });
+    return map;
+  }, [visibleFields, colWidths, frozenMiddleCols]);
 
   const getDisplayValue = (c, f) => {
     let v = editRows[c.id]?.[f.key] ?? '';
@@ -1534,9 +1553,7 @@ function CandidatesTable({
     const readOnly = ['skillset', 'type'].includes(f.key);
     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
     const displayValue = getDisplayValue(c, f);
-    const cellBg = frozen
-      ? (idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN)
-      : (idx % 2 ? '#ffffff' : '#f9fafb');
+    const cellBg = idx % 2 ? '#ffffff' : '#f9fafb';
     return (
       <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
         {readOnly
@@ -1723,81 +1740,106 @@ function CandidatesTable({
         )}
 
         {/* Single table: checkbox+Name sticky-left, Sourcing Status+Actions sticky-right, middle scrolls */}
+        {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
         <div ref={tableRef} style={{ overflowX: 'auto', marginBottom: 12 }}>
           <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
             <thead>
               {/* Row 1: column labels */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: 0, zIndex: 40, width: 44, minWidth: 44, textAlign: 'center', background: FROZEN_HEADER_BG, userSelect: 'none', borderRight: '1px solid var(--neutral-border)', borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
+                <th style={{ position: 'sticky', left: 0, top: 0, zIndex: 40, width: 44, minWidth: 44, textAlign: 'center', background: '#f1f5f9', userSelect: 'none', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
                     onDoubleClick={(e) => handleHeaderDoubleClick(e, '__ALL__')}>
                   <div style={{ height: HEADER_ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <input type="checkbox" checked={candidates.length > 0 && selectedIds.length === candidates.length} onChange={handleSelectAll} style={{ cursor: 'pointer' }} />
                   </div>
                 </th>
-                {visibleFields.map(f => {
-                  const isLeft = f.key === 'name';
-                  const isRight = f.key === 'sourcing_status';
-                  const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const frozenStyle = isLeft
-                    ? { position: 'sticky', left: 44, zIndex: 40, borderRight: `2px solid ${FROZEN_BORDER_COLOR}`, background: FROZEN_HEADER_BG }
-                    : isRight
-                    ? { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 40, borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`, background: FROZEN_HEADER_BG }
-                    : { background: '#f1f5f9' };
-                  return (
-                    <th key={f.key} data-field={f.key} onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
-                        style={{ position: 'sticky', top: 0, zIndex: (isLeft || isRight) ? 40 : 20, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, maxWidth: maxForField, userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: 'default', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                        <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}</span>
-                        <span role="separator" tabIndex={0} style={{ cursor: 'col-resize', padding: '0 4px', userSelect: 'none', height: '100%', display: 'flex', alignItems: 'center', fontSize: 14, lineHeight: 1, color: 'var(--argent)' }}
-                              onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
-                              onKeyDown={e => handleResizerKey(e, f.key)}>▕</span>
-                      </div>
-                    </th>
-                  );
-                })}
-                <th style={{ position: 'sticky', right: 0, top: 0, zIndex: 40, width: FROZEN_ACTIONS_WIDTH, background: FROZEN_HEADER_BG, fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderLeft: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT, textAlign: 'center' }}>Actions</th>
+                {(() => {
+                  return visibleFields.map(f => {
+                    const isLeft = f.key === 'name';
+                    const isRight = f.key === 'sourcing_status';
+                    const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
+                    const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
+                    let frozenStyle;
+                    if (isLeft) {
+                      frozenStyle = { position: 'sticky', left: 44, zIndex: 40, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
+                    } else if (isRight) {
+                      frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 40, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
+                    } else if (isPinned) {
+                      frozenStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 30, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: '#f1f5f9' };
+                    } else {
+                      frozenStyle = { background: '#f1f5f9' };
+                    }
+                    return (
+                      <th key={f.key} data-field={f.key}
+                          onClick={(!isLeft && !isRight) ? () => toggleFrozenMiddleCol(f.key) : undefined}
+                          onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
+                          style={{ position: 'sticky', top: 0, zIndex: (isLeft || isRight) ? 40 : (isPinned ? 30 : 20), width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, maxWidth: maxForField, userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: (!isLeft && !isRight) ? 'pointer' : 'default', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                          <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}{isPinned ? ' 📌' : ''}</span>
+                          <span role="separator" tabIndex={0} style={{ cursor: 'col-resize', padding: '0 4px', userSelect: 'none', height: '100%', display: 'flex', alignItems: 'center', fontSize: 14, lineHeight: 1, color: 'var(--argent)' }}
+                                onMouseDown={e => { e.stopPropagation(); onMouseDown(f.key, e); }}
+                                onKeyDown={e => handleResizerKey(e, f.key)}>▕</span>
+                        </div>
+                      </th>
+                    );
+                  });
+                })()}
+                <th style={{ position: 'sticky', right: 0, top: 0, zIndex: 40, width: FROZEN_ACTIONS_WIDTH, background: '#f1f5f9', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT, textAlign: 'center' }}>Actions</th>
               </tr>
               {/* Row 2: filter inputs */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: 44, minWidth: 44, textAlign: 'center', background: FROZEN_FILTER_BG, borderBottom: '1px solid var(--neutral-border)', height: HEADER_ROW_HEIGHT }}>
+                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: 44, minWidth: 44, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
                   <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
                 </th>
-                {visibleFields.map(f => {
-                  const isLeft = f.key === 'name';
-                  const isRight = f.key === 'sourcing_status';
-                  const frozenStyle = isLeft
-                    ? { position: 'sticky', left: 44, zIndex: 39, borderRight: `2px solid ${FROZEN_BORDER_COLOR}`, background: FROZEN_FILTER_BG }
-                    : isRight
-                    ? { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 39, borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`, background: FROZEN_FILTER_BG }
-                    : { background: '#ffffff' };
-                  return (
-                    <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: (isLeft || isRight) ? 39 : 15, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, padding: 4, borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
-                      <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
-                    </th>
-                  );
-                })}
-                <th style={{ position: 'sticky', right: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: FROZEN_ACTIONS_WIDTH, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderLeft: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT }} />
+                {(() => {
+                  return visibleFields.map(f => {
+                    const isLeft = f.key === 'name';
+                    const isRight = f.key === 'sourcing_status';
+                    const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
+                    let frozenStyle;
+                    if (isLeft) {
+                      frozenStyle = { position: 'sticky', left: 44, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
+                    } else if (isRight) {
+                      frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 39, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
+                    } else if (isPinned) {
+                      frozenStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 29, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: '#ffffff' };
+                    } else {
+                      frozenStyle = { background: '#ffffff' };
+                    }
+                    return (
+                      <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: (isLeft || isRight) ? 39 : (isPinned ? 29 : 15), width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, padding: 4, borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
+                        <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
+                      </th>
+                    );
+                  });
+                })()}
+                <th style={{ position: 'sticky', right: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: FROZEN_ACTIONS_WIDTH, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }} />
               </tr>
             </thead>
             <tbody>
               {candidates.map((c, idx) => {
-                const frozenBg = idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN;
+                const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
                 return (
-                  <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: idx % 2 ? '#ffffff' : '#f9fafb' }}>
-                    <td style={{ position: 'sticky', left: 0, zIndex: 10, textAlign: 'center', background: frozenBg, minWidth: 44, width: 44, height: HEADER_ROW_HEIGHT, overflow: 'hidden' }}>
+                  <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: rowBg }}>
+                    <td style={{ position: 'sticky', left: 0, zIndex: 10, textAlign: 'center', background: rowBg, minWidth: 44, width: 44, height: HEADER_ROW_HEIGHT, overflow: 'hidden', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` }}>
                       <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => handleCheckboxChange(c.id)} style={{ cursor: 'pointer' }} />
                     </td>
                     {visibleFields.map(f => {
                       const isLeft = f.key === 'name';
                       const isRight = f.key === 'sourcing_status';
-                      const extraStyle = isLeft
-                        ? { position: 'sticky', left: 44, zIndex: 10, borderRight: `2px solid ${FROZEN_BORDER_COLOR}` }
-                        : isRight
-                        ? { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `2px solid ${FROZEN_BORDER_COLOR}` }
-                        : {};
-                      return renderBodyCell(c, f, idx, isLeft || isRight, extraStyle);
+                      const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
+                      let extraStyle;
+                      if (isLeft) {
+                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
+                      } else if (isRight) {
+                        extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
+                      } else if (isPinned) {
+                        extraStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 5, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}` };
+                      } else {
+                        extraStyle = {};
+                      }
+                      return renderBodyCell(c, f, idx, false, extraStyle);
                     })}
-                    <td style={{ position: 'sticky', right: 0, zIndex: 10, textAlign: 'center', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: frozenBg, overflow: 'hidden' }}>
+                    <td style={{ position: 'sticky', right: 0, zIndex: 10, textAlign: 'center', borderBottom: '1px solid #eef2f5', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT, background: rowBg, overflow: 'hidden' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                         <button onClick={() => onViewProfile && onViewProfile(c)} title="View Resume & Profile"
                                 style={{ background: 'var(--azure-dragon)', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
