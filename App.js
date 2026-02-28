@@ -999,6 +999,14 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
 }
 
 /* ========================= CANDIDATES TABLE ========================= */
+// Sticky column color constants (defined outside component to avoid recreation on each render)
+const FROZEN_ACTIONS_WIDTH = 110;
+const FROZEN_BORDER_COLOR = '#93c5fd';
+const FROZEN_HEADER_BG = '#dbeafe';
+const FROZEN_FILTER_BG = '#eff6ff';
+const FROZEN_ROW_BG_EVEN = '#e8f4fd';
+const FROZEN_ROW_BG_ODD = '#eff6ff';
+
 function CandidatesTable({
   candidates = [],
   onDelete, deleteError, onSave, onAutoSave, type, page, setPage, totalPages, editRows, setEditRows,
@@ -1426,7 +1434,6 @@ function CandidatesTable({
   }
 
   const [colResizing, setColResizing] = useState({ active: false, field: '', startX: 0, startW: 0 });
-  const [frozenColKeys, setFrozenColKeys] = useState(new Set());
   const onMouseDown = (field, e) => {
     e.preventDefault();
     setColResizing({ active: true, field, startX: e.clientX, startW: colWidths[field] });
@@ -1538,17 +1545,9 @@ function CandidatesTable({
   };
   const nonSticky = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
-  const isColFrozen = (fieldKey) => frozenColKeys.has(fieldKey);
-  const getFrozenLeft = (fieldIndex) => {
-    // Sum the widths of the checkbox column (44px) plus all frozen columns that appear before this one
-    let left = 44;
-    for (let i = 0; i < fieldIndex; i++) {
-      if (frozenColKeys.has(visibleFields[i].key)) {
-        left += colWidths[visibleFields[i].key] || DEFAULT_WIDTH;
-      }
-    }
-    return left;
-  };
+  // Permanently frozen: 'name' is sticky-left (after 44px checkbox), 'sourcing_status' is sticky-right (before Actions)
+  const isLeftFrozen = (fieldKey) => fieldKey === 'name';
+  const isRightFrozen = (fieldKey) => fieldKey === 'sourcing_status';
 
   return (
     <>
@@ -1739,26 +1738,28 @@ function CandidatesTable({
                 </th>
                 {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const frozen = isColFrozen(f.key);
-                  const stickyStyle = frozen ? {
+                  const leftFrozen = isLeftFrozen(f.key);
+                  const rightFrozen = isRightFrozen(f.key);
+                  const stickyStyle = leftFrozen ? {
                       position: 'sticky',
-                      left: getFrozenLeft(fieldIndex),
+                      left: 44,
                       top: 0,
                       zIndex: 38,
-                      borderRight: '1px solid var(--neutral-border)',
-                      background: '#dbeafe'
+                      borderRight: `2px solid ${FROZEN_BORDER_COLOR}`,
+                      background: FROZEN_HEADER_BG
+                  } : rightFrozen ? {
+                      position: 'sticky',
+                      right: FROZEN_ACTIONS_WIDTH,
+                      top: 0,
+                      zIndex: 38,
+                      borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`,
+                      background: FROZEN_HEADER_BG
                   } : {};
                   return (
                     <th
                       key={f.key}
                       data-field={f.key}
                       onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
-                      onClick={() => setFrozenColKeys(prev => {
-                        const next = new Set(prev);
-                        if (next.has(f.key)) next.delete(f.key); else next.add(f.key);
-                        return next;
-                      })}
-                      title={frozen ? 'Click to unfreeze column' : 'Click to freeze column'}
                       style={{
                         position: 'sticky',
                         top: 0,
@@ -1775,14 +1776,13 @@ function CandidatesTable({
                         borderBottom: '1px solid var(--neutral-border)',
                         borderRight: '1px solid var(--neutral-border)',
                         fontFamily: "Orbitron",
-                        cursor: 'pointer',
+                        cursor: 'default',
                         ...stickyStyle
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                         <span className="header-label" style={{ flex: '1 1 auto' }}>
                           {f.label}
-                          {frozen && <span title="Frozen" style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
                         </span>
                         <span
                           role="separator"
@@ -1806,9 +1806,10 @@ function CandidatesTable({
                   );
                 })}
                 <th style={{
-                  width: 110, 
+                  width: FROZEN_ACTIONS_WIDTH,
                   position: 'sticky',
                   top: 0,
+                  right: 0,
                   background: '#f1f5f9',
                   fontSize: 12,
                   fontWeight: 700,
@@ -1824,14 +1825,22 @@ function CandidatesTable({
                 </th>
                 {visibleFields.map((f, fieldIndex) => {
                   const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                  const frozen = isColFrozen(f.key);
-                  const stickyStyle = frozen ? {
+                  const leftFrozen = isLeftFrozen(f.key);
+                  const rightFrozen = isRightFrozen(f.key);
+                  const stickyStyle = leftFrozen ? {
                       position: 'sticky',
-                      left: getFrozenLeft(fieldIndex),
+                      left: 44,
                       top: HEADER_ROW_HEIGHT,
                       zIndex: 28,
-                      borderRight: '1px solid var(--neutral-border)',
-                      background: '#eff6ff'
+                      borderRight: `2px solid ${FROZEN_BORDER_COLOR}`,
+                      background: FROZEN_FILTER_BG
+                  } : rightFrozen ? {
+                      position: 'sticky',
+                      right: FROZEN_ACTIONS_WIDTH,
+                      top: HEADER_ROW_HEIGHT,
+                      zIndex: 28,
+                      borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`,
+                      background: FROZEN_FILTER_BG
                   } : {};
                   return (
                     <th
@@ -1865,7 +1874,7 @@ function CandidatesTable({
                     </th>
                   );
                 })}
-                <th style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)' }} />
+                <th style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, right: 0, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)' }} />
               </tr>
             </thead>
             <tbody>
@@ -1882,15 +1891,23 @@ function CandidatesTable({
                   {visibleFields.map((f, fieldIndex) => {
                     const readOnly = ['skillset', 'type'].includes(f.key);
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
-                    const frozen = isColFrozen(f.key);
+                    const leftFrozen = isLeftFrozen(f.key);
+                    const rightFrozen = isRightFrozen(f.key);
                     const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
-                    const stickyStyle = frozen ? {
+                    const stickyStyle = leftFrozen ? {
                         position: 'sticky',
-                        left: getFrozenLeft(fieldIndex),
+                        left: 44,
                         zIndex: 8,
-                        background: idx % 2 ? '#eff6ff' : '#e8f4fd',
-                        borderRight: '1px solid #eef2f5',
+                        background: idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN,
+                        borderRight: `2px solid ${FROZEN_BORDER_COLOR}`,
                         boxShadow: '2px 0 0 rgba(0,0,0,0.02)'
+                    } : rightFrozen ? {
+                        position: 'sticky',
+                        right: FROZEN_ACTIONS_WIDTH,
+                        zIndex: 8,
+                        background: idx % 2 ? FROZEN_ROW_BG_ODD : FROZEN_ROW_BG_EVEN,
+                        borderLeft: `2px solid ${FROZEN_BORDER_COLOR}`,
+                        boxShadow: '-2px 0 0 rgba(0,0,0,0.02)'
                     } : {};
 
                     let displayValue = editRows[c.id]?.[f.key] ?? '';
@@ -1998,7 +2015,7 @@ function CandidatesTable({
                       </td>
                     );
                   })}
-                  <td style={{ background: '#ffffff', textAlign: 'center', borderBottom: '1px solid #eef2f5' }}>
+                  <td style={{ background: idx % 2 ? '#ffffff' : '#f9fafb', textAlign: 'center', borderBottom: '1px solid #eef2f5', position: 'sticky', right: 0, zIndex: 8 }}>
                    <div style={{display:'flex', alignItems:'center', justifyContent:'center', gap:4}}>
                     <button
                         onClick={() => onViewProfile && onViewProfile(c)}
@@ -2569,13 +2586,14 @@ function OrgChartDisplay({
         backgroundColor:'#ffffff',
         useCORS:true,
         allowTaint:true,
-        foreignObjectRendering:true,
+        foreignObjectRendering:false,
         logging:false,
         imageTimeout:0,
+        scale: (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1,
         width:fullWidth,
         height:fullHeight,
-        scrollX:0,
-        scrollY:0
+        scrollX: -window.pageXOffset,
+        scrollY: -window.pageYOffset
       });
       const url=canvas.toDataURL('image/png');
       const a=document.createElement('a');
