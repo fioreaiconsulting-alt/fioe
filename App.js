@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { Tree, TreeNode } from 'react-organizational-chart';
 import './cms.css'; // CMS theme with Resume Tab enhancements
+import './print-org-chart.css'; // Print-only: restrict output to org chart tree
 // Admin feature removed (AdminUploadButton not imported)
 
 /* ========================= CONSTANTS ========================= */
@@ -234,7 +235,7 @@ function EmailVerificationModal({ data, onClose, email }) {
 }
 
 /* ========================= EMAIL COMPOSE MODAL ========================= */
-function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpConfig }) {
+function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candidateData, userData, smtpConfig, recipientCandidates = [] }) {
   const [from, setFrom] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -260,6 +261,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
   const [showAiInput, setShowAiInput] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [showTagGlossary, setShowTagGlossary] = useState(false);
 
   const [to, setTo] = useState(toAddresses);
   
@@ -291,6 +293,43 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  // Apply dynamic template tags from candidate and user data
+  const applyTags = (text) => {
+    let t = text;
+    // Candidate tags
+    t = t.replace(/\[Candidate Name\]/gi, candidateData?.name || candidateName || '');
+    t = t.replace(/\[Job Title\]/gi, candidateData?.jobtitle || candidateData?.role || '');
+    t = t.replace(/\[Company Name\]/gi, candidateData?.company || candidateData?.organisation || '');
+    t = t.replace(/\[Country\]/gi, candidateData?.country || '');
+    // Legacy [name] tag
+    t = t.replace(/\[name\]/gi, candidateData?.name || candidateName || '');
+    // User / sender tags
+    t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
+    t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
+    return t;
+  };
+
+  // Apply tags resolved against a specific candidate object (used for sequential multi-send)
+  const applyTagsFor = (text, c) => {
+    let t = text;
+    t = t.replace(/\[Candidate Name\]/gi, c?.name || '');
+    t = t.replace(/\[Job Title\]/gi, c?.jobtitle || c?.role || '');
+    t = t.replace(/\[Company Name\]/gi, c?.company || c?.organisation || '');
+    t = t.replace(/\[Country\]/gi, c?.country || '');
+    t = t.replace(/\[name\]/gi, c?.name || '');
+    t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
+    t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
+    return t;
+  };
+
+  // Read a File as base64 string (without data: prefix)
+  const readFileAsBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 
   const handleFileChange = (e) => {
     if (e.target.files) {
@@ -483,10 +522,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
     if (subject) params.append('subject', subject);
     
     let finalBody = body;
-    // Replace placeholders if any
-    if (candidateName && finalBody.includes('[name]')) {
-      finalBody = finalBody.replace(/\[name\]/g, candidateName);
-    }
+    finalBody = applyTags(finalBody);
     if (finalBody) params.append('body', finalBody);
 
     const queryString = params.toString().replace(/\+/g, '%20');
@@ -507,37 +543,86 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
         return;
     }
     setDirectSending(true);
-    try {
-        let finalBody = body;
-        if (candidateName && finalBody.includes('[name]')) {
-            finalBody = finalBody.replace(/\[name\]/g, candidateName);
-        }
 
-        // If a meet link exists but not in body, append (defensive)
+    // Read selected files as base64 attachments (shared across all sends)
+    const attachments = await Promise.all(files.map(async (file) => ({
+        filename: file.name,
+        content: await readFileAsBase64(file),
+        contentType: file.type || 'application/octet-stream'
+    })));
+
+    const isMulti = recipientCandidates && recipientCandidates.length > 1;
+
+    try {
+      if (isMulti) {
+        // Sequential per-candidate dispatch — each email is fully personalised
+        let sent = 0;
+        const failures = [];
+        for (const cand of recipientCandidates) {
+          const candEmail = (cand.email || '').trim();
+          if (!candEmail) {
+            failures.push(`${cand.name || `id:${cand.id}`}: no email address`);
+            continue;
+          }
+          const finalSubject = applyTagsFor(subject, cand);
+          let finalBody = applyTagsFor(body, cand);
+          if (meetLink && !finalBody.includes(meetLink)) {
+            finalBody += '\n\nJoin meeting: ' + meetLink;
+          }
+          const payload = {
+            to: candEmail, cc, bcc,
+            subject: finalSubject,
+            body: finalBody,
+            from,
+            smtpConfig,
+          };
+          if (icsString) payload.ics = icsString;
+          if (attachments.length > 0) payload.attachments = attachments;
+          try {
+            const res = await fetch('http://localhost:4000/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+              credentials: 'include'
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            sent++;
+          } catch (err) {
+            failures.push(`${cand.name || candEmail}: ${err.message}`);
+          }
+        }
+        if (failures.length === 0) {
+          alert(`${sent} email${sent !== 1 ? 's' : ''} sent successfully!`);
+        } else {
+          alert(`${sent} sent. ${failures.length} failed:\n${failures.join('\n')}`);
+        }
+        onClose();
+      } else {
+        // Single-candidate send (original behaviour)
+        let finalBody = applyTags(body);
         if (meetLink && !finalBody.includes(meetLink)) {
           finalBody += '\n\nJoin meeting: ' + meetLink;
         }
-
         const payload = {
-            to, cc, bcc, subject, 
-            body: finalBody,
-            from, // Pass the user-entered FROM address
-            smtpConfig, // Pass the SMTP config to the backend
+          to, cc, bcc, subject,
+          body: finalBody,
+          from,
+          smtpConfig,
         };
         if (icsString) payload.ics = icsString;
-
+        if (attachments.length > 0) payload.attachments = attachments;
         const res = await fetch('http://localhost:4000/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            credentials: 'include'
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          credentials: 'include'
         });
-
         const data = await res.json();
-        if(!res.ok) throw new Error(data.error || 'Failed to send');
-
+        if (!res.ok) throw new Error(data.error || 'Failed to send');
         alert('Email sent successfully!');
         onClose();
+      }
     } catch (e) {
         alert('Error sending email: ' + e.message);
     } finally {
@@ -617,7 +702,32 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
             <div style={{ marginBottom: 16, padding: '12px', background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <label style={{...labelStyle, marginBottom: 0}}>Email Template & AI Tools</label>
-                <span style={{ fontSize: 11, color: 'var(--argent)' }}>Use <b>[name]</b> for candidate name.</span>
+                <span
+                  tabIndex={0}
+                  style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', cursor: 'pointer', fontSize: 13, outline: 'none' }}
+                  onMouseEnter={() => setShowTagGlossary(true)}
+                  onMouseLeave={() => setShowTagGlossary(false)}
+                  onFocus={() => setShowTagGlossary(true)}
+                  onBlur={() => setShowTagGlossary(false)}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
+                  <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Tag Glossary</span>
+                  {showTagGlossary && (
+                    <div style={{
+                      position: 'absolute', top: '110%', right: 0, zIndex: 9999,
+                      background: '#1e293b', color: '#f1f5f9', borderRadius: 8, padding: '10px 14px',
+                      minWidth: 300, boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: 12, lineHeight: 1.7
+                    }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6, borderBottom: '1px solid #334155', paddingBottom: 4 }}>Available Template Tags</div>
+                      <div><b style={{color:'#93c5fd'}}>[Candidate Name]</b> – Candidate's full name</div>
+                      <div><b style={{color:'#93c5fd'}}>[Job Title]</b> – Candidate's professional role</div>
+                      <div><b style={{color:'#93c5fd'}}>[Company Name]</b> – Candidate's current employer</div>
+                      <div><b style={{color:'#93c5fd'}}>[Country]</b> – Candidate's geographic location</div>
+                      <div><b style={{color:'#86efac'}}>[Your Name]</b> – Your account's full name</div>
+                      <div><b style={{color:'#86efac'}}>[Your Company Name]</b> – Your registered company name</div>
+                    </div>
+                  )}
+                </span>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <select 
@@ -998,35 +1108,54 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
   );
 }
 
-function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
-  const emptyFields = { baseSalary: '', allowances: '', bonus: '', commission: '', rsu: '' };
+function CompensationCalculatorModal({ isOpen, onClose, onSave, initialValue }) {
+  const COMP_KEYS = ['baseSalary', 'allowances', 'bonus', 'commission', 'rsu'];
+  const emptyFields = Object.fromEntries(COMP_KEYS.map(k => [k, '']));
   const [fields, setFields] = useState(emptyFields);
+  const [totalOverride, setTotalOverride] = useState('');
+  const [manualTotal, setManualTotal] = useState(false);
 
-  useEffect(() => { if (isOpen) setFields(emptyFields); }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isOpen) {
+      setFields(emptyFields);
+      const existing = initialValue != null && initialValue !== '' ? String(initialValue) : '';
+      setTotalOverride(existing);
+      setManualTotal(existing !== '');
+    }
+  }, [isOpen, initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isOpen) return null;
+
+  const autoTotal = COMP_KEYS.reduce((sum, k) => sum + (parseFloat(fields[k]) || 0), 0);
+  const displayTotal = manualTotal ? totalOverride : (autoTotal === 0 ? '' : String(autoTotal));
 
   const handleChange = (key, value) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
     setFields(prev => ({ ...prev, [key]: value }));
   };
 
+  const handleTotalChange = (value) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
+    setManualTotal(true);
+    setTotalOverride(value);
+  };
+
   const handleSave = () => {
-    const total = ['baseSalary', 'allowances', 'bonus', 'commission', 'rsu']
-      .reduce((sum, k) => sum + (parseFloat(fields[k]) || 0), 0);
-    onSave(total === 0 ? '' : String(total));
+    const finalValue = manualTotal ? totalOverride : (autoTotal === 0 ? '' : String(autoTotal));
+    onSave(finalValue);
     onClose();
   };
 
   const labelStyle = { display: 'block', marginBottom: 4, fontWeight: 600, fontSize: 12, color: 'var(--muted)' };
   const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '6px 10px', font: 'inherit', fontSize: 13, background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 12 };
+  const disabledInputStyle = { ...inputStyle, background: '#f1f5f9', color: '#94a3b8', cursor: 'not-allowed' };
 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
       background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
     }} onClick={onClose}>
-      <div className="app-card" style={{ width: 380, padding: 24 }} onClick={e => e.stopPropagation()}>
+      <div className="app-card" style={{ width: 420, padding: 24 }} onClick={e => e.stopPropagation()}>
         <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: 'var(--argent)' }}>×</button>
         <h3 style={{ marginTop: 0, marginBottom: 20, color: 'var(--azure-dragon)', fontSize: 16 }}>Compensation Calculator</h3>
         {[
@@ -1037,18 +1166,38 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
           { key: 'rsu', label: 'Restricted Stock Units (RSU)' },
         ].map(({ key, label }) => (
           <div key={key}>
-            <label style={labelStyle}>{label}</label>
+            <label style={{ ...labelStyle, color: manualTotal ? '#94a3b8' : 'var(--muted)' }}>{label}</label>
             <input
               type="text"
               inputMode="decimal"
               placeholder="0"
               value={fields[key]}
+              disabled={manualTotal}
               onChange={e => handleChange(key, e.target.value)}
-              style={inputStyle}
+              style={manualTotal ? disabledInputStyle : inputStyle}
             />
           </div>
         ))}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+        <div style={{ borderTop: '2px solid var(--neutral-border)', marginBottom: 12, paddingTop: 12 }}>
+          <label style={{ ...labelStyle, color: 'var(--azure-dragon)', fontWeight: 700 }}>
+            Total Annual Remuneration {manualTotal ? <span style={{ fontWeight: 400, fontSize: 11, color: '#ef4444' }}>(manual – individual fields locked)</span> : <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--argent)' }}>(auto-calculated)</span>}
+          </label>
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0"
+            value={displayTotal}
+            onChange={e => handleTotalChange(e.target.value)}
+            style={{ ...inputStyle, marginBottom: 0, fontWeight: 700, border: manualTotal ? '1px solid #ef4444' : '1px solid var(--azure-dragon)', background: manualTotal ? '#fff7f7' : '#f0f9ff' }}
+          />
+          {manualTotal && (
+            <button
+              onClick={() => { setManualTotal(false); setTotalOverride(''); }}
+              style={{ marginTop: 6, fontSize: 11, color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+            >Reset to auto-sum</button>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
           <button onClick={onClose} className="btn-secondary" style={{ padding: '7px 18px', fontSize: 13 }}>Cancel</button>
           <button onClick={handleSave} className="btn-primary" style={{ padding: '7px 18px', fontSize: 13 }}>Save</button>
         </div>
@@ -1059,7 +1208,8 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
 
 
 // Sticky column constants (defined outside component to avoid recreation on each render)
-const FROZEN_ACTIONS_WIDTH = 110;
+const FROZEN_ACTIONS_WIDTH = 80;
+const CHECKBOX_COL_WIDTH = 36;
 const FROZEN_EDGE_BORDER_COLOR = '#cbd5e1'; // subtle separator for permanent edge columns
 const FROZEN_COL_BORDER_COLOR = '#93c5fd';  // blue separator for user-pinned columns (📌)
 
@@ -1071,7 +1221,8 @@ function CandidatesTable({
   onViewProfile, // NEW PROP to handle viewing profile
   statusOptions, // Prop for status options
   onOpenStatusModal, // Prop to open status modal
-  allCandidates // Passed for bulk verification/sync
+  allCandidates, // Passed for bulk verification/sync
+  user // Logged-in user for template tags
 }) {
   const COLUMN_WIDTHS_KEY = 'candidateTableColumnWidths';
   const DEFAULT_WIDTH = 140;
@@ -1100,11 +1251,14 @@ function CandidatesTable({
   // Compensation calculator modal state
   const [compModalOpen, setCompModalOpen] = useState(false);
   const [compModalCandidateId, setCompModalCandidateId] = useState(null);
+  const [compModalInitialValue, setCompModalInitialValue] = useState('');
 
   // Email modal & SMTP state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [composedToAddresses, setComposedToAddresses] = useState('');
+  const [emailRecipients, setEmailRecipients] = useState([]);
   const [singleCandidateName, setSingleCandidateName] = useState('');
+  const [singleCandidateData, setSingleCandidateData] = useState(null);
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
@@ -1396,11 +1550,14 @@ function CandidatesTable({
     const unique = [...new Set(allEmails)];
     
     setComposedToAddresses(unique.join(', '));
-    
+    setEmailRecipients(selected);
+
     if (selected.length === 1) {
         setSingleCandidateName(selected[0].name || '');
+        setSingleCandidateData(selected[0]);
     } else {
         setSingleCandidateName('');
+        setSingleCandidateData(null);
     }
 
     setEmailModalOpen(true);
@@ -1592,6 +1749,12 @@ function CandidatesTable({
     return v;
   };
 
+  const openCompModal = (candidateId, value) => {
+    setCompModalCandidateId(candidateId);
+    setCompModalInitialValue(value);
+    setCompModalOpen(true);
+  };
+
   const renderBodyCell = (c, f, idx, frozen = false, extraStyle = {}) => {
     const readOnly = ['skillset', 'type'].includes(f.key);
     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
@@ -1617,7 +1780,19 @@ function CandidatesTable({
                   <option value="Executive">Executive</option>
                 </select>
               : f.key === 'compensation'
-              ? <input type="text" inputMode="decimal" readOnly value={displayValue} onClick={() => { setCompModalCandidateId(c.id); setCompModalOpen(true); }} onFocus={() => { setCompModalCandidateId(c.id); setCompModalOpen(true); }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { setCompModalCandidateId(c.id); setCompModalOpen(true); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', cursor: 'pointer' }} />
+              ? <input type="text" inputMode="decimal" readOnly value={displayValue} onClick={() => openCompModal(c.id, displayValue)} onFocus={() => openCompModal(c.id, displayValue)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openCompModal(c.id, displayValue); }} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', cursor: 'pointer' }} />
+              : f.key === 'geographic'
+              ? <select value={displayValue || ''} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', border: '1px solid var(--desired-dawn)', borderRadius: 6 }}>
+                  <option value="">-- Select Region --</option>
+                  <option value="North America">North America</option>
+                  <option value="South America">South America</option>
+                  <option value="Western Europe">Western Europe</option>
+                  <option value="Eastern Europe">Eastern Europe</option>
+                  <option value="Middle East">Middle East</option>
+                  <option value="Asia">Asia</option>
+                  <option value="Australia/Oceania">Australia/Oceania</option>
+                  <option value="Africa">Africa</option>
+                </select>
               : <input type={f.type} value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
         }
       </td>
@@ -1795,7 +1970,7 @@ function CandidatesTable({
             <thead>
               {/* Row 1: column labels */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: 0, zIndex: 40, width: 44, minWidth: 44, textAlign: 'center', background: '#f1f5f9', userSelect: 'none', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
+                <th style={{ position: 'sticky', left: 0, top: 0, zIndex: 40, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#f1f5f9', userSelect: 'none', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
                     onDoubleClick={(e) => handleHeaderDoubleClick(e, '__ALL__')}>
                   <div style={{ height: HEADER_ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <input type="checkbox" checked={candidates.length > 0 && selectedIds.length === candidates.length} onChange={handleSelectAll} style={{ cursor: 'pointer' }} />
@@ -1809,7 +1984,7 @@ function CandidatesTable({
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                     let frozenStyle;
                     if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: 44, zIndex: 40, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
+                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 40, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
                     } else if (isRight) {
                       frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 40, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
                     } else if (isPinned) {
@@ -1836,8 +2011,7 @@ function CandidatesTable({
               </tr>
               {/* Row 2: filter inputs */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: 44, minWidth: 44, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
-                  <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
+                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
                 </th>
                 {(() => {
                   return visibleFields.map(f => {
@@ -1846,7 +2020,7 @@ function CandidatesTable({
                     const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
                     let frozenStyle;
                     if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: 44, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
+                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
                     } else if (isRight) {
                       frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 39, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
                     } else if (isPinned) {
@@ -1869,7 +2043,7 @@ function CandidatesTable({
                 const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
                 return (
                   <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: rowBg }}>
-                    <td style={{ position: 'sticky', left: 0, zIndex: 10, textAlign: 'center', background: rowBg, minWidth: 44, width: 44, height: HEADER_ROW_HEIGHT, overflow: 'hidden', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` }}>
+                    <td style={{ position: 'sticky', left: 0, zIndex: 10, textAlign: 'center', background: rowBg, minWidth: CHECKBOX_COL_WIDTH, width: CHECKBOX_COL_WIDTH, height: HEADER_ROW_HEIGHT, overflow: 'hidden', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` }}>
                       <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => handleCheckboxChange(c.id)} style={{ cursor: 'pointer' }} />
                     </td>
                     {visibleFields.map(f => {
@@ -1878,7 +2052,7 @@ function CandidatesTable({
                       const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
                       let extraStyle;
                       if (isLeft) {
-                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
+                        extraStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
                       } else if (isRight) {
                         extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
                       } else if (isPinned) {
@@ -1891,7 +2065,7 @@ function CandidatesTable({
                     <td style={{ position: 'sticky', right: 0, zIndex: 10, textAlign: 'center', borderBottom: '1px solid #eef2f5', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT, background: rowBg, overflow: 'hidden' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                         <button onClick={() => onViewProfile && onViewProfile(c)} title="View Resume & Profile"
-                                style={{ background: 'var(--azure-dragon)', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                                style={{ background: 'var(--azure-dragon)', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
                           Profile
                         </button>
                       </div>
@@ -1920,7 +2094,10 @@ function CandidatesTable({
         onClose={() => setEmailModalOpen(false)}
         toAddresses={composedToAddresses}
         candidateName={singleCandidateName}
+        candidateData={singleCandidateData}
+        userData={user}
         smtpConfig={smtpConfig}
+        recipientCandidates={emailRecipients}
       />
       <SmtpConfigModal
         isOpen={smtpModalOpen}
@@ -1931,6 +2108,7 @@ function CandidatesTable({
       <CompensationCalculatorModal
         isOpen={compModalOpen}
         onClose={() => setCompModalOpen(false)}
+        initialValue={compModalInitialValue}
         onSave={(total) => {
           if (compModalCandidateId != null) handleEditChange(compModalCandidateId, 'compensation', total);
         }}
@@ -2310,8 +2488,6 @@ function OrgChartDisplay({
   setEditingLayout,
   lastSavedOverrides,
   setLastSavedOverrides,
-  showOrgChart,
-  setShowOrgChart,
   organisationOptions,
   selectedOrganisation,
   onChangeOrganisation,
@@ -2337,10 +2513,6 @@ function OrgChartDisplay({
   },[candidates]);
 
   const rebuild = useCallback(()=>{
-    if(!showOrgChart){
-      setOrgChart([]);
-      return;
-    }
     const cleaned = pruneOverrides(manualParentOverrides);
     if (JSON.stringify(cleaned) !== JSON.stringify(manualParentOverrides)) {
       setManualParentOverrides(cleaned);
@@ -2356,7 +2528,7 @@ function OrgChartDisplay({
         }
       )
     );
-  }, [candidates, draggingId, editingLayout, manualParentOverrides, pruneOverrides, setManualParentOverrides, showOrgChart]);
+  }, [candidates, draggingId, editingLayout, manualParentOverrides, pruneOverrides, setManualParentOverrides]);
 
   useEffect(()=>{ rebuild(); },[rebuild]);
 
@@ -2372,11 +2544,9 @@ function OrgChartDisplay({
   },[]);
 
   useEffect(()=>{
-    if(showOrgChart){
-      const id = requestAnimationFrame(adjustCentering);
-      return ()=> cancelAnimationFrame(id);
-    }
-  },[orgChart, showOrgChart, adjustCentering, editingLayout, draggingId]);
+    const id = requestAnimationFrame(adjustCentering);
+    return ()=> cancelAnimationFrame(id);
+  },[orgChart, adjustCentering, editingLayout, draggingId]);
 
   useEffect(()=>{
     function onResize(){ adjustCentering(); }
@@ -2424,36 +2594,47 @@ function OrgChartDisplay({
 
   const handleDownload=async()=>{
     if(!chartRef.current) return;
-    const root=chartRef.current;
-    const originalId=root.id;
-    if(!root.id) root.id='org-chart-root';
-    const scrollElems=Array.from(root.querySelectorAll('.org-chart-scroll'));
-    const originals=scrollElems.map(el=>({
+    // Target only the org chart tree content, not the toolbar/buttons
+    const treeEl = chartRef.current.querySelector('#org-chart-content') || chartRef.current;
+    // Expand treeEl itself plus all containers that may clip the chart
+    const clippedElems = Array.from(treeEl.querySelectorAll(
+      '.org-chart-scroll,.org-tree-root,.org-center-wrapper,.org-group,.org,.org li'
+    ));
+    const allElems = [treeEl, ...clippedElems];
+    const originals = allElems.map(el => ({
       el,
-      overflow:el.style.overflow,
-      width:el.style.width,
-      height:el.style.height,
-      maxWidth:el.style.maxWidth,
-      maxHeight:el.style.maxHeight
+      overflow: el.style.overflow,
+      overflowX: el.style.overflowX,
+      overflowY: el.style.overflowY,
+      width: el.style.width,
+      height: el.style.height,
+      maxWidth: el.style.maxWidth,
+      maxHeight: el.style.maxHeight
     }));
     try{
-      scrollElems.forEach(el=>{
+      allElems.forEach(el=>{
         el.style.overflow='visible';
+        el.style.overflowX='visible';
+        el.style.overflowY='visible';
+        el.style.maxWidth='none';
+        el.style.maxHeight='none';
+      });
+      // For .org-chart-scroll elements, also set explicit pixel dimensions
+      clippedElems.filter(el=>el.classList.contains('org-chart-scroll')).forEach(el=>{
         const sw=el.scrollWidth;
         const sh=el.scrollHeight;
         if(sw>el.clientWidth) el.style.width=sw+'px';
         if(sh>el.clientHeight) el.style.height=sh+'px';
-        el.style.maxWidth='unset';
-        el.style.maxHeight='unset';
       });
       // Wait for fonts and images to finish loading before capturing
       await document.fonts.ready;
-      const imgs=Array.from(root.querySelectorAll('img'));
+      const imgs=Array.from(treeEl.querySelectorAll('img'));
       await Promise.all(imgs.map(img=>img.complete ? Promise.resolve() : new Promise(r=>{ img.onload=r; img.onerror=r; })));
-      await new Promise(r=>requestAnimationFrame(r));
-      const fullWidth=root.scrollWidth;
-      const fullHeight=root.scrollHeight;
-      const canvas=await html2canvas(root,{
+      // Two rAF frames for layout to fully settle after overflow expansion
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const fullWidth=treeEl.scrollWidth;
+      const fullHeight=treeEl.scrollHeight;
+      const canvas=await html2canvas(treeEl,{
         backgroundColor:'#ffffff',
         useCORS:true,
         allowTaint:true,
@@ -2463,8 +2644,8 @@ function OrgChartDisplay({
         scale: (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1,
         width:fullWidth,
         height:fullHeight,
-        scrollX: -window.pageXOffset,
-        scrollY: -window.pageYOffset
+        scrollX: 0,
+        scrollY: 0
       });
       const url=canvas.toDataURL('image/png');
       const a=document.createElement('a');
@@ -2476,12 +2657,13 @@ function OrgChartDisplay({
     }finally{
       originals.forEach(o=>{
         o.el.style.overflow=o.overflow;
+        o.el.style.overflowX=o.overflowX;
+        o.el.style.overflowY=o.overflowY;
         o.el.style.width=o.width;
         o.el.style.height=o.height;
         o.el.style.maxWidth=o.maxWidth;
         o.el.style.maxHeight=o.maxHeight;
       });
-      if(!originalId) root.id='';
     }
   };
 
@@ -2510,75 +2692,59 @@ function OrgChartDisplay({
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
         <h2 style={{ margin:0, color: 'var(--azure-dragon)' }}>Org Chart</h2>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-          <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:14, color: 'var(--muted)' }}>
-            <input
-              type="checkbox"
-              checked={showOrgChart}
-              onChange={e=>{
-                setShowOrgChart(e.target.checked);
-                if(!e.target.checked){
-                  setEditingLayout(false);
-                  setDraggingId(null);
-                }
-              }}
-            />
-            Show Org Chart
-          </label>
           <button
             onClick={()=>{
-              if(!showOrgChart) return;
               if(editingLayout){
                 setEditingLayout(false); setDraggingId(null);
               } else { setEditingLayout(true); }
             }}
-            disabled={!showOrgChart}
             style={{
-              background: !showOrgChart ? '#cbd5e1' : (editingLayout? '#334155':'#2563eb'),
+              background: editingLayout ? '#334155' : '#2563eb',
               color:'#fff', border:'none', padding:'6px 14px',
-              borderRadius:4, cursor: !showOrgChart ? 'not-allowed':'pointer', fontWeight:700
+              borderRadius:4, cursor:'pointer', fontWeight:700
             }}
           >
             {editingLayout ? 'Finish Editing' : 'Edit Layout'}
           </button>
           <button
             onClick={handleSaveLayout}
-            disabled={!showOrgChart || !unsavedChanges}
+            disabled={!unsavedChanges}
             style={{
-              background: (!showOrgChart || !unsavedChanges)? '#94a3b8':'#059669',
+              background: !unsavedChanges ? '#94a3b8':'#059669',
               color:'#fff', border:'none', padding:'6px 14px',
-              borderRadius:4, cursor: (!showOrgChart || !unsavedChanges)? 'not-allowed':'pointer', fontWeight:700
+              borderRadius:4, cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700
             }}
           >Save Layout</button>
           <button
             onClick={handleCancelLayout}
-            disabled={!showOrgChart || !unsavedChanges}
+            disabled={!unsavedChanges}
             style={{
-              background: (!showOrgChart || !unsavedChanges)? '#fde0c2':'#f97316',
-              color: (!showOrgChart || !unsavedChanges)? '#9a9a9a':'#fff',
+              background: !unsavedChanges ? '#fde0c2':'#f97316',
+              color: !unsavedChanges ? '#9a9a9a':'#fff',
               border:'none', padding:'6px 14px', borderRadius:4,
-              cursor: (!showOrgChart || !unsavedChanges)? 'not-allowed':'pointer', fontWeight:700
+              cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700
             }}
           >Cancel</button>
           <button
             onClick={handleResetManual}
-            disabled={!showOrgChart || !Object.keys(manualParentOverrides||{}).length}
+            disabled={!Object.keys(manualParentOverrides||{}).length}
             style={{
-              background: (!showOrgChart || !Object.keys(manualParentOverrides||{}).length)? '#f8d7da':'#b91c1c',
-              color: (!showOrgChart || !Object.keys(manualParentOverrides||{}).length)? '#9a9a9a':'#fff',
+              background: !Object.keys(manualParentOverrides||{}).length ? '#f8d7da':'#b91c1c',
+              color: !Object.keys(manualParentOverrides||{}).length ? '#9a9a9a':'#fff',
               border:'none', padding:'6px 14px', borderRadius:4,
-              cursor: (!showOrgChart || !Object.keys(manualParentOverrides||{}).length)? 'not-allowed':'pointer', fontWeight:700
+              cursor: !Object.keys(manualParentOverrides||{}).length ? 'not-allowed':'pointer', fontWeight:700
             }}
           >Reset Manual</button>
           <button
             onClick={handleGenerateChart}
-            disabled={!showOrgChart || loading}
+            disabled={loading}
             style={{
-              background: (!showOrgChart)? '#cbd5e1' : '#4f46e5',
+              background:'#4f46e5',
               color:'#fff', border:'none',
-              padding:'6px 14px', borderRadius:4, cursor:(!showOrgChart||loading)?'not-allowed':'pointer', fontWeight:700
+              padding:'6px 14px', borderRadius:4, cursor:loading?'not-allowed':'pointer', fontWeight:700
             }}
           >{loading ? 'Regenerating...' : 'Regenerate'}</button>
-          {showOrgChart && orgChart.length>0 && (
+          {orgChart.length>0 && (
             <>
               <button
                 onClick={handleDownload}
@@ -2605,13 +2771,12 @@ function OrgChartDisplay({
             id="job-family-dropdown"
             value={selectedJobFamily}
             onChange={e=>onChangeJobFamily(e.target.value)}
-            disabled={!showOrgChart}
             style={{
               padding:'6px 10px',
               borderRadius:4,
               border:'1px solid var(--neutral-border)',
-              background: showOrgChart ? '#fff' : '#e5e7eb',
-              cursor: showOrgChart ? 'pointer':'not-allowed'
+              background:'#fff',
+              cursor:'pointer'
             }}
         >
           {jobFamilyOptions.map(jf=> <option key={jf} value={jf}>{jf}</option>)}
@@ -2622,13 +2787,12 @@ function OrgChartDisplay({
           id="organisation-dropdown"
           value={selectedOrganisation}
           onChange={e=>onChangeOrganisation(e.target.value)}
-          disabled={!showOrgChart}
           style={{
             padding:'6px 10px',
             borderRadius:4,
             border:'1px solid var(--neutral-border)',
-            background: showOrgChart ? '#fff' : '#e5e7eb',
-            cursor: showOrgChart ? 'pointer':'not-allowed'
+            background:'#fff',
+            cursor:'pointer'
           }}
         >
           {organisationOptions.map(opt=> <option key={opt} value={opt}>{opt}</option>)}
@@ -2639,37 +2803,26 @@ function OrgChartDisplay({
           id="country-dropdown"
           value={selectedCountry}
           onChange={e=>onChangeCountry(e.target.value)}
-          disabled={!showOrgChart}
           style={{
             padding:'6px 10px',
             borderRadius:4,
             border:'1px solid var(--neutral-border)',
-            background: showOrgChart ? '#fff' : '#e5e7eb',
-            cursor: showOrgChart ? 'pointer':'not-allowed'
+            background:'#fff',
+            cursor:'pointer'
           }}
         >
           {countryOptions.map(opt=> <option key={opt} value={opt}>{opt}</option>)}
         </select>
 
-        {showOrgChart && (
-          <span style={{ fontSize:12, color:'#64748b' }}>
-            {editingLayout ? 'Drag to re-parent (drop on Make Root to promote)' : 'Click Edit Layout to enable dragging.'}
-          </span>
-        )}
-        {showOrgChart && unsavedChanges && <span style={{ fontSize:12, color:'#dc2626', fontWeight:600 }}>Unsaved changes</span>}
-        {!showOrgChart && <span style={{ fontSize:12, color:'#64748b' }}>Org chart hidden (enable checkbox to view)</span>}
+        <span style={{ fontSize:12, color:'#64748b' }}>
+          {editingLayout ? 'Drag to re-parent (drop on Make Root to promote)' : 'Click Edit Layout to enable dragging.'}
+        </span>
+        {unsavedChanges && <span style={{ fontSize:12, color:'#dc2626', fontWeight:600 }}>Unsaved changes</span>}
       </div>
 
-      {showOrgChart && (
-        <div style={{ marginTop:12 }}>
-          {orgChart.length ? orgChart : <span style={{ color:'#64748b' }}>No org chart generated yet.</span>}
-        </div>
-      )}
-      {!showOrgChart && (
-        <div style={{ marginTop:12, fontSize:14, color:'#475569' }}>
-          Org chart display is turned off.
-        </div>
-      )}
+      <div id="org-chart-content" style={{ marginTop:12 }}>
+        {orgChart.length ? orgChart : <span style={{ color:'#64748b' }}>No org chart generated yet.</span>}
+      </div>
     </div>
   );
 }
@@ -2681,53 +2834,39 @@ function CandidateUpload({ onUpload }) {
   const [error,setError] = useState('');
   const [expanded, setExpanded] = useState(false);
 
-  const first = (row, ...keys) => {
-    for (const k of keys) {
-      if (Object.prototype.hasOwnProperty.call(row, k) && row[k] != null && String(row[k]).trim() !== '') {
-        return row[k];
-      }
+  // Exact process-table column names (in the order defined in the DB schema).
+  // Uploads are accepted only if the spreadsheet headers exactly match these names.
+  const UPLOAD_FIELDS = [
+    'id', 'name', 'company', 'jobtitle', 'country', 'linkedinurl', 'username', 'userid',
+    'product', 'sector', 'jobfamily', 'geographic', 'seniority', 'skillset', 'sourcingstatus',
+    'email', 'mobile', 'office', 'role_tag', 'experience', 'cv', 'education', 'exp', 'rating',
+    'pic', 'tenure', 'comment', 'vskillset', 'compensation', 'lskillset', 'jskillset',
+    'rating_level', 'rating_updated_at', 'rating_version', 'personal'
+  ];
+
+  const validateUploadHeaders = (headers) => {
+    if (!headers.includes('id')) {
+      return 'Upload rejected: the "id" column is required but was not found in the file.';
     }
-    return undefined;
+    if (!headers.includes('userid') && !headers.includes('username')) {
+      return 'Upload rejected: the file must contain either a "userid" or "username" column.';
+    }
+    return null;
   };
 
   const mapRow = (row) => {
-    return {
-      type: first(row, 'type', 'Type', 'product', 'Product') || '',
-      name: first(row, 'name', 'Name') || '',
-      role: first(row, 'role', 'Role') || '',
-      organisation: first(row, 'organisation', 'Organisation') || '',
-      sector: first(row, 'sector', 'Sector') || '',
-      job_family: first(row, 'job_family', 'Job Family') || '',
-      role_tag: first(row, 'role_tag', 'Role Tag') || '',
-      skillset: first(row, 'skillset', 'Skillset') || '',
-      geographic: first(row, 'geographic', 'Geographic') || '',
-      country: first(row, 'country', 'Country') || '',
-      email: first(row, 'email', 'Email') || '',
-      mobile: first(row, 'mobile', 'Mobile') || '',
-      office: first(row, 'office', 'Office') || '',
-      compensation: first(row, 'compensation', 'Compensation', 'personal', 'Personal') || '',
-      seniority: first(row, 'seniority', 'Seniority') || '',
-      sourcing_status: first(row, 'sourcing_status', 'Sourcing Status') || '',
-      lskillset: first(row, 'lskillset', 'Unmatched Skillset') || '',
-      vskillset: (() => {
-        const val = first(row, 'vskillset', 'Verified Skillset');
-        if (!val) return null;
-        if (typeof val === 'string') {
-          try { 
-            return JSON.parse(val); 
-          } catch (e) { 
-            console.warn('[parseRow] Failed to parse vskillset:', val, e);
-            return null; 
-          }
-        }
-        return Array.isArray(val) ? val : null;
-      })(),
-      tenure: first(row, 'tenure', 'Tenure', 'avg_tenure', 'AVG Tenure', 'Average Tenure') || '',
-      pic: first(row, 'pic', 'Pic', 'picture', 'Picture', 'image', 'Image') || null,
-      education: first(row, 'education', 'Education') || '',
-      comment: first(row, 'comment', 'Comment', 'comments', 'Comments', 'note', 'Note', 'notes', 'Notes') || '',
-      cv: first(row, 'cv', 'CV', 'resume', 'Resume') || ''
-    };
+    const out = {};
+    for (const f of UPLOAD_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(row, f)) {
+        const v = row[f];
+        if (v != null && String(v).trim() !== '') out[f] = v;
+      }
+    }
+    if (out.vskillset && typeof out.vskillset === 'string') {
+      try { out.vskillset = JSON.parse(out.vskillset); }
+      catch (e) { console.warn('[parseRow] Failed to parse vskillset:', out.vskillset, e); out.vskillset = null; }
+    }
+    return out;
   };
 
   const handleFileChange = e => { setFile(e.target.files[0]); setError(''); };
@@ -2740,7 +2879,10 @@ function CandidateUpload({ onUpload }) {
       Papa.parse(file,{
         header:true,
         complete: async results=>{
-          const candidates=results.data.filter(r=> r && (r.name||r.Name)).map(mapRow);
+          const headers = results.meta.fields || [];
+          const headerErr = validateUploadHeaders(headers);
+          if (headerErr) { setError(headerErr); setUploading(false); return; }
+          const candidates=results.data.filter(r=> r && r.id).map(mapRow);
           try{
             const res=await fetch('http://localhost:4000/candidates/bulk',{
               method:'POST',
@@ -2761,7 +2903,10 @@ function CandidateUpload({ onUpload }) {
         const wb=XLSX.read(data);
         const ws=wb.Sheets[wb.SheetNames[0]];
         const json=XLSX.utils.sheet_to_json(ws);
-        const candidates=json.filter(r=> r && (r.name||r.Name)).map(mapRow);
+        const headers = json.length > 0 ? Object.keys(json[0]) : [];
+        const headerErr = validateUploadHeaders(headers);
+        if (headerErr) { setError(headerErr); setUploading(false); return; }
+        const candidates=json.filter(r=> r && r.id).map(mapRow);
         fetch('http://localhost:4000/candidates/bulk',{
           method:'POST',
           headers:{'Content-Type':'application/json'},
@@ -2837,7 +2982,6 @@ export default function App() {
   const [manualParentOverrides, setManualParentOverrides] = useState({});
   const [lastSavedOverrides, setLastSavedOverrides] = useState({});
   const [editingLayout, setEditingLayout] = useState(false);
-  const [showOrgChart, setShowOrgChart] = useState(false);
 
   // Tabs state
   const [activeTab, setActiveTab] = useState('list'); // 'list' or 'chart' or 'resume'
@@ -2853,7 +2997,8 @@ export default function App() {
   const [verifyingEmail, setVerifyingEmail] = useState(false);
   const [verifyModalData, setVerifyModalData] = useState(null);
   const [verifyModalEmail, setVerifyModalEmail] = useState('');
-
+  const [tokenConfirmOpen, setTokenConfirmOpen] = useState(false);
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState(null);
   // State for calculating unmatched skills
   const [calculatingUnmatched, setCalculatingUnmatched] = useState(false);
   const [unmatchedCalculated, setUnmatchedCalculated] = useState({});  // Store by candidate ID
@@ -3476,24 +3621,22 @@ export default function App() {
   };
 
   // Handler for verifying selected email in resume tab
-  const handleVerifySelectedEmail = async () => {
+  const handleVerifySelectedEmail = () => {
     const selected = resumeEmailList.filter(item => item.checked);
-    if (selected.length === 0) {
-        alert('Please select an email to verify.');
-        return;
-    }
-    
-    // Updated Logic: Only allow 1 check at a time
-    if (selected.length > 1) {
-        alert('Please verify one email at a time.');
-        return;
-    }
-    
-    const emailToVerify = selected[0].value;
+    if (selected.length === 0) { alert('Please select an email to verify.'); return; }
+    if (selected.length > 1) { alert('Please verify one email at a time.'); return; }
+    if (tokensLeft < 2) { alert('Insufficient tokens. You need at least 2 tokens to verify an email.'); return; }
+    setPendingVerifyEmail(selected[0].value);
+    setTokenConfirmOpen(true);
+  };
+
+  const handleConfirmVerify = async () => {
+    setTokenConfirmOpen(false);
+    const emailToVerify = pendingVerifyEmail;
+    setPendingVerifyEmail(null);
     setVerifyingEmail(true);
     setVerifyModalEmail(emailToVerify);
     setVerifyModalData(null);
-
     try {
       const res = await fetch('http://localhost:4000/verify-email-details', {
         method: 'POST',
@@ -3929,10 +4072,7 @@ export default function App() {
           Resume
         </button>
         <button 
-          onClick={() => {
-            setActiveTab('chart');
-            if (!showOrgChart) setShowOrgChart(true);
-          }}
+          onClick={() => { setActiveTab('chart'); }}
           className={activeTab === 'chart' ? 'tab-active' : 'tab-inactive'}
           style={{
             padding: '10px 20px',
@@ -3974,6 +4114,7 @@ export default function App() {
                 statusOptions={statusOptions}
                 onOpenStatusModal={() => setStatusModalOpen(true)}
                 allCandidates={filteredCandidates}
+                user={user}
               />
           }
         </div>
@@ -3994,9 +4135,13 @@ export default function App() {
                             {resumeCandidate.pic && typeof resumeCandidate.pic === 'string' ? (
                                 <>
                                     <img 
-                                        src={resumeCandidate.pic.startsWith('data:') || resumeCandidate.pic.startsWith('http') 
-                                            ? resumeCandidate.pic 
-                                            : `data:image/jpeg;base64,${resumeCandidate.pic}`}
+                                        src={(() => {
+                                            const p = resumeCandidate.pic.trim();
+                                            if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:')) return p;
+                                            // Strip any embedded whitespace (e.g., line-breaks in base64)
+                                            const b64 = p.replace(/\s/g, '');
+                                            return !b64.startsWith('data:image/') ? `data:image/jpeg;base64,${b64}` : b64;
+                                        })()}
                                         alt={resumeCandidate.name || 'Candidate'}
                                         style={{
                                             width: 60,
@@ -4646,8 +4791,6 @@ export default function App() {
           setEditingLayout={setEditingLayout}
           lastSavedOverrides={lastSavedOverrides}
           setLastSavedOverrides={setLastSavedOverrides}
-          showOrgChart={showOrgChart}
-          setShowOrgChart={setShowOrgChart}
           organisationOptions={organisationOptions}
           selectedOrganisation={selectedOrganisation}
           onChangeOrganisation={setSelectedOrganisation}
@@ -4662,7 +4805,24 @@ export default function App() {
         email={verifyModalEmail}
         onClose={() => setVerifyModalData(null)}
       />
-      
+
+      {tokenConfirmOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10002 }}
+             onClick={() => setTokenConfirmOpen(false)}>
+          <div className="app-card" style={{ width: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: 12, color: 'var(--azure-dragon)', fontSize: 16 }}>Confirm Verified Selection</h3>
+            <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 24, lineHeight: 1.6 }}>
+              Are you sure you want to proceed?&nbsp;
+              <strong>2 tokens will be deducted</strong> from your account for this verified selection.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setTokenConfirmOpen(false)} className="btn-secondary" style={{ padding: '8px 20px', fontSize: 13 }}>Cancel</button>
+              <button onClick={handleConfirmVerify} className="btn-primary" style={{ padding: '8px 20px', fontSize: 13 }}>Continue</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <StatusManagerModal
         isOpen={statusModalOpen}
         onClose={() => setStatusModalOpen(false)}
