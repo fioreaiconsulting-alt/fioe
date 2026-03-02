@@ -995,9 +995,21 @@ app.get('/candidates', requireLogin, async (req, res) => {
       // Parse/normalize vskillset (and persist normalized JSON back to DB when parse succeeds)
       const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
-      // Convert pic buffer -> base64 as before
+      // Convert pic buffer/hex-bytea -> base64
       let picBase64 = null;
-      if (r.pic && Buffer.isBuffer(r.pic)) picBase64 = r.pic.toString('base64');
+      if (r.pic) {
+        if (Buffer.isBuffer(r.pic)) {
+          picBase64 = r.pic.toString('base64');
+        } else if (typeof r.pic === 'string' && r.pic.startsWith('\\x')) {
+          // PostgreSQL hex bytea format: '\xdeadbeef...'
+          picBase64 = Buffer.from(r.pic.slice(2), 'hex').toString('base64');
+        } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=]+$/.test(r.pic.trim())) {
+          picBase64 = r.pic; // already base64
+        } else {
+          // Unknown format – picBase64 remains null
+          console.warn('[pic] Unrecognised pic format for candidate id', r.id);
+        }
+      }
 
       // compensation sourced directly from the process table's compensation column
       const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
@@ -1547,8 +1559,16 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
 
     // Convert bytea pic to base64 string for frontend
     let picBase64 = null;
-    if (r.pic && Buffer.isBuffer(r.pic)) {
-      picBase64 = r.pic.toString('base64');
+    if (r.pic) {
+      if (Buffer.isBuffer(r.pic)) {
+        picBase64 = r.pic.toString('base64');
+      } else if (typeof r.pic === 'string' && r.pic.startsWith('\\x')) {
+        picBase64 = Buffer.from(r.pic.slice(2), 'hex').toString('base64');
+      } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=]+$/.test(r.pic.trim())) {
+        picBase64 = r.pic;
+      } else if (r.pic) {
+        console.warn('[pic] Unrecognised pic format for candidate id', r.id);
+      }
     }
 
     // Return row with both process-style and candidate-style fallback keys for frontend convenience

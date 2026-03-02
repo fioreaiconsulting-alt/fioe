@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { Tree, TreeNode } from 'react-organizational-chart';
 import './cms.css'; // CMS theme with Resume Tab enhancements
+import './print-org-chart.css'; // Print-only: restrict output to org chart tree
 // Admin feature removed (AdminUploadButton not imported)
 
 /* ========================= CONSTANTS ========================= */
@@ -2369,8 +2370,6 @@ function OrgChartDisplay({
   setEditingLayout,
   lastSavedOverrides,
   setLastSavedOverrides,
-  showOrgChart,
-  setShowOrgChart,
   organisationOptions,
   selectedOrganisation,
   onChangeOrganisation,
@@ -2396,10 +2395,6 @@ function OrgChartDisplay({
   },[candidates]);
 
   const rebuild = useCallback(()=>{
-    if(!showOrgChart){
-      setOrgChart([]);
-      return;
-    }
     const cleaned = pruneOverrides(manualParentOverrides);
     if (JSON.stringify(cleaned) !== JSON.stringify(manualParentOverrides)) {
       setManualParentOverrides(cleaned);
@@ -2415,7 +2410,7 @@ function OrgChartDisplay({
         }
       )
     );
-  }, [candidates, draggingId, editingLayout, manualParentOverrides, pruneOverrides, setManualParentOverrides, showOrgChart]);
+  }, [candidates, draggingId, editingLayout, manualParentOverrides, pruneOverrides, setManualParentOverrides]);
 
   useEffect(()=>{ rebuild(); },[rebuild]);
 
@@ -2431,11 +2426,9 @@ function OrgChartDisplay({
   },[]);
 
   useEffect(()=>{
-    if(showOrgChart){
-      const id = requestAnimationFrame(adjustCentering);
-      return ()=> cancelAnimationFrame(id);
-    }
-  },[orgChart, showOrgChart, adjustCentering, editingLayout, draggingId]);
+    const id = requestAnimationFrame(adjustCentering);
+    return ()=> cancelAnimationFrame(id);
+  },[orgChart, adjustCentering, editingLayout, draggingId]);
 
   useEffect(()=>{
     function onResize(){ adjustCentering(); }
@@ -2483,10 +2476,9 @@ function OrgChartDisplay({
 
   const handleDownload=async()=>{
     if(!chartRef.current) return;
-    const root=chartRef.current;
-    const originalId=root.id;
-    if(!root.id) root.id='org-chart-root';
-    const scrollElems=Array.from(root.querySelectorAll('.org-chart-scroll'));
+    // Target only the org chart tree content, not the toolbar/buttons
+    const treeEl = chartRef.current.querySelector('#org-chart-content') || chartRef.current;
+    const scrollElems=Array.from(treeEl.querySelectorAll('.org-chart-scroll'));
     const originals=scrollElems.map(el=>({
       el,
       overflow:el.style.overflow,
@@ -2507,12 +2499,12 @@ function OrgChartDisplay({
       });
       // Wait for fonts and images to finish loading before capturing
       await document.fonts.ready;
-      const imgs=Array.from(root.querySelectorAll('img'));
+      const imgs=Array.from(treeEl.querySelectorAll('img'));
       await Promise.all(imgs.map(img=>img.complete ? Promise.resolve() : new Promise(r=>{ img.onload=r; img.onerror=r; })));
       await new Promise(r=>requestAnimationFrame(r));
-      const fullWidth=root.scrollWidth;
-      const fullHeight=root.scrollHeight;
-      const canvas=await html2canvas(root,{
+      const fullWidth=treeEl.scrollWidth;
+      const fullHeight=treeEl.scrollHeight;
+      const canvas=await html2canvas(treeEl,{
         backgroundColor:'#ffffff',
         useCORS:true,
         allowTaint:true,
@@ -2540,7 +2532,6 @@ function OrgChartDisplay({
         o.el.style.maxWidth=o.maxWidth;
         o.el.style.maxHeight=o.maxHeight;
       });
-      if(!originalId) root.id='';
     }
   };
 
@@ -2569,75 +2560,59 @@ function OrgChartDisplay({
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
         <h2 style={{ margin:0, color: 'var(--azure-dragon)' }}>Org Chart</h2>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-          <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:14, color: 'var(--muted)' }}>
-            <input
-              type="checkbox"
-              checked={showOrgChart}
-              onChange={e=>{
-                setShowOrgChart(e.target.checked);
-                if(!e.target.checked){
-                  setEditingLayout(false);
-                  setDraggingId(null);
-                }
-              }}
-            />
-            Show Org Chart
-          </label>
           <button
             onClick={()=>{
-              if(!showOrgChart) return;
               if(editingLayout){
                 setEditingLayout(false); setDraggingId(null);
               } else { setEditingLayout(true); }
             }}
-            disabled={!showOrgChart}
             style={{
-              background: !showOrgChart ? '#cbd5e1' : (editingLayout? '#334155':'#2563eb'),
+              background: editingLayout ? '#334155' : '#2563eb',
               color:'#fff', border:'none', padding:'6px 14px',
-              borderRadius:4, cursor: !showOrgChart ? 'not-allowed':'pointer', fontWeight:700
+              borderRadius:4, cursor:'pointer', fontWeight:700
             }}
           >
             {editingLayout ? 'Finish Editing' : 'Edit Layout'}
           </button>
           <button
             onClick={handleSaveLayout}
-            disabled={!showOrgChart || !unsavedChanges}
+            disabled={!unsavedChanges}
             style={{
-              background: (!showOrgChart || !unsavedChanges)? '#94a3b8':'#059669',
+              background: !unsavedChanges ? '#94a3b8':'#059669',
               color:'#fff', border:'none', padding:'6px 14px',
-              borderRadius:4, cursor: (!showOrgChart || !unsavedChanges)? 'not-allowed':'pointer', fontWeight:700
+              borderRadius:4, cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700
             }}
           >Save Layout</button>
           <button
             onClick={handleCancelLayout}
-            disabled={!showOrgChart || !unsavedChanges}
+            disabled={!unsavedChanges}
             style={{
-              background: (!showOrgChart || !unsavedChanges)? '#fde0c2':'#f97316',
-              color: (!showOrgChart || !unsavedChanges)? '#9a9a9a':'#fff',
+              background: !unsavedChanges ? '#fde0c2':'#f97316',
+              color: !unsavedChanges ? '#9a9a9a':'#fff',
               border:'none', padding:'6px 14px', borderRadius:4,
-              cursor: (!showOrgChart || !unsavedChanges)? 'not-allowed':'pointer', fontWeight:700
+              cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700
             }}
           >Cancel</button>
           <button
             onClick={handleResetManual}
-            disabled={!showOrgChart || !Object.keys(manualParentOverrides||{}).length}
+            disabled={!Object.keys(manualParentOverrides||{}).length}
             style={{
-              background: (!showOrgChart || !Object.keys(manualParentOverrides||{}).length)? '#f8d7da':'#b91c1c',
-              color: (!showOrgChart || !Object.keys(manualParentOverrides||{}).length)? '#9a9a9a':'#fff',
+              background: !Object.keys(manualParentOverrides||{}).length ? '#f8d7da':'#b91c1c',
+              color: !Object.keys(manualParentOverrides||{}).length ? '#9a9a9a':'#fff',
               border:'none', padding:'6px 14px', borderRadius:4,
-              cursor: (!showOrgChart || !Object.keys(manualParentOverrides||{}).length)? 'not-allowed':'pointer', fontWeight:700
+              cursor: !Object.keys(manualParentOverrides||{}).length ? 'not-allowed':'pointer', fontWeight:700
             }}
           >Reset Manual</button>
           <button
             onClick={handleGenerateChart}
-            disabled={!showOrgChart || loading}
+            disabled={loading}
             style={{
-              background: (!showOrgChart)? '#cbd5e1' : '#4f46e5',
+              background:'#4f46e5',
               color:'#fff', border:'none',
-              padding:'6px 14px', borderRadius:4, cursor:(!showOrgChart||loading)?'not-allowed':'pointer', fontWeight:700
+              padding:'6px 14px', borderRadius:4, cursor:loading?'not-allowed':'pointer', fontWeight:700
             }}
           >{loading ? 'Regenerating...' : 'Regenerate'}</button>
-          {showOrgChart && orgChart.length>0 && (
+          {orgChart.length>0 && (
             <>
               <button
                 onClick={handleDownload}
@@ -2664,13 +2639,12 @@ function OrgChartDisplay({
             id="job-family-dropdown"
             value={selectedJobFamily}
             onChange={e=>onChangeJobFamily(e.target.value)}
-            disabled={!showOrgChart}
             style={{
               padding:'6px 10px',
               borderRadius:4,
               border:'1px solid var(--neutral-border)',
-              background: showOrgChart ? '#fff' : '#e5e7eb',
-              cursor: showOrgChart ? 'pointer':'not-allowed'
+              background:'#fff',
+              cursor:'pointer'
             }}
         >
           {jobFamilyOptions.map(jf=> <option key={jf} value={jf}>{jf}</option>)}
@@ -2681,13 +2655,12 @@ function OrgChartDisplay({
           id="organisation-dropdown"
           value={selectedOrganisation}
           onChange={e=>onChangeOrganisation(e.target.value)}
-          disabled={!showOrgChart}
           style={{
             padding:'6px 10px',
             borderRadius:4,
             border:'1px solid var(--neutral-border)',
-            background: showOrgChart ? '#fff' : '#e5e7eb',
-            cursor: showOrgChart ? 'pointer':'not-allowed'
+            background:'#fff',
+            cursor:'pointer'
           }}
         >
           {organisationOptions.map(opt=> <option key={opt} value={opt}>{opt}</option>)}
@@ -2698,37 +2671,26 @@ function OrgChartDisplay({
           id="country-dropdown"
           value={selectedCountry}
           onChange={e=>onChangeCountry(e.target.value)}
-          disabled={!showOrgChart}
           style={{
             padding:'6px 10px',
             borderRadius:4,
             border:'1px solid var(--neutral-border)',
-            background: showOrgChart ? '#fff' : '#e5e7eb',
-            cursor: showOrgChart ? 'pointer':'not-allowed'
+            background:'#fff',
+            cursor:'pointer'
           }}
         >
           {countryOptions.map(opt=> <option key={opt} value={opt}>{opt}</option>)}
         </select>
 
-        {showOrgChart && (
-          <span style={{ fontSize:12, color:'#64748b' }}>
-            {editingLayout ? 'Drag to re-parent (drop on Make Root to promote)' : 'Click Edit Layout to enable dragging.'}
-          </span>
-        )}
-        {showOrgChart && unsavedChanges && <span style={{ fontSize:12, color:'#dc2626', fontWeight:600 }}>Unsaved changes</span>}
-        {!showOrgChart && <span style={{ fontSize:12, color:'#64748b' }}>Org chart hidden (enable checkbox to view)</span>}
+        <span style={{ fontSize:12, color:'#64748b' }}>
+          {editingLayout ? 'Drag to re-parent (drop on Make Root to promote)' : 'Click Edit Layout to enable dragging.'}
+        </span>
+        {unsavedChanges && <span style={{ fontSize:12, color:'#dc2626', fontWeight:600 }}>Unsaved changes</span>}
       </div>
 
-      {showOrgChart && (
-        <div style={{ marginTop:12 }}>
-          {orgChart.length ? orgChart : <span style={{ color:'#64748b' }}>No org chart generated yet.</span>}
-        </div>
-      )}
-      {!showOrgChart && (
-        <div style={{ marginTop:12, fontSize:14, color:'#475569' }}>
-          Org chart display is turned off.
-        </div>
-      )}
+      <div id="org-chart-content" style={{ marginTop:12 }}>
+        {orgChart.length ? orgChart : <span style={{ color:'#64748b' }}>No org chart generated yet.</span>}
+      </div>
     </div>
   );
 }
@@ -2896,7 +2858,6 @@ export default function App() {
   const [manualParentOverrides, setManualParentOverrides] = useState({});
   const [lastSavedOverrides, setLastSavedOverrides] = useState({});
   const [editingLayout, setEditingLayout] = useState(false);
-  const [showOrgChart, setShowOrgChart] = useState(false);
 
   // Tabs state
   const [activeTab, setActiveTab] = useState('list'); // 'list' or 'chart' or 'resume'
@@ -3987,10 +3948,7 @@ export default function App() {
           Resume
         </button>
         <button 
-          onClick={() => {
-            setActiveTab('chart');
-            if (!showOrgChart) setShowOrgChart(true);
-          }}
+          onClick={() => { setActiveTab('chart'); }}
           className={activeTab === 'chart' ? 'tab-active' : 'tab-inactive'}
           style={{
             padding: '10px 20px',
@@ -4052,9 +4010,11 @@ export default function App() {
                             {resumeCandidate.pic && typeof resumeCandidate.pic === 'string' ? (
                                 <>
                                     <img 
-                                        src={resumeCandidate.pic.startsWith('data:') || resumeCandidate.pic.startsWith('http') 
-                                            ? resumeCandidate.pic 
-                                            : `data:image/jpeg;base64,${resumeCandidate.pic}`}
+                                        src={resumeCandidate.pic.startsWith('data:') || resumeCandidate.pic.startsWith('http')
+                                            ? resumeCandidate.pic
+                                            : resumeCandidate.pic.startsWith('/9j/')
+                                              ? `data:image/jpeg;base64,${resumeCandidate.pic}`
+                                              : `data:image/png;base64,${resumeCandidate.pic}`}
                                         alt={resumeCandidate.name || 'Candidate'}
                                         style={{
                                             width: 60,
@@ -4704,8 +4664,6 @@ export default function App() {
           setEditingLayout={setEditingLayout}
           lastSavedOverrides={lastSavedOverrides}
           setLastSavedOverrides={setLastSavedOverrides}
-          showOrgChart={showOrgChart}
-          setShowOrgChart={setShowOrgChart}
           organisationOptions={organisationOptions}
           selectedOrganisation={selectedOrganisation}
           onChangeOrganisation={setSelectedOrganisation}
