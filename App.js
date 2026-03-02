@@ -1554,7 +1554,7 @@ function CandidatesTable({
                   <option value="Executive">Executive</option>
                 </select>
               : f.key === 'compensation'
-              ? <input type="number" min="0" step="any" value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
+              ? <input type="text" inputMode="decimal" value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
               : <input type={f.type} value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
         }
       </td>
@@ -1679,9 +1679,8 @@ function CandidatesTable({
             {renameCategory && (
               <>
                 <input
-                  type={renameCategory === 'Compensation' ? 'number' : 'text'}
-                  min={renameCategory === 'Compensation' ? '0' : undefined}
-                  step={renameCategory === 'Compensation' ? 'any' : undefined}
+                  type="text"
+                  inputMode={renameCategory === 'Compensation' ? 'decimal' : undefined}
                   value={renameValue}
                   onChange={(e) => {
                     if (renameCategory === 'Compensation' && e.target.value !== '' && !/^\d*\.?\d*$/.test(e.target.value)) return;

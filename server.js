@@ -500,7 +500,6 @@ async function ensureProcessTable() {
         email TEXT,
         mobile TEXT,
         office TEXT,
-        personal TEXT,
         compensation NUMERIC,
         seniority TEXT,
         sourcingstatus TEXT,
@@ -531,17 +530,6 @@ async function ensureProcessTable() {
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS email TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS mobile TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS office TEXT`);
-    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS personal TEXT`);
-    // Migrate: rename personal to compensation if not already done
-    await pool.query(`
-      DO $$ BEGIN
-        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='process' AND column_name='personal')
-           AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='process' AND column_name='compensation') THEN
-          ALTER TABLE "process" RENAME COLUMN personal TO compensation;
-          ALTER TABLE "process" ALTER COLUMN compensation TYPE NUMERIC USING NULL;
-        END IF;
-      END $$
-    `);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS compensation NUMERIC`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS seniority TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS sourcingstatus TEXT`);
@@ -1317,7 +1305,6 @@ app.post('/candidates', requireLogin, async (req, res) => {
     email: 'email',
     mobile: 'mobile',
     office: 'office',
-    personal: 'personal',
     compensation: 'compensation',
     seniority: 'seniority',
     lskillset: 'lskillset',
@@ -1477,7 +1464,6 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     email: 'email',
     mobile: 'mobile',
     office: 'office',
-    personal: 'personal',
     compensation: 'compensation',
     seniority: 'seniority',
     lskillset: 'lskillset',
@@ -1811,7 +1797,6 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
     email: 'email',
     mobile: 'mobile',
     office: 'office',
-    personal: 'personal',
     compensation: 'compensation',
     seniority: 'seniority',
     lskillset: 'lskillset',
