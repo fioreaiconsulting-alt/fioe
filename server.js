@@ -830,9 +830,11 @@ function normalizeIncomingRow(c) {
     role: firstVal(c, ['role', 'Role']) || '',
     // Accept multiple job title keys (some inputs use 'jobtitle' already)
     jobtitle: firstVal(c, ['jobtitle', 'job_title', 'Job Title', 'role', 'Role']) || '',
-    organisation: firstVal(c, ['organisation', 'Organisation']) || '',
+    // Accept exact process table column name 'company' as well as legacy 'organisation'
+    organisation: firstVal(c, ['company', 'organisation', 'Organisation']) || '',
     sector: firstVal(c, ['sector', 'Sector']) || '',
-    job_family: firstVal(c, ['job_family', 'Job Family']) || '',
+    // Accept exact process table column name 'jobfamily' as well as legacy 'job_family'
+    job_family: firstVal(c, ['jobfamily', 'job_family', 'Job Family']) || '',
     role_tag: firstVal(c, ['role_tag', 'Role Tag']) || '',
     skillset: firstVal(c, ['skillset', 'Skillset']) || '',
     geographic: firstVal(c, ['geographic', 'Geographic']) || '',
@@ -847,7 +849,8 @@ function normalizeIncomingRow(c) {
       return isNaN(n) ? null : n;
     })(),
     seniority: firstVal(c, ['seniority', 'Seniority']) || '',
-    sourcing_status: firstVal(c, ['sourcing_status', 'Sourcing Status']) || '',
+    // Accept exact process table column name 'sourcingstatus' as well as legacy 'sourcing_status'
+    sourcing_status: firstVal(c, ['sourcingstatus', 'sourcing_status', 'Sourcing Status']) || '',
     product: firstVal(c, ['product', 'Product', 'type']) || null,
     linkedinurl: firstVal(c, ['linkedinurl', 'linkedin', 'LinkedIn', 'URL']) || '', // Added for capture
     cv: firstVal(c, ['cv', 'CV', 'resume', 'Resume']) || ''

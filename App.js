@@ -2760,53 +2760,39 @@ function CandidateUpload({ onUpload }) {
   const [error,setError] = useState('');
   const [expanded, setExpanded] = useState(false);
 
-  const first = (row, ...keys) => {
-    for (const k of keys) {
-      if (Object.prototype.hasOwnProperty.call(row, k) && row[k] != null && String(row[k]).trim() !== '') {
-        return row[k];
-      }
+  // Exact process-table column names (in the order defined in the DB schema).
+  // Uploads are accepted only if the spreadsheet headers exactly match these names.
+  const UPLOAD_FIELDS = [
+    'id', 'name', 'company', 'jobtitle', 'country', 'linkedinurl', 'username', 'userid',
+    'product', 'sector', 'jobfamily', 'geographic', 'seniority', 'skillset', 'sourcingstatus',
+    'email', 'mobile', 'office', 'role_tag', 'experience', 'cv', 'education', 'exp', 'rating',
+    'pic', 'tenure', 'comment', 'vskillset', 'compensation', 'lskillset', 'jskillset',
+    'rating_level', 'rating_updated_at', 'rating_version', 'personal'
+  ];
+
+  const validateUploadHeaders = (headers) => {
+    if (!headers.includes('id')) {
+      return 'Upload rejected: the "id" column is required but was not found in the file.';
     }
-    return undefined;
+    if (!headers.includes('userid') && !headers.includes('username')) {
+      return 'Upload rejected: the file must contain either a "userid" or "username" column.';
+    }
+    return null;
   };
 
   const mapRow = (row) => {
-    return {
-      type: first(row, 'type', 'Type', 'product', 'Product') || '',
-      name: first(row, 'name', 'Name') || '',
-      role: first(row, 'role', 'Role') || '',
-      organisation: first(row, 'organisation', 'Organisation') || '',
-      sector: first(row, 'sector', 'Sector') || '',
-      job_family: first(row, 'job_family', 'Job Family') || '',
-      role_tag: first(row, 'role_tag', 'Role Tag') || '',
-      skillset: first(row, 'skillset', 'Skillset') || '',
-      geographic: first(row, 'geographic', 'Geographic') || '',
-      country: first(row, 'country', 'Country') || '',
-      email: first(row, 'email', 'Email') || '',
-      mobile: first(row, 'mobile', 'Mobile') || '',
-      office: first(row, 'office', 'Office') || '',
-      compensation: first(row, 'compensation', 'Compensation', 'personal', 'Personal') || '',
-      seniority: first(row, 'seniority', 'Seniority') || '',
-      sourcing_status: first(row, 'sourcing_status', 'Sourcing Status') || '',
-      lskillset: first(row, 'lskillset', 'Unmatched Skillset') || '',
-      vskillset: (() => {
-        const val = first(row, 'vskillset', 'Verified Skillset');
-        if (!val) return null;
-        if (typeof val === 'string') {
-          try { 
-            return JSON.parse(val); 
-          } catch (e) { 
-            console.warn('[parseRow] Failed to parse vskillset:', val, e);
-            return null; 
-          }
-        }
-        return Array.isArray(val) ? val : null;
-      })(),
-      tenure: first(row, 'tenure', 'Tenure', 'avg_tenure', 'AVG Tenure', 'Average Tenure') || '',
-      pic: first(row, 'pic', 'Pic', 'picture', 'Picture', 'image', 'Image') || null,
-      education: first(row, 'education', 'Education') || '',
-      comment: first(row, 'comment', 'Comment', 'comments', 'Comments', 'note', 'Note', 'notes', 'Notes') || '',
-      cv: first(row, 'cv', 'CV', 'resume', 'Resume') || ''
-    };
+    const out = {};
+    for (const f of UPLOAD_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(row, f)) {
+        const v = row[f];
+        if (v != null && String(v).trim() !== '') out[f] = v;
+      }
+    }
+    if (out.vskillset && typeof out.vskillset === 'string') {
+      try { out.vskillset = JSON.parse(out.vskillset); }
+      catch (e) { console.warn('[parseRow] Failed to parse vskillset:', out.vskillset, e); out.vskillset = null; }
+    }
+    return out;
   };
 
   const handleFileChange = e => { setFile(e.target.files[0]); setError(''); };
@@ -2819,7 +2805,10 @@ function CandidateUpload({ onUpload }) {
       Papa.parse(file,{
         header:true,
         complete: async results=>{
-          const candidates=results.data.filter(r=> r && (r.name||r.Name)).map(mapRow);
+          const headers = results.meta.fields || [];
+          const headerErr = validateUploadHeaders(headers);
+          if (headerErr) { setError(headerErr); setUploading(false); return; }
+          const candidates=results.data.filter(r=> r && r.id).map(mapRow);
           try{
             const res=await fetch('http://localhost:4000/candidates/bulk',{
               method:'POST',
@@ -2840,7 +2829,10 @@ function CandidateUpload({ onUpload }) {
         const wb=XLSX.read(data);
         const ws=wb.Sheets[wb.SheetNames[0]];
         const json=XLSX.utils.sheet_to_json(ws);
-        const candidates=json.filter(r=> r && (r.name||r.Name)).map(mapRow);
+        const headers = json.length > 0 ? Object.keys(json[0]) : [];
+        const headerErr = validateUploadHeaders(headers);
+        if (headerErr) { setError(headerErr); setUploading(false); return; }
+        const candidates=json.filter(r=> r && r.id).map(mapRow);
         fetch('http://localhost:4000/candidates/bulk',{
           method:'POST',
           headers:{'Content-Type':'application/json'},
@@ -4069,9 +4061,11 @@ export default function App() {
                             {resumeCandidate.pic && typeof resumeCandidate.pic === 'string' ? (
                                 <>
                                     <img 
-                                        src={resumeCandidate.pic.startsWith('http://') || resumeCandidate.pic.startsWith('https://') || resumeCandidate.pic.startsWith('data:')
-                                            ? resumeCandidate.pic
-                                            : `data:image/jpeg;base64,${resumeCandidate.pic}`}
+                                        src={(() => {
+                                            const p = resumeCandidate.pic.trim();
+                                            if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:')) return p;
+                                            return !p.startsWith('data:image/') ? `data:image/jpeg;base64,${p}` : p;
+                                        })()}
                                         alt={resumeCandidate.name || 'Candidate'}
                                         style={{
                                             width: 60,
