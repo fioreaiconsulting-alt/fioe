@@ -722,6 +722,24 @@ app.get('/user-tokens', requireLogin, async (req, res) => {
   }
 });
 
+// POST /deduct-tokens - Deduct 2 tokens from the authenticated user (called on Verified Selection)
+// NOTE: Consider adding rate limiting for this endpoint in production
+app.post('/deduct-tokens', requireLogin, async (req, res) => {
+  try {
+    const username = req.user.username;
+    const result = await pool.query(
+      'UPDATE login SET token = GREATEST(0, COALESCE(token, 0) - 2) WHERE username = $1 RETURNING token',
+      [username]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const remaining = result.rows[0].token;
+    res.json({ tokensLeft: remaining, accountTokens: remaining });
+  } catch (err) {
+    console.error('Error deducting tokens:', err);
+    res.status(500).json({ error: 'Failed to deduct tokens' });
+  }
+});
+
 // ========================= END AUTH ROUTES =========================
 
 app.get('/', (req, res) => {

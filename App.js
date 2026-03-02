@@ -998,7 +998,66 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
   );
 }
 
-/* ========================= CANDIDATES TABLE ========================= */
+function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
+  const emptyFields = { baseSalary: '', allowances: '', bonus: '', commission: '', rsu: '' };
+  const [fields, setFields] = useState(emptyFields);
+
+  useEffect(() => { if (isOpen) setFields(emptyFields); }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!isOpen) return null;
+
+  const handleChange = (key, value) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
+    setFields(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = () => {
+    const total = ['baseSalary', 'allowances', 'bonus', 'commission', 'rsu']
+      .reduce((sum, k) => sum + (parseFloat(fields[k]) || 0), 0);
+    onSave(total === 0 ? '' : String(total));
+    onClose();
+  };
+
+  const labelStyle = { display: 'block', marginBottom: 4, fontWeight: 600, fontSize: 12, color: 'var(--muted)' };
+  const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '6px 10px', font: 'inherit', fontSize: 13, background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 12 };
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
+    }} onClick={onClose}>
+      <div className="app-card" style={{ width: 380, padding: 24 }} onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: 'var(--argent)' }}>×</button>
+        <h3 style={{ marginTop: 0, marginBottom: 20, color: 'var(--azure-dragon)', fontSize: 16 }}>Compensation Calculator</h3>
+        {[
+          { key: 'baseSalary', label: 'Annual Current Base Salary' },
+          { key: 'allowances', label: 'Allowances' },
+          { key: 'bonus', label: 'Bonus' },
+          { key: 'commission', label: 'Commission' },
+          { key: 'rsu', label: 'Restricted Stock Units (RSU)' },
+        ].map(({ key, label }) => (
+          <div key={key}>
+            <label style={labelStyle}>{label}</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="0"
+              value={fields[key]}
+              onChange={e => handleChange(key, e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+        ))}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+          <button onClick={onClose} className="btn-secondary" style={{ padding: '7px 18px', fontSize: 13 }}>Cancel</button>
+          <button onClick={handleSave} className="btn-primary" style={{ padding: '7px 18px', fontSize: 13 }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // Sticky column constants (defined outside component to avoid recreation on each render)
 const FROZEN_ACTIONS_WIDTH = 110;
 const FROZEN_EDGE_BORDER_COLOR = '#cbd5e1'; // subtle separator for permanent edge columns
@@ -1038,6 +1097,10 @@ function CandidatesTable({
   const [renameMessage, setRenameMessage] = useState('');
   const [renameError, setRenameError] = useState('');
   
+  // Compensation calculator modal state
+  const [compModalOpen, setCompModalOpen] = useState(false);
+  const [compModalCandidateId, setCompModalCandidateId] = useState(null);
+
   // Email modal & SMTP state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [composedToAddresses, setComposedToAddresses] = useState('');
@@ -1554,7 +1617,7 @@ function CandidatesTable({
                   <option value="Executive">Executive</option>
                 </select>
               : f.key === 'compensation'
-              ? <input type="text" inputMode="decimal" value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
+              ? <input type="text" inputMode="decimal" readOnly value={displayValue} onClick={() => { setCompModalCandidateId(c.id); setCompModalOpen(true); }} onFocus={() => { setCompModalCandidateId(c.id); setCompModalOpen(true); }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { setCompModalCandidateId(c.id); setCompModalOpen(true); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', cursor: 'pointer' }} />
               : <input type={f.type} value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
         }
       </td>
@@ -1864,6 +1927,13 @@ function CandidatesTable({
         onClose={() => setSmtpModalOpen(false)}
         onSave={(cfg) => { setSmtpConfig(cfg); setSmtpModalOpen(false); }}
         currentConfig={smtpConfig}
+      />
+      <CompensationCalculatorModal
+        isOpen={compModalOpen}
+        onClose={() => setCompModalOpen(false)}
+        onSave={(total) => {
+          if (compModalCandidateId != null) handleEditChange(compModalCandidateId, 'compensation', total);
+        }}
       />
     </>
   );
@@ -3434,6 +3504,14 @@ export default function App() {
       if (!res.ok) throw new Error('Verification failed');
       const data = await res.json();
       setVerifyModalData(data);
+      // Deduct 2 tokens on successful verification
+      fetch('http://localhost:4000/deduct-tokens', { method: 'POST', credentials: 'include' })
+        .then(r => r.json())
+        .then(t => {
+          if (t.tokensLeft !== undefined) setTokensLeft(t.tokensLeft);
+          if (t.accountTokens !== undefined) setAccountTokens(t.accountTokens);
+        })
+        .catch(err => console.error('Token deduction failed:', err));
     } catch (e) {
       alert('Email verification failed.');
     } finally {
