@@ -1010,8 +1010,10 @@ app.get('/candidates', requireLogin, async (req, res) => {
         } else if (typeof r.pic === 'string' && r.pic.startsWith('\\x')) {
           // PostgreSQL hex bytea format: '\xdeadbeef...'
           picBase64 = Buffer.from(r.pic.slice(2), 'hex').toString('base64');
-        } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=]+$/.test(r.pic.trim())) {
-          picBase64 = r.pic; // already base64
+        } else if (typeof r.pic === 'string' && (r.pic.startsWith('data:') || r.pic.startsWith('http://') || r.pic.startsWith('https://'))) {
+          picBase64 = r.pic; // already a data URI or URL, pass through
+        } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(r.pic)) {
+          picBase64 = r.pic.replace(/\s/g, ''); // strip embedded whitespace from base64
         } else {
           // Unknown format – picBase64 remains null
           console.warn('[pic] Unrecognised pic format for candidate id', r.id);
@@ -1571,8 +1573,10 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
         picBase64 = r.pic.toString('base64');
       } else if (typeof r.pic === 'string' && r.pic.startsWith('\\x')) {
         picBase64 = Buffer.from(r.pic.slice(2), 'hex').toString('base64');
-      } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=]+$/.test(r.pic.trim())) {
-        picBase64 = r.pic;
+      } else if (typeof r.pic === 'string' && (r.pic.startsWith('data:') || r.pic.startsWith('http://') || r.pic.startsWith('https://'))) {
+        picBase64 = r.pic; // already a data URI or URL, pass through
+      } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(r.pic)) {
+        picBase64 = r.pic.replace(/\s/g, ''); // strip embedded whitespace from base64
       } else if (r.pic) {
         console.warn('[pic] Unrecognised pic format for candidate id', r.id);
       }

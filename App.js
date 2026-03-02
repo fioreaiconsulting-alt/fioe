@@ -2536,30 +2536,42 @@ function OrgChartDisplay({
     if(!chartRef.current) return;
     // Target only the org chart tree content, not the toolbar/buttons
     const treeEl = chartRef.current.querySelector('#org-chart-content') || chartRef.current;
-    const scrollElems=Array.from(treeEl.querySelectorAll('.org-chart-scroll'));
-    const originals=scrollElems.map(el=>({
+    // Expand treeEl itself plus all containers that may clip the chart
+    const clippedElems = Array.from(treeEl.querySelectorAll(
+      '.org-chart-scroll,.org-tree-root,.org-center-wrapper,.org-group,.org,.org li'
+    ));
+    const allElems = [treeEl, ...clippedElems];
+    const originals = allElems.map(el => ({
       el,
-      overflow:el.style.overflow,
-      width:el.style.width,
-      height:el.style.height,
-      maxWidth:el.style.maxWidth,
-      maxHeight:el.style.maxHeight
+      overflow: el.style.overflow,
+      overflowX: el.style.overflowX,
+      overflowY: el.style.overflowY,
+      width: el.style.width,
+      height: el.style.height,
+      maxWidth: el.style.maxWidth,
+      maxHeight: el.style.maxHeight
     }));
     try{
-      scrollElems.forEach(el=>{
+      allElems.forEach(el=>{
         el.style.overflow='visible';
+        el.style.overflowX='visible';
+        el.style.overflowY='visible';
+        el.style.maxWidth='none';
+        el.style.maxHeight='none';
+      });
+      // For .org-chart-scroll elements, also set explicit pixel dimensions
+      clippedElems.filter(el=>el.classList.contains('org-chart-scroll')).forEach(el=>{
         const sw=el.scrollWidth;
         const sh=el.scrollHeight;
         if(sw>el.clientWidth) el.style.width=sw+'px';
         if(sh>el.clientHeight) el.style.height=sh+'px';
-        el.style.maxWidth='unset';
-        el.style.maxHeight='unset';
       });
       // Wait for fonts and images to finish loading before capturing
       await document.fonts.ready;
       const imgs=Array.from(treeEl.querySelectorAll('img'));
       await Promise.all(imgs.map(img=>img.complete ? Promise.resolve() : new Promise(r=>{ img.onload=r; img.onerror=r; })));
-      await new Promise(r=>requestAnimationFrame(r));
+      // Two rAF frames for layout to fully settle after overflow expansion
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       const fullWidth=treeEl.scrollWidth;
       const fullHeight=treeEl.scrollHeight;
       const canvas=await html2canvas(treeEl,{
@@ -2572,8 +2584,8 @@ function OrgChartDisplay({
         scale: (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1,
         width:fullWidth,
         height:fullHeight,
-        scrollX: -window.pageXOffset,
-        scrollY: -window.pageYOffset
+        scrollX: 0,
+        scrollY: 0
       });
       const url=canvas.toDataURL('image/png');
       const a=document.createElement('a');
@@ -2585,6 +2597,8 @@ function OrgChartDisplay({
     }finally{
       originals.forEach(o=>{
         o.el.style.overflow=o.overflow;
+        o.el.style.overflowX=o.overflowX;
+        o.el.style.overflowY=o.overflowY;
         o.el.style.width=o.width;
         o.el.style.height=o.height;
         o.el.style.maxWidth=o.maxWidth;
@@ -4064,7 +4078,9 @@ export default function App() {
                                         src={(() => {
                                             const p = resumeCandidate.pic.trim();
                                             if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:')) return p;
-                                            return !p.startsWith('data:image/') ? `data:image/jpeg;base64,${p}` : p;
+                                            // Strip any embedded whitespace (e.g., line-breaks in base64)
+                                            const b64 = p.replace(/\s/g, '');
+                                            return !b64.startsWith('data:image/') ? `data:image/jpeg;base64,${b64}` : b64;
                                         })()}
                                         alt={resumeCandidate.name || 'Candidate'}
                                         style={{
