@@ -998,7 +998,7 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
   );
 }
 
-function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
+function CompensationCalculatorModal({ isOpen, onClose, onSave, initialValue }) {
   const COMP_KEYS = ['baseSalary', 'allowances', 'bonus', 'commission', 'rsu'];
   const emptyFields = Object.fromEntries(COMP_KEYS.map(k => [k, '']));
   const [fields, setFields] = useState(emptyFields);
@@ -1006,8 +1006,13 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
   const [manualTotal, setManualTotal] = useState(false);
 
   useEffect(() => {
-    if (isOpen) { setFields(emptyFields); setTotalOverride(''); setManualTotal(false); }
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isOpen) {
+      setFields(emptyFields);
+      const existing = initialValue != null && initialValue !== '' ? String(initialValue) : '';
+      setTotalOverride(existing);
+      setManualTotal(existing !== '');
+    }
+  }, [isOpen, initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isOpen) return null;
 
@@ -1094,6 +1099,7 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
 
 // Sticky column constants (defined outside component to avoid recreation on each render)
 const FROZEN_ACTIONS_WIDTH = 80;
+const CHECKBOX_COL_WIDTH = 36;
 const FROZEN_EDGE_BORDER_COLOR = '#cbd5e1'; // subtle separator for permanent edge columns
 const FROZEN_COL_BORDER_COLOR = '#93c5fd';  // blue separator for user-pinned columns (📌)
 
@@ -1134,6 +1140,7 @@ function CandidatesTable({
   // Compensation calculator modal state
   const [compModalOpen, setCompModalOpen] = useState(false);
   const [compModalCandidateId, setCompModalCandidateId] = useState(null);
+  const [compModalInitialValue, setCompModalInitialValue] = useState('');
 
   // Email modal & SMTP state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -1626,6 +1633,12 @@ function CandidatesTable({
     return v;
   };
 
+  const openCompModal = (candidateId, value) => {
+    setCompModalCandidateId(candidateId);
+    setCompModalInitialValue(value);
+    setCompModalOpen(true);
+  };
+
   const renderBodyCell = (c, f, idx, frozen = false, extraStyle = {}) => {
     const readOnly = ['skillset', 'type'].includes(f.key);
     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
@@ -1651,7 +1664,19 @@ function CandidatesTable({
                   <option value="Executive">Executive</option>
                 </select>
               : f.key === 'compensation'
-              ? <input type="text" inputMode="decimal" readOnly value={displayValue} onClick={() => { setCompModalCandidateId(c.id); setCompModalOpen(true); }} onFocus={() => { setCompModalCandidateId(c.id); setCompModalOpen(true); }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { setCompModalCandidateId(c.id); setCompModalOpen(true); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', cursor: 'pointer' }} />
+              ? <input type="text" inputMode="decimal" readOnly value={displayValue} onClick={() => openCompModal(c.id, displayValue)} onFocus={() => openCompModal(c.id, displayValue)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openCompModal(c.id, displayValue); }} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', cursor: 'pointer' }} />
+              : f.key === 'geographic'
+              ? <select value={displayValue || ''} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff', border: '1px solid var(--desired-dawn)', borderRadius: 6 }}>
+                  <option value="">-- Select Region --</option>
+                  <option value="North America">North America</option>
+                  <option value="South America">South America</option>
+                  <option value="Western Europe">Western Europe</option>
+                  <option value="Eastern Europe">Eastern Europe</option>
+                  <option value="Middle East">Middle East</option>
+                  <option value="Asia">Asia</option>
+                  <option value="Australia/Oceania">Australia/Oceania</option>
+                  <option value="Africa">Africa</option>
+                </select>
               : <input type={f.type} value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
         }
       </td>
@@ -1829,7 +1854,7 @@ function CandidatesTable({
             <thead>
               {/* Row 1: column labels */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: 0, zIndex: 40, width: 44, minWidth: 44, textAlign: 'center', background: '#f1f5f9', userSelect: 'none', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
+                <th style={{ position: 'sticky', left: 0, top: 0, zIndex: 40, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#f1f5f9', userSelect: 'none', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, borderBottom: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT }}
                     onDoubleClick={(e) => handleHeaderDoubleClick(e, '__ALL__')}>
                   <div style={{ height: HEADER_ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <input type="checkbox" checked={candidates.length > 0 && selectedIds.length === candidates.length} onChange={handleSelectAll} style={{ cursor: 'pointer' }} />
@@ -1843,7 +1868,7 @@ function CandidatesTable({
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                     let frozenStyle;
                     if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: 44, zIndex: 40, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
+                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 40, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
                     } else if (isRight) {
                       frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 40, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
                     } else if (isPinned) {
@@ -1870,8 +1895,7 @@ function CandidatesTable({
               </tr>
               {/* Row 2: filter inputs */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: 44, minWidth: 44, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
-                  <span style={{ fontSize: 10, color: 'var(--argent)', fontWeight: 500 }}>Filters</span>
+                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
                 </th>
                 {(() => {
                   return visibleFields.map(f => {
@@ -1880,7 +1904,7 @@ function CandidatesTable({
                     const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
                     let frozenStyle;
                     if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: 44, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
+                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
                     } else if (isRight) {
                       frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 39, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
                     } else if (isPinned) {
@@ -1903,7 +1927,7 @@ function CandidatesTable({
                 const rowBg = idx % 2 ? '#ffffff' : '#f9fafb';
                 return (
                   <tr key={c.id} style={{ height: HEADER_ROW_HEIGHT, background: rowBg }}>
-                    <td style={{ position: 'sticky', left: 0, zIndex: 10, textAlign: 'center', background: rowBg, minWidth: 44, width: 44, height: HEADER_ROW_HEIGHT, overflow: 'hidden', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` }}>
+                    <td style={{ position: 'sticky', left: 0, zIndex: 10, textAlign: 'center', background: rowBg, minWidth: CHECKBOX_COL_WIDTH, width: CHECKBOX_COL_WIDTH, height: HEADER_ROW_HEIGHT, overflow: 'hidden', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` }}>
                       <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => handleCheckboxChange(c.id)} style={{ cursor: 'pointer' }} />
                     </td>
                     {visibleFields.map(f => {
@@ -1912,7 +1936,7 @@ function CandidatesTable({
                       const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
                       let extraStyle;
                       if (isLeft) {
-                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
+                        extraStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
                       } else if (isRight) {
                         extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
                       } else if (isPinned) {
@@ -1965,6 +1989,7 @@ function CandidatesTable({
       <CompensationCalculatorModal
         isOpen={compModalOpen}
         onClose={() => setCompModalOpen(false)}
+        initialValue={compModalInitialValue}
         onSave={(total) => {
           if (compModalCandidateId != null) handleEditChange(compModalCandidateId, 'compensation', total);
         }}
