@@ -1263,7 +1263,7 @@ function CandidatesTable({
       return;
     }
 
-    if (renameCategory === 'Compensation' && !/^\d*\.?\d+$/.test(renameValue.trim())) {
+    if (renameCategory === 'Compensation' && isNaN(Number(renameValue.trim()))) {
       setRenameError('Compensation must be a numeric value.');
       return;
     }
@@ -1915,7 +1915,6 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
         return {
           id:p.id, name:p.name, seniority:tier,
           roleTag:(p.role_tag||'').trim(),
-          personal:(p.jobtitle||'').trim(), 
           jobtitle:(p.jobtitle||'').trim(),
           jobFamily:p.job_family||'',
           country:(p.country||'').trim(),
@@ -2051,7 +2050,6 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
       const NodeCard=({node})=>{
         // Title: use jobtitle from process table directly, then fallback to personal, roleTag, raw.role
         const title = (node.jobtitle||'').trim()
-          || (node.personal||'').trim()
           || (node.roleTag||'').trim()
           || (node.raw?.role ? String(node.raw.role).trim() : '')
           || '';
