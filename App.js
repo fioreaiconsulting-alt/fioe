@@ -235,7 +235,7 @@ function EmailVerificationModal({ data, onClose, email }) {
 }
 
 /* ========================= EMAIL COMPOSE MODAL ========================= */
-function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candidateData, userData, smtpConfig }) {
+function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candidateData, userData, smtpConfig, recipientCandidates = [] }) {
   const [from, setFrom] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -305,6 +305,19 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
     // Legacy [name] tag
     t = t.replace(/\[name\]/gi, candidateData?.name || candidateName || '');
     // User / sender tags
+    t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
+    t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
+    return t;
+  };
+
+  // Apply tags resolved against a specific candidate object (used for sequential multi-send)
+  const applyTagsFor = (text, c) => {
+    let t = text;
+    t = t.replace(/\[Candidate Name\]/gi, c?.name || '');
+    t = t.replace(/\[Job Title\]/gi, c?.jobtitle || c?.role || '');
+    t = t.replace(/\[Company Name\]/gi, c?.company || c?.organisation || '');
+    t = t.replace(/\[Country\]/gi, c?.country || '');
+    t = t.replace(/\[name\]/gi, c?.name || '');
     t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
     t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
     return t;
@@ -530,42 +543,86 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
         return;
     }
     setDirectSending(true);
-    try {
-        let finalBody = applyTags(body);
 
-        // If a meet link exists but not in body, append (defensive)
+    // Read selected files as base64 attachments (shared across all sends)
+    const attachments = await Promise.all(files.map(async (file) => ({
+        filename: file.name,
+        content: await readFileAsBase64(file),
+        contentType: file.type || 'application/octet-stream'
+    })));
+
+    const isMulti = recipientCandidates && recipientCandidates.length > 1;
+
+    try {
+      if (isMulti) {
+        // Sequential per-candidate dispatch — each email is fully personalised
+        let sent = 0;
+        const failures = [];
+        for (const cand of recipientCandidates) {
+          const candEmail = (cand.email || '').trim();
+          if (!candEmail) {
+            failures.push(`${cand.name || `id:${cand.id}`}: no email address`);
+            continue;
+          }
+          const finalSubject = applyTagsFor(subject, cand);
+          let finalBody = applyTagsFor(body, cand);
+          if (meetLink && !finalBody.includes(meetLink)) {
+            finalBody += '\n\nJoin meeting: ' + meetLink;
+          }
+          const payload = {
+            to: candEmail, cc, bcc,
+            subject: finalSubject,
+            body: finalBody,
+            from,
+            smtpConfig,
+          };
+          if (icsString) payload.ics = icsString;
+          if (attachments.length > 0) payload.attachments = attachments;
+          try {
+            const res = await fetch('http://localhost:4000/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+              credentials: 'include'
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            sent++;
+          } catch (err) {
+            failures.push(`${cand.name || candEmail}: ${err.message}`);
+          }
+        }
+        if (failures.length === 0) {
+          alert(`${sent} email${sent !== 1 ? 's' : ''} sent successfully!`);
+        } else {
+          alert(`${sent} sent. ${failures.length} failed:\n${failures.join('\n')}`);
+        }
+        onClose();
+      } else {
+        // Single-candidate send (original behaviour)
+        let finalBody = applyTags(body);
         if (meetLink && !finalBody.includes(meetLink)) {
           finalBody += '\n\nJoin meeting: ' + meetLink;
         }
-
-        // Read selected files as base64 attachments
-        const attachments = await Promise.all(files.map(async (file) => ({
-            filename: file.name,
-            content: await readFileAsBase64(file),
-            contentType: file.type || 'application/octet-stream'
-        })));
-
         const payload = {
-            to, cc, bcc, subject, 
-            body: finalBody,
-            from, // Pass the user-entered FROM address
-            smtpConfig, // Pass the SMTP config to the backend
+          to, cc, bcc, subject,
+          body: finalBody,
+          from,
+          smtpConfig,
         };
         if (icsString) payload.ics = icsString;
         if (attachments.length > 0) payload.attachments = attachments;
-
         const res = await fetch('http://localhost:4000/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            credentials: 'include'
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          credentials: 'include'
         });
-
         const data = await res.json();
-        if(!res.ok) throw new Error(data.error || 'Failed to send');
-
+        if (!res.ok) throw new Error(data.error || 'Failed to send');
         alert('Email sent successfully!');
         onClose();
+      }
     } catch (e) {
         alert('Error sending email: ' + e.message);
     } finally {
@@ -1199,6 +1256,7 @@ function CandidatesTable({
   // Email modal & SMTP state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [composedToAddresses, setComposedToAddresses] = useState('');
+  const [emailRecipients, setEmailRecipients] = useState([]);
   const [singleCandidateName, setSingleCandidateName] = useState('');
   const [singleCandidateData, setSingleCandidateData] = useState(null);
   const [smtpConfig, setSmtpConfig] = useState(null);
@@ -1492,7 +1550,8 @@ function CandidatesTable({
     const unique = [...new Set(allEmails)];
     
     setComposedToAddresses(unique.join(', '));
-    
+    setEmailRecipients(selected);
+
     if (selected.length === 1) {
         setSingleCandidateName(selected[0].name || '');
         setSingleCandidateData(selected[0]);
@@ -2038,6 +2097,7 @@ function CandidatesTable({
         candidateData={singleCandidateData}
         userData={user}
         smtpConfig={smtpConfig}
+        recipientCandidates={emailRecipients}
       />
       <SmtpConfigModal
         isOpen={smtpModalOpen}

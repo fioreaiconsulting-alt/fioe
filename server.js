@@ -71,6 +71,43 @@ const COMPANY_ALIAS_MAP = [
 ];
 
 // Remove common legal suffixes and noise, then apply alias map and Title Case result
+/**
+ * Convert any raw pic value from the DB into a valid data URI (or URL).
+ * Returns null if the value cannot be converted.
+ */
+function picToDataUri(rawPic) {
+  if (!rawPic) return null;
+  let buf = null;
+  if (Buffer.isBuffer(rawPic)) {
+    buf = rawPic;
+  } else if (typeof rawPic === 'string') {
+    if (rawPic.startsWith('data:') || rawPic.startsWith('http://') || rawPic.startsWith('https://')) {
+      return rawPic; // already a usable src
+    }
+    if (rawPic.startsWith('\\x')) {
+      buf = Buffer.from(rawPic.slice(2), 'hex');
+    } else if (/^[A-Za-z0-9+/=\s]+$/.test(rawPic)) {
+      buf = Buffer.from(rawPic.replace(/\s/g, ''), 'base64');
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  if (!buf || buf.length === 0) return null;
+  // Detect MIME type from magic bytes
+  let mime = 'image/jpeg'; // safe default
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    mime = 'image/png';
+  } else if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+    mime = 'image/gif';
+  } else if (buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+             buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+    mime = 'image/webp';
+  }
+  return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
 function normalizeCompanyName(raw) {
   if (raw == null) return null;
   const s = String(raw).trim();
@@ -1002,23 +1039,8 @@ app.get('/candidates', requireLogin, async (req, res) => {
       // Parse/normalize vskillset (and persist normalized JSON back to DB when parse succeeds)
       const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
-      // Convert pic buffer/hex-bytea -> base64
-      let picBase64 = null;
-      if (r.pic) {
-        if (Buffer.isBuffer(r.pic)) {
-          picBase64 = r.pic.toString('base64');
-        } else if (typeof r.pic === 'string' && r.pic.startsWith('\\x')) {
-          // PostgreSQL hex bytea format: '\xdeadbeef...'
-          picBase64 = Buffer.from(r.pic.slice(2), 'hex').toString('base64');
-        } else if (typeof r.pic === 'string' && (r.pic.startsWith('data:') || r.pic.startsWith('http://') || r.pic.startsWith('https://'))) {
-          picBase64 = r.pic; // already a data URI or URL, pass through
-        } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(r.pic)) {
-          picBase64 = r.pic.replace(/\s/g, ''); // strip embedded whitespace from base64
-        } else {
-          // Unknown format – picBase64 remains null
-          console.warn('[pic] Unrecognised pic format for candidate id', r.id);
-        }
-      }
+      // Convert pic to a data URI (or URL) that the frontend can use directly
+      const picBase64 = picToDataUri(r.pic);
 
       // compensation sourced directly from the process table's compensation column
       const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
@@ -1566,21 +1588,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     // After reloading r from DB:
     const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
-    // Convert bytea pic to base64 string for frontend
-    let picBase64 = null;
-    if (r.pic) {
-      if (Buffer.isBuffer(r.pic)) {
-        picBase64 = r.pic.toString('base64');
-      } else if (typeof r.pic === 'string' && r.pic.startsWith('\\x')) {
-        picBase64 = Buffer.from(r.pic.slice(2), 'hex').toString('base64');
-      } else if (typeof r.pic === 'string' && (r.pic.startsWith('data:') || r.pic.startsWith('http://') || r.pic.startsWith('https://'))) {
-        picBase64 = r.pic; // already a data URI or URL, pass through
-      } else if (typeof r.pic === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(r.pic)) {
-        picBase64 = r.pic.replace(/\s/g, ''); // strip embedded whitespace from base64
-      } else if (r.pic) {
-        console.warn('[pic] Unrecognised pic format for candidate id', r.id);
-      }
-    }
+    // Convert pic to a data URI (or URL) that the frontend can use directly
+    const picBase64 = picToDataUri(r.pic);
 
     // Return row with both process-style and candidate-style fallback keys for frontend convenience
     const mapped = {
