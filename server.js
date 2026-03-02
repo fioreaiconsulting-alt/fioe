@@ -282,11 +282,10 @@ function normalizeCountry(raw) {
   return s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
 
-// Utility: update process row's company/personal fields if canonicalization suggests change.
-// Returns an object { company, personal } with canonical values (may be null or same as inputs).
+// Utility: update process row's company field if canonicalization suggests change.
+// Returns an object { company } with canonical value (may be null or same as input).
 async function ensureCanonicalFieldsForId(id, currentCompany, currentJobTitle, currentPersonal) {
   const canonicalCompany = normalizeCompanyName(currentCompany || '');
-  const canonicalPersonal = (currentPersonal && String(currentPersonal).trim()) ? String(currentPersonal).trim() : (currentJobTitle ? canonicalJobTitle(currentJobTitle) : null);
 
   // Build SET clauses only if a meaningful change is required.
   const sets = [];
@@ -294,10 +293,6 @@ async function ensureCanonicalFieldsForId(id, currentCompany, currentJobTitle, c
   let idx = 1;
   if (canonicalCompany != null && String(canonicalCompany).trim() !== String(currentCompany || '').trim()) {
     sets.push(`company = $${idx}`); values.push(canonicalCompany); idx++;
-  }
-  // If canonicalPersonal is null explicitly and currentPersonal is non-null, we avoid clearing unless explicitly asked.
-  if (canonicalPersonal != null && String(canonicalPersonal).trim() !== String(currentPersonal || '').trim()) {
-    sets.push(`personal = $${idx}`); values.push(canonicalPersonal); idx++;
   }
 
   if (sets.length) {
@@ -310,7 +305,7 @@ async function ensureCanonicalFieldsForId(id, currentCompany, currentJobTitle, c
     }
   }
 
-  return { company: canonicalCompany, personal: canonicalPersonal };
+  return { company: canonicalCompany };
 }
 
 // Safe JSON parsing helper and persistence for vskillset
@@ -505,7 +500,7 @@ async function ensureProcessTable() {
         email TEXT,
         mobile TEXT,
         office TEXT,
-        personal TEXT,
+        compensation NUMERIC,
         seniority TEXT,
         sourcingstatus TEXT,
         product TEXT,
@@ -535,7 +530,7 @@ async function ensureProcessTable() {
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS email TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS mobile TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS office TEXT`);
-    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS personal TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS compensation NUMERIC`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS seniority TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS sourcingstatus TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS product TEXT`);
@@ -727,6 +722,24 @@ app.get('/user-tokens', requireLogin, async (req, res) => {
   }
 });
 
+// POST /deduct-tokens - Deduct 2 tokens from the authenticated user (called on Verified Selection)
+// NOTE: Consider adding rate limiting for this endpoint in production
+app.post('/deduct-tokens', requireLogin, async (req, res) => {
+  try {
+    const username = req.user.username;
+    const result = await pool.query(
+      'UPDATE login SET token = GREATEST(0, COALESCE(token, 0) - 2) WHERE username = $1 RETURNING token',
+      [username]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const remaining = result.rows[0].token;
+    res.json({ tokensLeft: remaining, accountTokens: remaining });
+  } catch (err) {
+    console.error('Error deducting tokens:', err);
+    res.status(500).json({ error: 'Failed to deduct tokens' });
+  }
+});
+
 // ========================= END AUTH ROUTES =========================
 
 app.get('/', (req, res) => {
@@ -823,7 +836,12 @@ function normalizeIncomingRow(c) {
     email: firstVal(c, ['email', 'Email']) || '',
     mobile: firstVal(c, ['mobile', 'Mobile']) || '',
     office: firstVal(c, ['office', 'Office']) || '',
-    personal: firstVal(c, ['personal', 'Personal']) || '',
+    compensation: (() => {
+      const v = firstVal(c, ['compensation', 'Compensation', 'personal', 'Personal']);
+      if (v === '' || v == null) return null;
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    })(),
     seniority: firstVal(c, ['seniority', 'Seniority']) || '',
     sourcing_status: firstVal(c, ['sourcing_status', 'Sourcing Status']) || '',
     product: firstVal(c, ['product', 'Product', 'type']) || null,
@@ -847,14 +865,14 @@ const processColumnMap = {
   email: 'email',
   mobile: 'mobile',
   office: 'office',
-  personal: 'personal',
+  compensation: 'compensation',
   seniority: 'seniority',
   sourcing_status: 'sourcingstatus',
   product: 'product',
-  linkedinurl: 'linkedinurl' // Added
+  linkedinurl: 'linkedinurl'
 };
 
-// ========== UPDATED: BULK INGESTION supports Project_Title and Project_Date and writes to process table ==========
+// ========== UPDATED: BULK INGESTIONsupports Project_Title and Project_Date and writes to process table ==========
 app.post('/candidates/bulk', requireLogin, async (req, res) => {
   let candidates = req.body.candidates;
   console.log('==== Bulk Upload Candidates ====');
@@ -880,7 +898,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
   const normKeys = [
     'name', 'role', 'jobtitle', 'organisation', 'sector', 'job_family',
     'role_tag', 'skillset', 'geographic', 'country',
-    'email', 'mobile', 'office', 'personal',
+    'email', 'mobile', 'office', 'compensation',
     'seniority', 'sourcing_status', 'product', 'linkedinurl'
   ];
 
@@ -938,7 +956,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
     const result = await pool.query(sql, values);
     console.log('Inserted rows into process:', result.rowCount);
 
-    // Persist canonical company/personal for each inserted row (use returned ids & normalized inputs)
+    // Persist canonical company for each inserted row (use returned ids & normalized inputs)
     try {
       const returnedRows = result.rows || [];
       for (let i = 0; i < returnedRows.length; i++) {
@@ -946,8 +964,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
         const src = normalized[i];
         const currentCompany = src.organisation || src.company || null;
         const currentJobTitle = src.jobtitle || src.role || '';
-        const currentPersonal = src.personal || null;
-        await ensureCanonicalFieldsForId(insertedId, currentCompany, currentJobTitle, currentPersonal);
+        await ensureCanonicalFieldsForId(insertedId, currentCompany, currentJobTitle, null);
       }
     } catch (e) {
       console.warn('[BULK_CANON] failed to persist canonical fields for inserted rows', e && e.message);
@@ -982,9 +999,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
       let picBase64 = null;
       if (r.pic && Buffer.isBuffer(r.pic)) picBase64 = r.pic.toString('base64');
 
-      // personal fallback as before
-      const personalFallback = (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null);
-
+      // compensation sourced directly from the process table's compensation column
       const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
 
       // Parse rating if it's a JSON string
@@ -1028,7 +1043,7 @@ app.get('/candidates', requireLogin, async (req, res) => {
         job_family: r.job_family ?? r.jobfamily ?? null,
         sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
         type: r.product ?? null,
-        personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : personalFallback
+        compensation: r.compensation ?? null
       };
 
       processedRows.push(mapped);
@@ -1308,7 +1323,7 @@ app.post('/candidates', requireLogin, async (req, res) => {
     email: 'email',
     mobile: 'mobile',
     office: 'office',
-    personal: 'personal',
+    compensation: 'compensation',
     seniority: 'seniority',
     lskillset: 'lskillset',
     linkedinurl: 'linkedinurl',
@@ -1331,6 +1346,15 @@ app.post('/candidates', requireLogin, async (req, res) => {
     const std = standardizeSeniority(val);
     // persist only canonical value (or null if unrecognized)
     val = std || null;
+  }
+
+  // Validate compensation: must be numeric
+  if (key === 'compensation' && val != null && val !== '') {
+    const n = Number(val);
+    if (isNaN(n)) {
+      return res.status(400).json({ error: 'Compensation must be a numeric value.' });
+    }
+    val = n;
   }
 
   // normalize empty string to null
@@ -1375,9 +1399,9 @@ app.post('/candidates', requireLogin, async (req, res) => {
     const result = await pool.query(sql, values);
     const r = result.rows[0];
 
-    // After insert, ensure canonical company/personal persisted for consistency
+    // After insert, ensure canonical company persisted for consistency
     try {
-      await ensureCanonicalFieldsForId(r.id, r.company || r.organisation, r.jobtitle || r.role, r.personal);
+      await ensureCanonicalFieldsForId(r.id, r.company || r.organisation, r.jobtitle || r.role, null);
     } catch (e) {
       console.warn('[POST_CANON] failed to persist canonical fields', e && e.message);
     }
@@ -1394,7 +1418,7 @@ app.post('/candidates', requireLogin, async (req, res) => {
       product: fresh.product ?? null,
       lskillset: fresh.lskillset ?? null,
       linkedinurl: fresh.linkedinurl ?? null,
-      jskillset: fresh.jskillset ?? null, // include jskillset in response
+      jskillset: fresh.jskillset ?? null,
 
       // candidate-style fallbacks
       role: fresh.role ?? fresh.jobtitle ?? null,
@@ -1402,7 +1426,7 @@ app.post('/candidates', requireLogin, async (req, res) => {
       job_family: fresh.job_family ?? fresh.jobfamily ?? null,
       sourcing_status: fresh.sourcing_status ?? fresh.sourcingstatus ?? null,
       type: fresh.product ?? null,
-      personal: (fresh.personal && String(fresh.personal).trim()) ? String(fresh.personal).trim() : (fresh.jobtitle ? canonicalJobTitle(fresh.jobtitle) : null)
+      compensation: fresh.compensation ?? null
     };
 
     // Emit creation event
@@ -1458,7 +1482,7 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     email: 'email',
     mobile: 'mobile',
     office: 'office',
-    personal: 'personal',
+    compensation: 'compensation',
     seniority: 'seniority',
     lskillset: 'lskillset',
     vskillset: 'vskillset',
@@ -1481,6 +1505,13 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
         const std = standardizeSeniority(v);
         v = std || null;
       }
+      if (k === 'compensation' && v != null && v !== '') {
+        const n = Number(v);
+        if (isNaN(n)) {
+          return res.status(400).json({ error: 'Compensation must be a numeric value.' });
+        }
+        v = n;
+      }
       colValueMap.set(col, v === '' ? null : v);
     }
 
@@ -1501,9 +1532,9 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
 
     let r = result.rows[0];
 
-    // Persist canonical company/personal if needed after the update
+    // Persist canonical company if needed after the update
     try {
-      await ensureCanonicalFieldsForId(r.id, r.company || r.organisation, r.jobtitle || r.role, r.personal);
+      await ensureCanonicalFieldsForId(r.id, r.company || r.organisation, r.jobtitle || r.role, null);
     } catch (e) {
       console.warn('[PUT_CANON] failed to persist canonical fields', e && e.message);
     }
@@ -1540,8 +1571,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
       organisation: normalizeCompanyName(r.company || r.organisation) ?? (r.organisation ?? r.company ?? null),
       job_family: r.job_family ?? r.jobfamily ?? null,
       sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
-      type: r.product ?? null, // return product as type for frontend
-      personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null)
+      type: r.product ?? null,
+      compensation: r.compensation ?? null
     };
 
     // Emit candidate_updated via SSE if connections exist
@@ -1654,8 +1685,8 @@ app.post('/candidates/:id/calculate-unmatched', requireLogin, async (req, res) =
 
         // 7. Return standard updated object
         // Use standard mapping helper logic manually here to ensure consistency
+        // compensation sourced from process table
         const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
-        const personalFallback = (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null);
         
         const mapped = {
             ...r,
@@ -1669,7 +1700,7 @@ app.post('/candidates/:id/calculate-unmatched', requireLogin, async (req, res) =
             role: r.role ?? r.jobtitle ?? null,
             organisation: companyCanonical ?? (r.organisation ?? r.company ?? null),
             type: r.product ?? null,
-            personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : personalFallback
+            compensation: r.compensation ?? null
         };
 
         // Emit update
@@ -1784,7 +1815,7 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
     email: 'email',
     mobile: 'mobile',
     office: 'office',
-    personal: 'personal',
+    compensation: 'compensation',
     seniority: 'seniority',
     lskillset: 'lskillset',
     linkedinurl: 'linkedinurl'
@@ -1823,6 +1854,10 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
           const std = standardizeSeniority(v);
           v = std || null;
         }
+        if (k === 'compensation' && v != null && v !== '') {
+          const n = Number(v);
+          v = isNaN(n) ? null : n;
+        }
         colValueMap.set(col, v === '' ? null : v);
       }
 
@@ -1842,7 +1877,7 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
         let r = result.rows[0];
         // Persist canonical fields for this updated row
         try {
-          await ensureCanonicalFieldsForId(r.id, r.company || r.organisation, r.jobtitle || r.role, r.personal);
+          await ensureCanonicalFieldsForId(r.id, r.company || r.organisation, r.jobtitle || r.role, null);
           // reload to reflect persisted canonicalization
           r = (await client.query('SELECT * FROM "process" WHERE id = $1', [r.id])).rows[0];
         } catch (e) {
@@ -1862,7 +1897,7 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
           job_family: r.job_family ?? r.jobfamily ?? null,
           sourcing_status: r.sourcing_status ?? r.sourcingstatus ?? null,
           type: r.product ?? null,
-          personal: (r.personal && String(r.personal).trim()) ? String(r.personal).trim() : (r.jobtitle ? canonicalJobTitle(r.jobtitle) : null),
+          compensation: r.compensation ?? null,
           jskillset: r.jskillset ?? null
         };
         updatedRows.push(mapped);
@@ -1983,12 +2018,8 @@ app.post('/verify-data', requireLogin, async (req, res) => {
       }
       
       // Apply job title normalization
-      // Note: The 'personal' field stores the canonical job title for the candidate.
-      // This mirrors the jobtitle field to maintain consistency across the data model
-      // where 'personal' represents the standardized role classification.
       if (result.jobtitle) {
         result.jobtitle = canonicalJobTitle(result.jobtitle);
-        result.personal = result.jobtitle;
       }
       
       // Apply country normalization using countrycode.JSON
@@ -3000,7 +3031,7 @@ app.get('/auth/google/callback', requireLogin, async (req, res) => {
     const colsToExport = [
       'id', 'name', 'jobtitle', 'company', 'sector', 'jobfamily', 'role_tag',
       'skillset', 'geographic', 'country', 'email', 'mobile', 'office',
-      'personal', 'seniority', 'sourcingstatus', 'product', 'userid', 'username',
+      'compensation', 'seniority', 'sourcingstatus', 'product', 'userid', 'username',
       'linkedinurl', 'jskillset', 'lskillset', 'rating'
     ];
     
