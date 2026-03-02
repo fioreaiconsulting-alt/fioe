@@ -563,6 +563,8 @@ async function ensureLoginColumns() {
     // Add columns to hold Google OAuth refresh token and optional expiry
     await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`);
     await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP`);
+    // Add corporation column for email template tag [Your Company Name]
+    await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS corporation TEXT`);
   } catch (err) {
     console.error('[INIT] Failed to ensure login table columns exist:', err);
   }
@@ -652,7 +654,8 @@ app.post('/login', async (req, res) => {
       ok: true,
       userid: uid,
       username: user.username,
-      full_name: user.full_name || user.username
+      full_name: user.full_name || user.username,
+      corporation: user.corporation || ''
     });
 
   } catch (err) {
@@ -674,9 +677,10 @@ app.get('/user/resolve', async (req, res) => {
   if (userid && username) {
     // UPDATED: query full_name from DB instead of just returning cookies
     try {
-      const r = await pool.query('SELECT full_name FROM login WHERE username = $1', [username]);
+      const r = await pool.query('SELECT full_name, corporation FROM login WHERE username = $1', [username]);
       const full_name = (r.rows.length > 0 && r.rows[0].full_name) ? r.rows[0].full_name : "";
-      return res.json({ ok: true, userid, username, full_name });
+      const corporation = (r.rows.length > 0 && r.rows[0].corporation) ? r.rows[0].corporation : "";
+      return res.json({ ok: true, userid, username, full_name, corporation });
     } catch(e) {
       // Fallback if DB fails
       return res.json({ ok: true, userid, username });
@@ -687,10 +691,10 @@ app.get('/user/resolve', async (req, res) => {
   const qName = req.query.username;
   if (qName) {
      try {
-       const result = await pool.query('SELECT id, username, full_name FROM login WHERE username = $1', [qName]);
+       const result = await pool.query('SELECT id, username, full_name, corporation FROM login WHERE username = $1', [qName]);
        if (result.rows.length > 0) {
          const u = result.rows[0];
-         return res.json({ ok: true, userid: u.id, username: u.username, full_name: u.full_name });
+         return res.json({ ok: true, userid: u.id, username: u.username, full_name: u.full_name, corporation: u.corporation || '' });
        }
      } catch(e) {}
   }
@@ -2693,7 +2697,7 @@ app.post('/draft-email', requireLogin, async (req, res) => {
 
 // ========== NEW: Send Email Endpoint (Nodemailer) ==========
 app.post('/send-email', requireLogin, async (req, res) => {
-    const { to, cc, bcc, subject, body, from, smtpConfig, ics } = req.body;
+    const { to, cc, bcc, subject, body, from, smtpConfig, ics, attachments } = req.body;
 
     let transporterConfig;
 
@@ -2753,6 +2757,20 @@ app.post('/send-email', requireLogin, async (req, res) => {
             content: ics,
             contentType: 'text/calendar'
           });
+        }
+
+        // Attach user-supplied files (sent as base64 from the frontend)
+        if (Array.isArray(attachments) && attachments.length > 0) {
+          mailOptions.attachments = mailOptions.attachments || [];
+          for (const att of attachments) {
+            if (att && att.filename && att.content) {
+              mailOptions.attachments.push({
+                filename: att.filename,
+                content: Buffer.from(att.content, 'base64'),
+                contentType: att.contentType || 'application/octet-stream'
+              });
+            }
+          }
         }
 
         const info = await transporter.sendMail(mailOptions);

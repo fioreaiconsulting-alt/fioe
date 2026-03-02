@@ -1,23 +1,38 @@
 @media print {
-  body * {
-    visibility: hidden !important;
-    height: 0 !important;
-    overflow: hidden !important;
-  }
-  #org-chart-content, #org-chart-content * {
-    visibility: visible !important;
-    height: auto !important;
-    overflow: visible !important;
-  }
+  /* Hide all page chrome */
+  body { visibility: hidden !important; }
+
+  /* Reveal only the org chart tree */
   #org-chart-content {
-    position: absolute !important;
+    visibility: visible !important;
+    position: fixed !important;
     left: 0 !important;
     top: 0 !important;
-    width: 100vw !important;
+    width: 100% !important;
     background: #fff !important;
     z-index: 9999 !important;
     padding: 0 !important;
     margin: 0 !important;
     box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  #org-chart-content * {
+    visibility: visible !important;
+    overflow: visible !important;
+  }
+
+  /* Expand scrollable org-chart containers so the full tree prints */
+  #org-chart-content .org-chart-scroll,
+  #org-chart-content .org-group,
+  #org-chart-content .org-tree-root,
+  #org-chart-content .org-center-wrapper {
+    overflow: visible !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    max-width: none !important;
+    max-height: none !important;
+    width: auto !important;
+    height: auto !important;
   }
 }

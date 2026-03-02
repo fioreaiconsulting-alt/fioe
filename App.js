@@ -235,7 +235,7 @@ function EmailVerificationModal({ data, onClose, email }) {
 }
 
 /* ========================= EMAIL COMPOSE MODAL ========================= */
-function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpConfig }) {
+function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candidateData, userData, smtpConfig }) {
   const [from, setFrom] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -292,6 +292,30 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  // Apply dynamic template tags from candidate and user data
+  const applyTags = (text) => {
+    let t = text;
+    // Candidate tags
+    t = t.replace(/\[Candidate Name\]/gi, candidateData?.name || candidateName || '');
+    t = t.replace(/\[Job Title\]/gi, candidateData?.jobtitle || candidateData?.role || '');
+    t = t.replace(/\[Company Name\]/gi, candidateData?.company || candidateData?.organisation || '');
+    t = t.replace(/\[Country\]/gi, candidateData?.country || '');
+    // Legacy [name] tag
+    t = t.replace(/\[name\]/gi, candidateData?.name || candidateName || '');
+    // User / sender tags
+    t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
+    t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
+    return t;
+  };
+
+  // Read a File as base64 string (without data: prefix)
+  const readFileAsBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 
   const handleFileChange = (e) => {
     if (e.target.files) {
@@ -484,10 +508,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
     if (subject) params.append('subject', subject);
     
     let finalBody = body;
-    // Replace placeholders if any
-    if (candidateName && finalBody.includes('[name]')) {
-      finalBody = finalBody.replace(/\[name\]/g, candidateName);
-    }
+    finalBody = applyTags(finalBody);
     if (finalBody) params.append('body', finalBody);
 
     const queryString = params.toString().replace(/\+/g, '%20');
@@ -509,15 +530,19 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
     }
     setDirectSending(true);
     try {
-        let finalBody = body;
-        if (candidateName && finalBody.includes('[name]')) {
-            finalBody = finalBody.replace(/\[name\]/g, candidateName);
-        }
+        let finalBody = applyTags(body);
 
         // If a meet link exists but not in body, append (defensive)
         if (meetLink && !finalBody.includes(meetLink)) {
           finalBody += '\n\nJoin meeting: ' + meetLink;
         }
+
+        // Read selected files as base64 attachments
+        const attachments = await Promise.all(files.map(async (file) => ({
+            filename: file.name,
+            content: await readFileAsBase64(file),
+            contentType: file.type || 'application/octet-stream'
+        })));
 
         const payload = {
             to, cc, bcc, subject, 
@@ -526,6 +551,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
             smtpConfig, // Pass the SMTP config to the backend
         };
         if (icsString) payload.ics = icsString;
+        if (attachments.length > 0) payload.attachments = attachments;
 
         const res = await fetch('http://localhost:4000/send-email', {
             method: 'POST',
@@ -618,7 +644,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, smtpCo
             <div style={{ marginBottom: 16, padding: '12px', background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <label style={{...labelStyle, marginBottom: 0}}>Email Template & AI Tools</label>
-                <span style={{ fontSize: 11, color: 'var(--argent)' }}>Use <b>[name]</b> for candidate name.</span>
+                <span style={{ fontSize: 11, color: 'var(--argent)' }}>Tags: <b>[Candidate Name]</b> · <b>[Job Title]</b> · <b>[Company Name]</b> · <b>[Country]</b> · <b>[Your Name]</b> · <b>[Your Company Name]</b></span>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <select 
@@ -1112,7 +1138,8 @@ function CandidatesTable({
   onViewProfile, // NEW PROP to handle viewing profile
   statusOptions, // Prop for status options
   onOpenStatusModal, // Prop to open status modal
-  allCandidates // Passed for bulk verification/sync
+  allCandidates, // Passed for bulk verification/sync
+  user // Logged-in user for template tags
 }) {
   const COLUMN_WIDTHS_KEY = 'candidateTableColumnWidths';
   const DEFAULT_WIDTH = 140;
@@ -1147,6 +1174,7 @@ function CandidatesTable({
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [composedToAddresses, setComposedToAddresses] = useState('');
   const [singleCandidateName, setSingleCandidateName] = useState('');
+  const [singleCandidateData, setSingleCandidateData] = useState(null);
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
@@ -1441,8 +1469,10 @@ function CandidatesTable({
     
     if (selected.length === 1) {
         setSingleCandidateName(selected[0].name || '');
+        setSingleCandidateData(selected[0]);
     } else {
         setSingleCandidateName('');
+        setSingleCandidateData(null);
     }
 
     setEmailModalOpen(true);
@@ -1979,6 +2009,8 @@ function CandidatesTable({
         onClose={() => setEmailModalOpen(false)}
         toAddresses={composedToAddresses}
         candidateName={singleCandidateName}
+        candidateData={singleCandidateData}
+        userData={user}
         smtpConfig={smtpConfig}
       />
       <SmtpConfigModal
@@ -3990,6 +4022,7 @@ export default function App() {
                 statusOptions={statusOptions}
                 onOpenStatusModal={() => setStatusModalOpen(true)}
                 allCandidates={filteredCandidates}
+                user={user}
               />
           }
         </div>
