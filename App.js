@@ -1066,7 +1066,7 @@ function CandidatesTable({
     { key: 'skillset', label: 'Skillset', type: 'text', editable: false },
     { key: 'geographic', label: 'Geographic', type: 'text', editable: true },
     { key: 'country', label: 'Country', type: 'text', editable: true },
-    { key: 'personal', label: 'Compensation', type: 'text', editable: true },
+    { key: 'compensation', label: 'Compensation', type: 'number', editable: true },
     { key: 'email', label: 'Email', type: 'email', editable: true },
     { key: 'mobile', label: 'Mobile', type: 'text', editable: true },
     { key: 'office', label: 'Office', type: 'text', editable: true },
@@ -1223,31 +1223,6 @@ function CandidatesTable({
             entry.organisation = '';
           }
 
-          const jtCandidates = ['jobtitle', 'job_title', 'role', 'title', 'standardized_job_title', 'personal'];
-          let foundJT = false;
-          for (const key of jtCandidates) {
-            if (Object.prototype.hasOwnProperty.call(row, key)) {
-              const jtVal = row[key];
-              if (jtVal == null || String(jtVal).trim() === '') {
-                entry.personal = '';
-              } else {
-                entry.personal = String(jtVal).trim();
-              }
-              foundJT = true;
-              break;
-            }
-          }
-
-          if (!foundJT || entry.personal == null || String(entry.personal).trim() === '') {
-            const src = (allCandidates || []).find(d => String(d?.id) === String(id));
-            const fallbackJT = (src && (src.jobtitle || src.role || src.job_title || src.title)) ? (src.jobtitle || src.role || src.job_title || src.title) : '';
-            if (fallbackJT && String(fallbackJT).trim() !== '') {
-              entry.personal = String(fallbackJT).trim();
-            } else {
-              if (!Object.prototype.hasOwnProperty.call(entry, 'personal')) entry.personal = '';
-            }
-          }
-
           // Sync seniority field
           if (row.seniority !== null && row.seniority !== undefined) {
             if (String(row.seniority).trim() !== '') {
@@ -1288,14 +1263,18 @@ function CandidatesTable({
       return;
     }
 
+    if (renameCategory === 'Compensation' && !/^\d*\.?\d+$/.test(renameValue.trim())) {
+      setRenameError('Compensation must be a numeric value.');
+      return;
+    }
+
     try {
       // Map frontend category names to database field names
       const fieldMap = {
         'Job Title': 'role',
         'Company': 'organisation',
         'Sector': 'sector',
-        'Personal': 'personal',
-        'Compensation': 'personal',
+        'Compensation': 'compensation',
         'Job Family': 'job_family',
         'Geographic': 'geographic',
         'Country': 'country'
@@ -1366,6 +1345,7 @@ function CandidatesTable({
 
   const handleEditChange = (id, field, value) => {
     if (['skillset', 'type'].includes(field)) return;
+    if (field === 'compensation' && value !== '' && !/^\d*\.?\d*$/.test(value)) return;
 
     setEditRows(prev => {
       const prior = prev[id] || {};
@@ -1573,6 +1553,8 @@ function CandidatesTable({
                   <option value="Director">Director</option>
                   <option value="Executive">Executive</option>
                 </select>
+              : f.key === 'compensation'
+              ? <input type="number" min="0" step="any" value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
               : <input type={f.type} value={displayValue} onChange={e => handleEditChange(c.id, f.key, e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
         }
       </td>
@@ -1697,9 +1679,14 @@ function CandidatesTable({
             {renameCategory && (
               <>
                 <input
-                  type="text"
+                  type={renameCategory === 'Compensation' ? 'number' : 'text'}
+                  min={renameCategory === 'Compensation' ? '0' : undefined}
+                  step={renameCategory === 'Compensation' ? 'any' : undefined}
                   value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
+                  onChange={(e) => {
+                    if (renameCategory === 'Compensation' && e.target.value !== '' && !/^\d*\.?\d*$/.test(e.target.value)) return;
+                    setRenameValue(e.target.value);
+                  }}
                   placeholder={`Enter new ${renameCategory}...`}
                   style={{
                     padding: '6px 12px',
@@ -1829,11 +1816,11 @@ function CandidatesTable({
                       const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
                       let extraStyle;
                       if (isLeft) {
-                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
+                        extraStyle = { position: 'sticky', left: 44, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
                       } else if (isRight) {
-                        extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}` };
+                        extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
                       } else if (isPinned) {
-                        extraStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 5, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}` };
+                        extraStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 5, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: rowBg };
                       } else {
                         extraStyle = {};
                       }
@@ -1928,7 +1915,7 @@ function buildOrgChartTrees(candidates, manualParentOverrides, editingLayout, dr
         return {
           id:p.id, name:p.name, seniority:tier,
           roleTag:(p.role_tag||'').trim(),
-          personal:(p.personal||'').trim(), 
+          personal:(p.jobtitle||'').trim(), 
           jobtitle:(p.jobtitle||'').trim(),
           jobFamily:p.job_family||'',
           country:(p.country||'').trim(),
@@ -2651,7 +2638,7 @@ function CandidateUpload({ onUpload }) {
       email: first(row, 'email', 'Email') || '',
       mobile: first(row, 'mobile', 'Mobile') || '',
       office: first(row, 'office', 'Office') || '',
-      personal: first(row, 'personal', 'Personal') || '',
+      compensation: first(row, 'compensation', 'Compensation', 'personal', 'Personal') || '',
       seniority: first(row, 'seniority', 'Seniority') || '',
       sourcing_status: first(row, 'sourcing_status', 'Sourcing Status') || '',
       lskillset: first(row, 'lskillset', 'Unmatched Skillset') || '',
