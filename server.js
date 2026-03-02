@@ -71,6 +71,43 @@ const COMPANY_ALIAS_MAP = [
 ];
 
 // Remove common legal suffixes and noise, then apply alias map and Title Case result
+/**
+ * Convert any raw pic value from the DB into a valid data URI (or URL).
+ * Returns null if the value cannot be converted.
+ */
+function picToDataUri(rawPic) {
+  if (!rawPic) return null;
+  let buf = null;
+  if (Buffer.isBuffer(rawPic)) {
+    buf = rawPic;
+  } else if (typeof rawPic === 'string') {
+    if (rawPic.startsWith('data:') || rawPic.startsWith('http://') || rawPic.startsWith('https://')) {
+      return rawPic; // already a usable src
+    }
+    if (rawPic.startsWith('\\x')) {
+      buf = Buffer.from(rawPic.slice(2), 'hex');
+    } else if (/^[A-Za-z0-9+/=\s]+$/.test(rawPic)) {
+      buf = Buffer.from(rawPic.replace(/\s/g, ''), 'base64');
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  if (!buf || buf.length === 0) return null;
+  // Detect MIME type from magic bytes
+  let mime = 'image/jpeg'; // safe default
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    mime = 'image/png';
+  } else if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+    mime = 'image/gif';
+  } else if (buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+             buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+    mime = 'image/webp';
+  }
+  return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
 function normalizeCompanyName(raw) {
   if (raw == null) return null;
   const s = String(raw).trim();
@@ -563,6 +600,8 @@ async function ensureLoginColumns() {
     // Add columns to hold Google OAuth refresh token and optional expiry
     await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`);
     await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP`);
+    // Add corporation column for email template tag [Your Company Name]
+    await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS corporation TEXT`);
   } catch (err) {
     console.error('[INIT] Failed to ensure login table columns exist:', err);
   }
@@ -652,7 +691,8 @@ app.post('/login', async (req, res) => {
       ok: true,
       userid: uid,
       username: user.username,
-      full_name: user.full_name || user.username
+      full_name: user.full_name || user.username,
+      corporation: user.corporation || ''
     });
 
   } catch (err) {
@@ -674,9 +714,10 @@ app.get('/user/resolve', async (req, res) => {
   if (userid && username) {
     // UPDATED: query full_name from DB instead of just returning cookies
     try {
-      const r = await pool.query('SELECT full_name FROM login WHERE username = $1', [username]);
+      const r = await pool.query('SELECT full_name, corporation FROM login WHERE username = $1', [username]);
       const full_name = (r.rows.length > 0 && r.rows[0].full_name) ? r.rows[0].full_name : "";
-      return res.json({ ok: true, userid, username, full_name });
+      const corporation = (r.rows.length > 0 && r.rows[0].corporation) ? r.rows[0].corporation : "";
+      return res.json({ ok: true, userid, username, full_name, corporation });
     } catch(e) {
       // Fallback if DB fails
       return res.json({ ok: true, userid, username });
@@ -687,10 +728,10 @@ app.get('/user/resolve', async (req, res) => {
   const qName = req.query.username;
   if (qName) {
      try {
-       const result = await pool.query('SELECT id, username, full_name FROM login WHERE username = $1', [qName]);
+       const result = await pool.query('SELECT id, username, full_name, corporation FROM login WHERE username = $1', [qName]);
        if (result.rows.length > 0) {
          const u = result.rows[0];
-         return res.json({ ok: true, userid: u.id, username: u.username, full_name: u.full_name });
+         return res.json({ ok: true, userid: u.id, username: u.username, full_name: u.full_name, corporation: u.corporation || '' });
        }
      } catch(e) {}
   }
@@ -826,9 +867,11 @@ function normalizeIncomingRow(c) {
     role: firstVal(c, ['role', 'Role']) || '',
     // Accept multiple job title keys (some inputs use 'jobtitle' already)
     jobtitle: firstVal(c, ['jobtitle', 'job_title', 'Job Title', 'role', 'Role']) || '',
-    organisation: firstVal(c, ['organisation', 'Organisation']) || '',
+    // Accept exact process table column name 'company' as well as legacy 'organisation'
+    organisation: firstVal(c, ['company', 'organisation', 'Organisation']) || '',
     sector: firstVal(c, ['sector', 'Sector']) || '',
-    job_family: firstVal(c, ['job_family', 'Job Family']) || '',
+    // Accept exact process table column name 'jobfamily' as well as legacy 'job_family'
+    job_family: firstVal(c, ['jobfamily', 'job_family', 'Job Family']) || '',
     role_tag: firstVal(c, ['role_tag', 'Role Tag']) || '',
     skillset: firstVal(c, ['skillset', 'Skillset']) || '',
     geographic: firstVal(c, ['geographic', 'Geographic']) || '',
@@ -843,7 +886,8 @@ function normalizeIncomingRow(c) {
       return isNaN(n) ? null : n;
     })(),
     seniority: firstVal(c, ['seniority', 'Seniority']) || '',
-    sourcing_status: firstVal(c, ['sourcing_status', 'Sourcing Status']) || '',
+    // Accept exact process table column name 'sourcingstatus' as well as legacy 'sourcing_status'
+    sourcing_status: firstVal(c, ['sourcingstatus', 'sourcing_status', 'Sourcing Status']) || '',
     product: firstVal(c, ['product', 'Product', 'type']) || null,
     linkedinurl: firstVal(c, ['linkedinurl', 'linkedin', 'LinkedIn', 'URL']) || '', // Added for capture
     cv: firstVal(c, ['cv', 'CV', 'resume', 'Resume']) || ''
@@ -995,9 +1039,8 @@ app.get('/candidates', requireLogin, async (req, res) => {
       // Parse/normalize vskillset (and persist normalized JSON back to DB when parse succeeds)
       const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
-      // Convert pic buffer -> base64 as before
-      let picBase64 = null;
-      if (r.pic && Buffer.isBuffer(r.pic)) picBase64 = r.pic.toString('base64');
+      // Convert pic to a data URI (or URL) that the frontend can use directly
+      const picBase64 = picToDataUri(r.pic);
 
       // compensation sourced directly from the process table's compensation column
       const companyCanonical = normalizeCompanyName(r.company || r.organisation || '');
@@ -1545,11 +1588,8 @@ app.put('/candidates/:id', requireLogin, async (req, res) => {
     // After reloading r from DB:
     const parsedVskillset = await parseAndPersistVskillset(r.id, r.vskillset);
 
-    // Convert bytea pic to base64 string for frontend
-    let picBase64 = null;
-    if (r.pic && Buffer.isBuffer(r.pic)) {
-      picBase64 = r.pic.toString('base64');
-    }
+    // Convert pic to a data URI (or URL) that the frontend can use directly
+    const picBase64 = picToDataUri(r.pic);
 
     // Return row with both process-style and candidate-style fallback keys for frontend convenience
     const mapped = {
@@ -2673,7 +2713,7 @@ app.post('/draft-email', requireLogin, async (req, res) => {
 
 // ========== NEW: Send Email Endpoint (Nodemailer) ==========
 app.post('/send-email', requireLogin, async (req, res) => {
-    const { to, cc, bcc, subject, body, from, smtpConfig, ics } = req.body;
+    const { to, cc, bcc, subject, body, from, smtpConfig, ics, attachments } = req.body;
 
     let transporterConfig;
 
@@ -2733,6 +2773,20 @@ app.post('/send-email', requireLogin, async (req, res) => {
             content: ics,
             contentType: 'text/calendar'
           });
+        }
+
+        // Attach user-supplied files (sent as base64 from the frontend)
+        if (Array.isArray(attachments) && attachments.length > 0) {
+          mailOptions.attachments = mailOptions.attachments || [];
+          for (const att of attachments) {
+            if (att && att.filename && att.content) {
+              mailOptions.attachments.push({
+                filename: att.filename,
+                content: Buffer.from(att.content, 'base64'),
+                contentType: att.contentType || 'application/octet-stream'
+              });
+            }
+          }
         }
 
         const info = await transporter.sendMail(mailOptions);
