@@ -261,6 +261,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   const [showAiInput, setShowAiInput] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [showTagGlossary, setShowTagGlossary] = useState(false);
 
   const [to, setTo] = useState(toAddresses);
   
@@ -644,7 +645,32 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
             <div style={{ marginBottom: 16, padding: '12px', background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <label style={{...labelStyle, marginBottom: 0}}>Email Template & AI Tools</label>
-                <span style={{ fontSize: 11, color: 'var(--argent)' }}>Tags: <b>[Candidate Name]</b> · <b>[Job Title]</b> · <b>[Company Name]</b> · <b>[Country]</b> · <b>[Your Name]</b> · <b>[Your Company Name]</b></span>
+                <span
+                  tabIndex={0}
+                  style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', cursor: 'pointer', fontSize: 13, outline: 'none' }}
+                  onMouseEnter={() => setShowTagGlossary(true)}
+                  onMouseLeave={() => setShowTagGlossary(false)}
+                  onFocus={() => setShowTagGlossary(true)}
+                  onBlur={() => setShowTagGlossary(false)}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
+                  <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Tag Glossary</span>
+                  {showTagGlossary && (
+                    <div style={{
+                      position: 'absolute', top: '110%', right: 0, zIndex: 9999,
+                      background: '#1e293b', color: '#f1f5f9', borderRadius: 8, padding: '10px 14px',
+                      minWidth: 300, boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: 12, lineHeight: 1.7
+                    }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6, borderBottom: '1px solid #334155', paddingBottom: 4 }}>Available Template Tags</div>
+                      <div><b style={{color:'#93c5fd'}}>[Candidate Name]</b> – Candidate's full name</div>
+                      <div><b style={{color:'#93c5fd'}}>[Job Title]</b> – Candidate's professional role</div>
+                      <div><b style={{color:'#93c5fd'}}>[Company Name]</b> – Candidate's current employer</div>
+                      <div><b style={{color:'#93c5fd'}}>[Country]</b> – Candidate's geographic location</div>
+                      <div><b style={{color:'#86efac'}}>[Your Name]</b> – Your account's full name</div>
+                      <div><b style={{color:'#86efac'}}>[Your Company Name]</b> – Your registered company name</div>
+                    </div>
+                  )}
+                </span>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <select 
@@ -4043,11 +4069,9 @@ export default function App() {
                             {resumeCandidate.pic && typeof resumeCandidate.pic === 'string' ? (
                                 <>
                                     <img 
-                                        src={resumeCandidate.pic.startsWith('data:') || resumeCandidate.pic.startsWith('http')
+                                        src={resumeCandidate.pic.startsWith('http://') || resumeCandidate.pic.startsWith('https://') || resumeCandidate.pic.startsWith('data:')
                                             ? resumeCandidate.pic
-                                            : resumeCandidate.pic.startsWith('/9j/')
-                                              ? `data:image/jpeg;base64,${resumeCandidate.pic}`
-                                              : `data:image/png;base64,${resumeCandidate.pic}`}
+                                            : `data:image/jpeg;base64,${resumeCandidate.pic}`}
                                         alt={resumeCandidate.name || 'Candidate'}
                                         style={{
                                             width: 60,
