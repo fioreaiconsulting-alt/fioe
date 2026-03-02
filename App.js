@@ -999,34 +999,48 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
 }
 
 function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
-  const emptyFields = { baseSalary: '', allowances: '', bonus: '', commission: '', rsu: '' };
+  const COMP_KEYS = ['baseSalary', 'allowances', 'bonus', 'commission', 'rsu'];
+  const emptyFields = Object.fromEntries(COMP_KEYS.map(k => [k, '']));
   const [fields, setFields] = useState(emptyFields);
+  const [totalOverride, setTotalOverride] = useState('');
+  const [manualTotal, setManualTotal] = useState(false);
 
-  useEffect(() => { if (isOpen) setFields(emptyFields); }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isOpen) { setFields(emptyFields); setTotalOverride(''); setManualTotal(false); }
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isOpen) return null;
+
+  const autoTotal = COMP_KEYS.reduce((sum, k) => sum + (parseFloat(fields[k]) || 0), 0);
+  const displayTotal = manualTotal ? totalOverride : (autoTotal === 0 ? '' : String(autoTotal));
 
   const handleChange = (key, value) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
     setFields(prev => ({ ...prev, [key]: value }));
   };
 
+  const handleTotalChange = (value) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
+    setManualTotal(true);
+    setTotalOverride(value);
+  };
+
   const handleSave = () => {
-    const total = ['baseSalary', 'allowances', 'bonus', 'commission', 'rsu']
-      .reduce((sum, k) => sum + (parseFloat(fields[k]) || 0), 0);
-    onSave(total === 0 ? '' : String(total));
+    const finalValue = manualTotal ? totalOverride : (autoTotal === 0 ? '' : String(autoTotal));
+    onSave(finalValue);
     onClose();
   };
 
   const labelStyle = { display: 'block', marginBottom: 4, fontWeight: 600, fontSize: 12, color: 'var(--muted)' };
   const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '6px 10px', font: 'inherit', fontSize: 13, background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 12 };
+  const disabledInputStyle = { ...inputStyle, background: '#f1f5f9', color: '#94a3b8', cursor: 'not-allowed' };
 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
       background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
     }} onClick={onClose}>
-      <div className="app-card" style={{ width: 380, padding: 24 }} onClick={e => e.stopPropagation()}>
+      <div className="app-card" style={{ width: 420, padding: 24 }} onClick={e => e.stopPropagation()}>
         <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: 'var(--argent)' }}>×</button>
         <h3 style={{ marginTop: 0, marginBottom: 20, color: 'var(--azure-dragon)', fontSize: 16 }}>Compensation Calculator</h3>
         {[
@@ -1037,18 +1051,38 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
           { key: 'rsu', label: 'Restricted Stock Units (RSU)' },
         ].map(({ key, label }) => (
           <div key={key}>
-            <label style={labelStyle}>{label}</label>
+            <label style={{ ...labelStyle, color: manualTotal ? '#94a3b8' : 'var(--muted)' }}>{label}</label>
             <input
               type="text"
               inputMode="decimal"
               placeholder="0"
               value={fields[key]}
+              disabled={manualTotal}
               onChange={e => handleChange(key, e.target.value)}
-              style={inputStyle}
+              style={manualTotal ? disabledInputStyle : inputStyle}
             />
           </div>
         ))}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+        <div style={{ borderTop: '2px solid var(--neutral-border)', marginBottom: 12, paddingTop: 12 }}>
+          <label style={{ ...labelStyle, color: 'var(--azure-dragon)', fontWeight: 700 }}>
+            Total Annual Remuneration {manualTotal ? <span style={{ fontWeight: 400, fontSize: 11, color: '#ef4444' }}>(manual – individual fields locked)</span> : <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--argent)' }}>(auto-calculated)</span>}
+          </label>
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0"
+            value={displayTotal}
+            onChange={e => handleTotalChange(e.target.value)}
+            style={{ ...inputStyle, marginBottom: 0, fontWeight: 700, border: manualTotal ? '1px solid #ef4444' : '1px solid var(--azure-dragon)', background: manualTotal ? '#fff7f7' : '#f0f9ff' }}
+          />
+          {manualTotal && (
+            <button
+              onClick={() => { setManualTotal(false); setTotalOverride(''); }}
+              style={{ marginTop: 6, fontSize: 11, color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+            >Reset to auto-sum</button>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
           <button onClick={onClose} className="btn-secondary" style={{ padding: '7px 18px', fontSize: 13 }}>Cancel</button>
           <button onClick={handleSave} className="btn-primary" style={{ padding: '7px 18px', fontSize: 13 }}>Save</button>
         </div>
@@ -1059,7 +1093,7 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave }) {
 
 
 // Sticky column constants (defined outside component to avoid recreation on each render)
-const FROZEN_ACTIONS_WIDTH = 110;
+const FROZEN_ACTIONS_WIDTH = 80;
 const FROZEN_EDGE_BORDER_COLOR = '#cbd5e1'; // subtle separator for permanent edge columns
 const FROZEN_COL_BORDER_COLOR = '#93c5fd';  // blue separator for user-pinned columns (📌)
 
@@ -1891,7 +1925,7 @@ function CandidatesTable({
                     <td style={{ position: 'sticky', right: 0, zIndex: 10, textAlign: 'center', borderBottom: '1px solid #eef2f5', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT, background: rowBg, overflow: 'hidden' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                         <button onClick={() => onViewProfile && onViewProfile(c)} title="View Resume & Profile"
-                                style={{ background: 'var(--azure-dragon)', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                                style={{ background: 'var(--azure-dragon)', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
                           Profile
                         </button>
                       </div>
@@ -2853,7 +2887,8 @@ export default function App() {
   const [verifyingEmail, setVerifyingEmail] = useState(false);
   const [verifyModalData, setVerifyModalData] = useState(null);
   const [verifyModalEmail, setVerifyModalEmail] = useState('');
-
+  const [tokenConfirmOpen, setTokenConfirmOpen] = useState(false);
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState(null);
   // State for calculating unmatched skills
   const [calculatingUnmatched, setCalculatingUnmatched] = useState(false);
   const [unmatchedCalculated, setUnmatchedCalculated] = useState({});  // Store by candidate ID
@@ -3476,24 +3511,22 @@ export default function App() {
   };
 
   // Handler for verifying selected email in resume tab
-  const handleVerifySelectedEmail = async () => {
+  const handleVerifySelectedEmail = () => {
     const selected = resumeEmailList.filter(item => item.checked);
-    if (selected.length === 0) {
-        alert('Please select an email to verify.');
-        return;
-    }
-    
-    // Updated Logic: Only allow 1 check at a time
-    if (selected.length > 1) {
-        alert('Please verify one email at a time.');
-        return;
-    }
-    
-    const emailToVerify = selected[0].value;
+    if (selected.length === 0) { alert('Please select an email to verify.'); return; }
+    if (selected.length > 1) { alert('Please verify one email at a time.'); return; }
+    if (tokensLeft < 2) { alert('Insufficient tokens. You need at least 2 tokens to verify an email.'); return; }
+    setPendingVerifyEmail(selected[0].value);
+    setTokenConfirmOpen(true);
+  };
+
+  const handleConfirmVerify = async () => {
+    setTokenConfirmOpen(false);
+    const emailToVerify = pendingVerifyEmail;
+    setPendingVerifyEmail(null);
     setVerifyingEmail(true);
     setVerifyModalEmail(emailToVerify);
     setVerifyModalData(null);
-
     try {
       const res = await fetch('http://localhost:4000/verify-email-details', {
         method: 'POST',
@@ -4662,7 +4695,24 @@ export default function App() {
         email={verifyModalEmail}
         onClose={() => setVerifyModalData(null)}
       />
-      
+
+      {tokenConfirmOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10002 }}
+             onClick={() => setTokenConfirmOpen(false)}>
+          <div className="app-card" style={{ width: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: 12, color: 'var(--azure-dragon)', fontSize: 16 }}>Confirm Verified Selection</h3>
+            <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 24, lineHeight: 1.6 }}>
+              Are you sure you want to proceed?&nbsp;
+              <strong>2 tokens will be deducted</strong> from your account for this verified selection.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setTokenConfirmOpen(false)} className="btn-secondary" style={{ padding: '8px 20px', fontSize: 13 }}>Cancel</button>
+              <button onClick={handleConfirmVerify} className="btn-primary" style={{ padding: '8px 20px', fontSize: 13 }}>Continue</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <StatusManagerModal
         isOpen={statusModalOpen}
         onClose={() => setStatusModalOpen(false)}
