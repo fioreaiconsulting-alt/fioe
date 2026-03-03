@@ -70,7 +70,119 @@ app.get('/LookerDashboard', dashboardRateLimit, (req, res) => {
   res.sendFile(lookerDashboardFile);
 });
 
-// Update CORS to allow credentials (cookies)
+// ── Per-user rate limiter ─────────────────────────────────────────────────────
+// Reads per-user overrides from rate_limits.json (same directory as this file).
+// Shared with webbridge.py — both servers read the same file.
+const RATE_LIMITS_PATH = path.join(__dirname, 'rate_limits.json');
+const NO_LIMIT = 999999; // sentinel: effectively no limit when feature has no config entry
+let _rateLimitsCache = null;
+let _rateLimitsCacheTime = 0;
+const RATE_LIMITS_CACHE_MS = 10000; // re-read at most every 10 s
+
+function loadRateLimits() {
+  const now = Date.now();
+  if (_rateLimitsCache && now - _rateLimitsCacheTime < RATE_LIMITS_CACHE_MS) {
+    return _rateLimitsCache;
+  }
+  try {
+    const raw = fs.readFileSync(RATE_LIMITS_PATH, 'utf8');
+    _rateLimitsCache = JSON.parse(raw);
+    _rateLimitsCacheTime = now;
+  } catch (_) {
+    _rateLimitsCache = { defaults: {}, users: {} };
+  }
+  return _rateLimitsCache;
+}
+
+function saveRateLimits(config) {
+  const tmp = RATE_LIMITS_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf8');
+  fs.renameSync(tmp, RATE_LIMITS_PATH);
+  _rateLimitsCache = config;
+  _rateLimitsCacheTime = Date.now();
+}
+
+// Per-(username, feature) sliding-window state
+const _userRateState = new Map(); // key: "username::feature" -> [ timestamp, ... ]
+
+function isUserAllowed(username, feature) {
+  if (!username) return true;
+  const config = loadRateLimits();
+  const userLimits = (config.users || {})[username] || {};
+  const defaultLimits = config.defaults || {};
+  const limitCfg = userLimits[feature] || defaultLimits[feature];
+  if (!limitCfg) return true;
+  const maxReq = parseInt(limitCfg.requests, 10) || NO_LIMIT;
+  const window  = (parseInt(limitCfg.window_seconds, 10) || 60) * 1000;
+  const now = Date.now();
+  const key = `${username}::${feature}`;
+  let history = (_userRateState.get(key) || []).filter(t => now - t < window);
+  if (history.length >= maxReq) {
+    _userRateState.set(key, history);
+    return false;
+  }
+  history.push(now);
+  _userRateState.set(key, history);
+  return true;
+}
+
+/** Express middleware factory for per-user rate limiting. */
+function userRateLimit(feature) {
+  return (req, res, next) => {
+    const username = (req.cookies && req.cookies.username) || '';
+    if (username && !isUserAllowed(username.trim(), feature)) {
+      return res.status(429).json({ error: `Rate limit exceeded for '${feature}'` });
+    }
+    next();
+  };
+}
+
+// ── Admin: require admin role ─────────────────────────────────────────────────
+async function requireAdmin(req, res, next) {
+  const username = (req.cookies && req.cookies.username) || '';
+  if (!username) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const r = await pool.query('SELECT role_tag FROM login WHERE username = $1 LIMIT 1', [username]);
+    if (!r.rows.length || (r.rows[0].role_tag || '').toLowerCase() !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  } catch (err) {
+    res.status(500).json({ error: 'Auth check failed: ' + err.message });
+  }
+}
+
+// ── Admin: rate-limits CRUD ───────────────────────────────────────────────────
+app.get('/admin/rate-limits', dashboardRateLimit, requireAdmin, async (req, res) => {
+  const config = loadRateLimits();
+  let users = [];
+  try {
+    const r = await pool.query('SELECT username, userid::text, fullname, role_tag FROM login ORDER BY username');
+    users = r.rows.map(u => ({
+      username: u.username,
+      userid:   String(u.userid || ''),
+      fullname: u.fullname || '',
+      role_tag: u.role_tag || '',
+    }));
+  } catch (_) {}
+  res.json({ config, users });
+});
+
+app.post('/admin/rate-limits', dashboardRateLimit, requireAdmin, (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object') return res.status(400).json({ error: 'JSON object required' });
+  const { defaults, users } = body;
+  if (!defaults || typeof defaults !== 'object' || !users || typeof users !== 'object') {
+    return res.status(400).json({ error: "'defaults' and 'users' keys required" });
+  }
+  try {
+    saveRateLimits({ defaults, users });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const allowedOrigins = [
   'http://localhost:3000', 'http://127.0.0.1:3000',
   'http://localhost:8000', 'http://127.0.0.1:8000',
@@ -709,7 +821,7 @@ app.use(requireCsrfHeader);
 
 // ========================= AUTH ROUTES ========================= 
 
-app.post('/login', async (req, res) => {
+app.post('/login', userRateLimit('login'), async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ ok: false, error: "Missing credentials" });
@@ -1080,7 +1192,7 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
 
 // GET /candidates: return process rows but include candidate-style fallback keys
 // UPDATED: Filter by userid to ensure user only sees their own records
-app.get('/candidates', requireLogin, async (req, res) => {
+app.get('/candidates', requireLogin, userRateLimit('candidates'), async (req, res) => {
   try {
     // Always restrict to the authenticated user's records
     const result = await pool.query('SELECT * FROM "process" WHERE userid = $1 ORDER BY id DESC', [String(req.user.id)]);
@@ -1299,7 +1411,7 @@ app.delete('/candidates/:id', requireLogin, async (req, res) => {
   }
 });
 
-app.post('/candidates/bulk-delete', requireLogin, async (req, res) => {
+app.post('/candidates/bulk-delete', requireLogin, userRateLimit('bulk_delete'), async (req, res) => {
   const { ids } = req.body;
   console.log('[API] bulk-delete received ids:', ids);
 
