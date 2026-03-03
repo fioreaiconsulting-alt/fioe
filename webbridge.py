@@ -40,6 +40,12 @@ import hashlib
 import heapq
 import difflib
 from flask import Flask, request, send_from_directory, jsonify, abort, Response, stream_with_context
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _LIMITER_AVAILABLE = True
+except ImportError:
+    _LIMITER_AVAILABLE = False
 
 # Import sector and product mappings from separate configuration file
 from sector_mappings import (
@@ -57,8 +63,10 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 # Set a secret key for session security (shared with data_sorter if integrated)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-in-production-webbridge")
 if app.secret_key == "change-me-in-production-webbridge":
-    logging.getLogger("AutoSourcingServer").warning(
-        "Using default FLASK_SECRET_KEY. Set FLASK_SECRET_KEY in the environment to a strong random value.")
+    raise RuntimeError(
+        "FLASK_SECRET_KEY must be set to a strong secret value. "
+        "Copy .env.example to .env and set FLASK_SECRET_KEY to a long random string."
+    )
 
 # Session cookie security flags
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -69,6 +77,25 @@ app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
 # Single-file endpoints enforce their own 6 MB per-file check below.
 app.config['MAX_CONTENT_LENGTH'] = 80 * 1024 * 1024  # 80 MB
 _SINGLE_FILE_MAX = 6 * 1024 * 1024  # 6 MB per-file limit for single uploads
+
+# Rate limiting (requires flask-limiter: pip install flask-limiter)
+if _LIMITER_AVAILABLE:
+    _limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per hour", "30 per minute"],
+        storage_uri="memory://",
+    )
+    def _rate(limit_string):
+        """Return a flask_limiter limit decorator."""
+        return _limiter.limit(limit_string)
+else:
+    import functools
+    def _rate(limit_string):
+        """No-op when flask-limiter is not installed."""
+        def decorator(f):
+            return f
+        return decorator
 
 
 def _is_pdf_bytes(b: bytes) -> bool:
@@ -110,6 +137,11 @@ def _apply_cors_headers(response):
 
 @app.after_request
 def _apply_cors(response):
+    if os.getenv("FORCE_HTTPS", "0") == "1":
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains"
+        )
     return _apply_cors_headers(response)
 
 @app.route('/', methods=['OPTIONS'])
@@ -837,11 +869,9 @@ def translate_company_endpoint():
                     "status":"translated" if out.lower()!=text.lower() else "unchanged"})
 
 @app.post("/gemini/analyze_jd")
+@_rate("10 per minute")
 def gemini_analyze_jd():
     """
-    Accepts JSON body: { "username": "...", "text": "...", "country": "..." }
-    If username provided but text empty, server may fetch stored JD from DB (optional).
-    
     Implements workflow:
     1. Identify companies mentioned in JD
     2. Determine sectors from identified companies (using sectors.json)
@@ -1993,6 +2023,7 @@ except NameError:
         return path
 
 @app.post("/gemini/company_job_extract")
+@_rate("10 per minute")
 def gemini_company_job_extract():
     data = request.get_json(force=True, silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -2025,6 +2056,7 @@ def gemini_company_job_extract():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/gemini/rebate_validate")
+@_rate("10 per minute")
 def gemini_rebate_validate():
     data = request.get_json(force=True, silent=True) or {}
     job_title = (data.get("job_title") or data.get("jobTitle") or "").strip()
@@ -2164,6 +2196,7 @@ def gemini_rebate_validate():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/gemini/experience_format")
+@_rate("10 per minute")
 def gemini_experience_format():
     data = request.get_json(force=True, silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -2271,6 +2304,7 @@ def _ensure_rating_metadata_columns(cur, conn):
 
 
 @app.post("/gemini/assess_profile")
+@_rate("10 per minute")
 def gemini_assess_profile():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurl = (data.get("linkedinurl") or "").strip()
@@ -3130,6 +3164,7 @@ Return ONLY the JSON object, no other text."""
 
 # ... [Login/Register/Auth functions kept as is] ...
 @app.post("/login")
+@_rate("10 per minute")
 @_csrf_required
 def login_account():
     data = request.get_json(force=True, silent=True) or {}
@@ -3185,6 +3220,7 @@ def login_account():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/register")
+@_rate("10 per minute")
 @_csrf_required
 def register_account():
     data = request.get_json(force=True, silent=True) or {}
@@ -3626,6 +3662,7 @@ def get_user_jskillset():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/vskillset/infer")
+@_rate("5 per minute; 100 per day")
 def vskillset_infer():
     """
     POST /vskillset/infer
@@ -5206,6 +5243,7 @@ def _gemini_multi_sector(selected, user_job_title, user_company, languages=None)
     return None
 
 @app.post("/start_job")
+@_rate("5 per minute; 50 per day")
 def start_job():
     global _role_tag_session_column_ensured
     data=request.get_json(force=True, silent=True) or {}
@@ -6521,6 +6559,7 @@ def process_geography():
             return jsonify({"error": "Internal error"}), 500
 
 @app.post("/process/upload_cv")
+@_rate("20 per minute")
 def process_upload_cv():
     """
     Uploads a PDF CV file to the 'process' table, storing it in the 'cv' bytea column.
@@ -6707,6 +6746,7 @@ def process_upload_cv():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/process/upload_multiple_cvs")
+@_rate("10 per minute")
 def process_upload_multiple_cvs():
     """
     Accept multiple CV files from a browser upload (FormData 'files').
@@ -9048,6 +9088,7 @@ Return ONLY the JSON object, no other text."""
         return None
 
 @app.post("/process/bulk_assess")
+@_rate("5 per minute; 50 per day")
 def process_bulk_assess():
     """
     Accepts JSON payload like:
@@ -9859,6 +9900,7 @@ def user_upload_jd():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/gemini/analyze_jd")
+@_rate("10 per minute")
 def gemini_jd_analyze():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -9924,6 +9966,7 @@ def user_update_skills():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/process/scan_and_upload_cvs")
+@_rate("10 per minute")
 def process_scan_and_upload_cvs():
     data = request.get_json(force=True, silent=True) or {}
     directory_path = (data.get("directory_path") or "").strip()

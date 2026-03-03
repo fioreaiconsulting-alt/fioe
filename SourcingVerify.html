@@ -6581,6 +6581,13 @@ if (bulkAssessmentBtn && bulkDirInput) {
             return;
         }
 
+        const BULK_MAX_BYTES = 80 * 1024 * 1024; // 80 MB
+        const totalBytes = validFiles.reduce((sum, f) => sum + f.size, 0);
+        if (totalBytes > BULK_MAX_BYTES) {
+            alert(`The selected files total ${(totalBytes / (1024 * 1024)).toFixed(1)} MB, which exceeds the 80 MB bulk upload limit.\n\nPlease select fewer files or smaller files and try again.`);
+            return;
+        }
+
         const confirmUpload = confirm(`Found ${validFiles.length} valid CV files.\n\nThis will upload files and automatically run AI assessment on all candidates. Continue?`);
         if (!confirmUpload) return;
 
