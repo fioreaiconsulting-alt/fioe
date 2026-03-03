@@ -216,7 +216,7 @@ def _require_admin(f):
                 dbname=os.getenv("PGDATABASE", "candidate_db"),
             )
             cur = conn.cursor()
-            cur.execute("SELECT role_tag FROM login WHERE username=%s LIMIT 1", (username,))
+            cur.execute("SELECT useraccess FROM login WHERE username=%s LIMIT 1", (username,))
             row = cur.fetchone()
             cur.close(); conn.close()
             if not row or (row[0] or "").strip().lower() != "admin":
@@ -257,9 +257,9 @@ def admin_get_rate_limits():
             dbname=os.getenv("PGDATABASE", "candidate_db"),
         )
         cur = conn.cursor()
-        cur.execute("SELECT username, userid, fullname, role_tag FROM login ORDER BY username")
+        cur.execute("SELECT username, userid, fullname, useraccess FROM login ORDER BY username")
         users_list = [
-            {"username": r[0], "userid": str(r[1] or ""), "fullname": r[2] or "", "role_tag": r[3] or ""}
+            {"username": r[0], "userid": str(r[1] or ""), "fullname": r[2] or "", "useraccess": r[3] or ""}
             for r in cur.fetchall()
         ]
         cur.close(); conn.close()
