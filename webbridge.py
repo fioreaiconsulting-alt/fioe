@@ -65,8 +65,10 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
 
-# Limit upload size to 6 MB (applies to all Flask upload endpoints)
-app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024  # 6 MB
+# Global upload limit raised to 80 MB to support bulk CV uploads.
+# Single-file endpoints enforce their own 6 MB per-file check below.
+app.config['MAX_CONTENT_LENGTH'] = 80 * 1024 * 1024  # 80 MB
+_SINGLE_FILE_MAX = 6 * 1024 * 1024  # 6 MB per-file limit for single uploads
 
 
 def _is_pdf_bytes(b: bytes) -> bool:
@@ -6539,8 +6541,14 @@ def process_upload_cv():
             linkedinurl = request.form.get('linkedinurl', '').strip()
             if not linkedinurl:
                  return jsonify({"error": "linkedinurl required"}), 400
-            
+
+            if (request.content_length or 0) > _SINGLE_FILE_MAX:
+                return jsonify({"error": "File too large (max 6 MB)"}), 413
+
             file_bytes = file.read()
+
+            if len(file_bytes) > _SINGLE_FILE_MAX:
+                return jsonify({"error": "File too large (max 6 MB)"}), 413
 
             if not _is_pdf_bytes(file_bytes):
                 return jsonify({"error": "Uploaded file is not a valid PDF"}), 400
@@ -9782,7 +9790,11 @@ def user_upload_jd():
         file = request.files['file']
         if file.filename == '': return jsonify({"error": "No selected file"}), 400
         filename = file.filename.lower()
+        if (request.content_length or 0) > _SINGLE_FILE_MAX:
+            return jsonify({"error": "File too large (max 6 MB)"}), 413
         file_bytes = file.read()
+        if len(file_bytes) > _SINGLE_FILE_MAX:
+            return jsonify({"error": "File too large (max 6 MB)"}), 413
         extracted_text = ""
         if filename.endswith('.pdf'):
             if not _is_pdf_bytes(file_bytes):
