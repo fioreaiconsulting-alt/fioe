@@ -220,6 +220,18 @@ def _require_admin(f):
         return f(*args, **kwargs)
     return wrapper
 
+def _csrf_required(f):
+    """Reject state-changing requests that don't carry X-Requested-With or X-CSRF-Token.
+    This is a lightweight CSRF mitigation for XHR/fetch clients; browsers cannot set
+    these custom headers in cross-site form submissions, so the check is effective."""
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            if not (request.headers.get("X-Requested-With") or request.headers.get("X-CSRF-Token")):
+                return jsonify({"error": "Missing required header (X-Requested-With or X-CSRF-Token)"}), 403
+        return f(*args, **kwargs)
+    return wrapped
+
 # ── Admin: rate-limit management API ──────────────────────────────────────────
 
 @app.get("/admin/rate-limits")
@@ -309,18 +321,6 @@ def _options(path):
     resp = app.make_response(('', 204))
     return _apply_cors_headers(resp)
 # End affected section (CORS)
-
-def _csrf_required(f):
-    """Reject state-changing requests that don't carry X-Requested-With or X-CSRF-Token.
-    This is a lightweight CSRF mitigation for XHR/fetch clients; browsers cannot set
-    these custom headers in cross-site form submissions, so the check is effective."""
-    @wraps(f)
-    def wrapped(*args, **kwargs):
-        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-            if not (request.headers.get("X-Requested-With") or request.headers.get("X-CSRF-Token")):
-                return jsonify({"error": "Missing required header (X-Requested-With or X-CSRF-Token)"}), 403
-        return f(*args, **kwargs)
-    return wrapped
 
 logging.basicConfig(level=logging.INFO, format="(%(asctime)s) | %(levelname)s | %(message)s")
 logger = logging.getLogger("AutoSourcingServer")
