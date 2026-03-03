@@ -1,3 +1,6 @@
+// Load .env for local development (requires 'dotenv' to be installed: npm install dotenv)
+try { require('dotenv').config(); } catch (_) {}
+
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
