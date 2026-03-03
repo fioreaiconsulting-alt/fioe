@@ -65,6 +65,18 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
 
+# Limit upload size to 6 MB (applies to all Flask upload endpoints)
+app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024  # 6 MB
+
+
+def _is_pdf_bytes(b: bytes) -> bool:
+    """Return True only if b starts with the PDF magic bytes (%PDF-)."""
+    return isinstance(b, (bytes, bytearray)) and len(b) >= 5 and b[:5] == b'%PDF-'
+
+
+# Semaphore to cap concurrent background CV analysis threads (prevent CPU/memory exhaustion)
+_CV_ANALYZE_SEMAPHORE = threading.Semaphore(4)
+
 # Allowlist for credentialed CORS. Override with ALLOWED_ORIGINS env var (comma-separated).
 _ALLOWED_ORIGINS = {
     o.strip().lower()
@@ -4517,6 +4529,25 @@ def google_cse_search_page(query: str, api_key: str, cx: str, num: int, start_in
         logger.warning(f"[CSE] page fetch failed: {e}")
         return []
 
+def _is_private_host(url: str) -> bool:
+    """Return True if the URL resolves to a private/loopback/reserved IP — used to block SSRF."""
+    import socket
+    import ipaddress
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            return True
+        for addrinfo in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(addrinfo[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_reserved
+                    or ip.is_link_local or ip.is_multicast):
+                return True
+        return False
+    except Exception:
+        return True
+
+
 def get_linkedin_profile_picture(linkedin_url: str):
     """
     Retrieve LinkedIn profile picture URL using scraping and Google Custom Search Image API.
@@ -4644,6 +4675,10 @@ def get_linkedin_profile_picture(linkedin_url: str):
     # Final validation: ensure URL is not empty or broken
     if profile_pic_url:
         try:
+            # SECURITY: reject URLs that resolve to private/loopback addresses (SSRF)
+            if _is_private_host(profile_pic_url):
+                logger.warning(f"[Profile Pic] SSRF: blocked private-host URL: {profile_pic_url}")
+                return None
             # Quick HEAD request to verify image exists
             head_response = requests.head(profile_pic_url, timeout=5)
             if head_response.status_code == 200:
@@ -4670,6 +4705,10 @@ def fetch_image_bytes_from_url(image_url: str, max_size_mb=5):
         return None
     
     try:
+        # SECURITY: block SSRF — reject URLs that resolve to private/loopback addresses
+        if _is_private_host(image_url):
+            logger.warning(f"[Fetch Image Bytes] SSRF: blocked private-host URL: {image_url}")
+            return None
         response = requests.get(image_url, timeout=15, stream=True)
         response.raise_for_status()
         
@@ -6503,6 +6542,9 @@ def process_upload_cv():
             
             file_bytes = file.read()
 
+            if not _is_pdf_bytes(file_bytes):
+                return jsonify({"error": "Uploaded file is not a valid PDF"}), 400
+
             # Validate that the candidate name appears in the PDF text
             if candidate_name:
                 try:
@@ -6792,6 +6834,10 @@ def process_upload_multiple_cvs():
             try:
                 if matched_entry:
                     file_bytes = f.read()
+                    fname_lower = (f.filename or "").lower()
+                    if fname_lower.endswith('.pdf') and not _is_pdf_bytes(file_bytes):
+                        errors.append(f"{f.filename}: not a valid PDF (magic bytes mismatch)")
+                        continue
                     binary_cv = psycopg2.Binary(file_bytes)
                     m_link = matched_entry['linkedinurl']
                     sourcing_id = matched_entry['id']
@@ -8418,6 +8464,7 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
     - Employment history strictly follows format: "Job Title, Company, StartYear to EndYear"
       OR "Job Title, Company, StartYear to present" (for current positions)
     """
+    _CV_ANALYZE_SEMAPHORE.acquire()
     try:
         obj = _analyze_cv_bytes_sync(pdf_bytes)
         if not obj:
@@ -8696,6 +8743,8 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         cur.close(); conn.close()
     except Exception as e:
         logger.error(f"Error in CV analysis background task: {e}")
+    finally:
+        _CV_ANALYZE_SEMAPHORE.release()
 
 @app.post("/process/parse_cv_and_update")
 def process_parse_cv_and_update():
@@ -9736,6 +9785,8 @@ def user_upload_jd():
         file_bytes = file.read()
         extracted_text = ""
         if filename.endswith('.pdf'):
+            if not _is_pdf_bytes(file_bytes):
+                return jsonify({"error": "Uploaded file is not a valid PDF"}), 400
             import io
             try:
                 from pypdf import PdfReader
@@ -9899,6 +9950,9 @@ def process_scan_and_upload_cvs():
                 full_path = os.path.join(directory_path, fname)
                 try:
                     with open(full_path, "rb") as f: file_bytes = f.read()
+                    if not _is_pdf_bytes(file_bytes):
+                        errors.append(f"{fname}: not a valid PDF (magic bytes mismatch)")
+                        continue
                     binary_cv = psycopg2.Binary(file_bytes)
                     if cid: cur.execute("UPDATE process SET cv = %s WHERE id = %s", (binary_cv, cid))
                     else: cur.execute("UPDATE process SET cv = %s WHERE linkedinurl = %s", (binary_cv, clink))
