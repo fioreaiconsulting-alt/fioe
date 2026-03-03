@@ -41,12 +41,33 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 // NEW: Serve images from 'image' directory
 app.use('/image', express.static(path.join(__dirname, 'image')));
 
-// Serve LookerDashboard.html directly so it is same-origin as the API (avoids cross-origin cookie issues)
-app.get('/LookerDashboard.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'LookerDashboard.html'));
+// Serve LookerDashboard.html directly so it is same-origin as the API (avoids cross-origin cookie issues).
+// When backend and frontend live in separate directories, set LOOKER_DASHBOARD_PATH in .env to the
+// path of LookerDashboard.html relative to this file (e.g. ../frontend/src/LookerDashboard.html).
+const lookerDashboardFile = process.env.LOOKER_DASHBOARD_PATH
+  ? path.resolve(__dirname, process.env.LOOKER_DASHBOARD_PATH)
+  : path.join(__dirname, 'LookerDashboard.html');
+
+// Simple in-memory rate-limiter: max 30 requests per IP per minute for the static-file routes.
+const _dashboardHits = new Map();
+function dashboardRateLimit(req, res, next) {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const entry = _dashboardHits.get(ip) || { count: 0, resetAt: now + 60000 };
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 60000; }
+  entry.count++;
+  _dashboardHits.set(ip, entry);
+  if (entry.count > 30) {
+    return res.status(429).json({ error: 'Too Many Requests' });
+  }
+  next();
+}
+
+app.get('/LookerDashboard.html', dashboardRateLimit, (req, res) => {
+  res.sendFile(lookerDashboardFile);
 });
-app.get('/LookerDashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'LookerDashboard.html'));
+app.get('/LookerDashboard', dashboardRateLimit, (req, res) => {
+  res.sendFile(lookerDashboardFile);
 });
 
 // Update CORS to allow credentials (cookies)
