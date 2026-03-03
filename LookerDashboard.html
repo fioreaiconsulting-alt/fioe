@@ -8,8 +8,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;500;700;900&display=swap" rel="stylesheet">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Socket.IO Client -->
-    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <!-- Leaflet for Map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -1171,8 +1169,15 @@
 <script>
     // ================= CONFIGURATION =================
     const API_BASE = 'http://localhost:4000'; // Match server.js port
+
+    // Ensure same-origin so session cookies are always sent.
+    // If opened from file:// or a different host/port, redirect once to the server-served URL.
+    if (window.location.origin !== API_BASE) {
+        window.location.replace(API_BASE + '/LookerDashboard.html');
+    }
+
     let currentUser = null;
-    let socket = null;
+    let eventSource = null;
     let isPorting = false; // Flag to track porting process
     
     // Updated: replaced 'jskill' with 'jskillset'
@@ -1290,17 +1295,21 @@
     async function handleLogout() {
         await fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' });
         currentUser = null;
-        if(socket) socket.disconnect();
+        if(eventSource) eventSource.close();
         showLogin();
     }
 
     function initSocket() {
-        if(typeof io !== 'undefined') {
-            socket = io(API_BASE);
-            socket.on('connect', () => console.log('Connected to realtime updates'));
-            socket.on('candidates_changed', () => refreshDashboard());
-            socket.on('candidate_updated', () => refreshDashboard()); 
-        }
+        if(eventSource) eventSource.close();
+        eventSource = new EventSource(`${API_BASE}/api/events`, { withCredentials: true });
+        eventSource.addEventListener('connected', () => console.log('Connected to realtime updates'));
+        eventSource.addEventListener('candidates_changed', () => refreshDashboard());
+        eventSource.addEventListener('candidate_updated', () => refreshDashboard());
+        eventSource.onerror = () => {
+            eventSource.close();
+            // Reconnect after 5 seconds
+            setTimeout(initSocket, 5000);
+        };
     }
 
     // ================= INITIALIZATION =================

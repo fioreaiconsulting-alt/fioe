@@ -1,3 +1,6 @@
+// Load .env for local development (requires 'dotenv' to be installed: npm install dotenv)
+try { require('dotenv').config(); } catch (_) {}
+
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -38,19 +41,52 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 // NEW: Serve images from 'image' directory
 app.use('/image', express.static(path.join(__dirname, 'image')));
 
+// Serve LookerDashboard.html directly so it is same-origin as the API (avoids cross-origin cookie issues).
+// When backend and frontend live in separate directories, set LOOKER_DASHBOARD_PATH in .env to the
+// path of LookerDashboard.html relative to this file (e.g. ../frontend/src/LookerDashboard.html).
+const lookerDashboardFile = process.env.LOOKER_DASHBOARD_PATH
+  ? path.resolve(__dirname, process.env.LOOKER_DASHBOARD_PATH)
+  : path.join(__dirname, 'LookerDashboard.html');
+
+// Simple in-memory rate-limiter: max 30 requests per IP per minute for the static-file routes.
+const _dashboardHits = new Map();
+function dashboardRateLimit(req, res, next) {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const entry = _dashboardHits.get(ip) || { count: 0, resetAt: now + 60000 };
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 60000; }
+  entry.count++;
+  _dashboardHits.set(ip, entry);
+  if (entry.count > 30) {
+    return res.status(429).json({ error: 'Too Many Requests' });
+  }
+  next();
+}
+
+app.get('/LookerDashboard.html', dashboardRateLimit, (req, res) => {
+  res.sendFile(lookerDashboardFile);
+});
+app.get('/LookerDashboard', dashboardRateLimit, (req, res) => {
+  res.sendFile(lookerDashboardFile);
+});
+
 // Update CORS to allow credentials (cookies)
-const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'];
+const allowedOrigins = [
+  'http://localhost:3000', 'http://127.0.0.1:3000',
+  'http://localhost:8000', 'http://127.0.0.1:8000',
+  'http://localhost:8091', 'http://127.0.0.1:8091',
+];
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
 }));
 
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'candidate_db',
-  password: 'orlha',
-  port: 5432,
+  user: process.env.PGUSER || 'postgres',
+  host: process.env.PGHOST || 'localhost',
+  database: process.env.PGDATABASE || 'candidate_db',
+  password: process.env.PGPASSWORD,
+  port: parseInt(process.env.PGPORT || '5432', 10),
 });
 
 const mappingPath = path.resolve(__dirname, 'skillset-mapping.json');
