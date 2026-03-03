@@ -41,8 +41,20 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 // NEW: Serve images from 'image' directory
 app.use('/image', express.static(path.join(__dirname, 'image')));
 
+// Serve LookerDashboard.html directly so it is same-origin as the API (avoids cross-origin cookie issues)
+app.get('/LookerDashboard.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'LookerDashboard.html'));
+});
+app.get('/LookerDashboard', (req, res) => {
+  res.sendFile(path.join(__dirname, 'LookerDashboard.html'));
+});
+
 // Update CORS to allow credentials (cookies)
-const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8000', 'http://127.0.0.1:8000'];
+const allowedOrigins = [
+  'http://localhost:3000', 'http://127.0.0.1:3000',
+  'http://localhost:8000', 'http://127.0.0.1:8000',
+  'http://localhost:8091', 'http://127.0.0.1:8091',
+];
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
