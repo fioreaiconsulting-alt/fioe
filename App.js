@@ -79,7 +79,7 @@ function LoginScreen({ onLoginSuccess }) {
     try {
       const res = await fetch('http://localhost:4000/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ username, password }),
         credentials: 'include' // Important for cookies
       });
@@ -396,7 +396,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
       // Pass 'from' context as well
       const res = await fetch('http://localhost:4000/draft-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ 
           prompt: aiPrompt, 
           context: { candidateName: candidateName || 'Candidate', myEmail: from } 
@@ -440,7 +440,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
       const endISO = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
       const res = await fetch('http://localhost:4000/calendar/freebusy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ startISO, endISO, durationMinutes: 30 }),
         credentials: 'include'
       });
@@ -483,7 +483,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
       };
       const res = await fetch('http://localhost:4000/calendar/create-event', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify(payload),
         credentials: 'include'
       });
@@ -581,7 +581,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
           try {
             const res = await fetch('http://localhost:4000/send-email', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
               body: JSON.stringify(payload),
               credentials: 'include'
             });
@@ -614,7 +614,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
         if (attachments.length > 0) payload.attachments = attachments;
         const res = await fetch('http://localhost:4000/send-email', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
           body: JSON.stringify(payload),
           credentials: 'include'
         });
@@ -1408,7 +1408,7 @@ function CandidatesTable({
 
       const res = await fetch('http://localhost:4000/verify-data', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ rows }),
         credentials: 'include'
       });
@@ -2886,7 +2886,7 @@ function CandidateUpload({ onUpload }) {
           try{
             const res=await fetch('http://localhost:4000/candidates/bulk',{
               method:'POST',
-              headers:{'Content-Type':'application/json'},
+              headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
               body: JSON.stringify({ candidates }),
               credentials:'include' // Important for cookie
             });
@@ -2909,7 +2909,7 @@ function CandidateUpload({ onUpload }) {
         const candidates=json.filter(r=> r && r.id).map(mapRow);
         fetch('http://localhost:4000/candidates/bulk',{
           method:'POST',
-          headers:{'Content-Type':'application/json'},
+          headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
           body: JSON.stringify({ candidates }),
           credentials:'include'
         })
@@ -3172,7 +3172,7 @@ export default function App() {
   }, []);
 
   const handleLogout = () => {
-    fetch('http://localhost:4000/logout', { method: 'POST', credentials: 'include' })
+    fetch('http://localhost:4000/logout', { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       .then(() => setUser(null));
   };
 
@@ -3281,7 +3281,7 @@ export default function App() {
           // existing row -> update
           const res = await fetch(`http://localhost:4000/candidates/${numId}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
             body: JSON.stringify(partialData),
             credentials: 'include'
           });
@@ -3296,7 +3296,7 @@ export default function App() {
           // no numeric id -> create new process row
           const res = await fetch(`http://localhost:4000/candidates`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
             body: JSON.stringify(partialData),
             credentials: 'include'
           });
@@ -3484,7 +3484,7 @@ export default function App() {
     try{
       const res=await fetch('http://localhost:4000/candidates/bulk-delete',{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
         body: JSON.stringify({ ids:numericIds }),
         credentials:'include'
       });
@@ -3511,7 +3511,7 @@ export default function App() {
       if (isExisting) {
         const res=await fetch(`http://localhost:4000/candidates/${numId}`,{
           method:'PUT',
-          headers:{'Content-Type':'application/json'},
+          headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
           body: JSON.stringify(data),
           credentials:'include'
         });
@@ -3523,7 +3523,7 @@ export default function App() {
         // Create new
         const res=await fetch('http://localhost:4000/candidates',{
           method:'POST',
-          headers:{'Content-Type':'application/json'},
+          headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
           body: JSON.stringify(data),
           credentials:'include'
         });
@@ -3581,7 +3581,7 @@ export default function App() {
     try {
       const res = await fetch('http://localhost:4000/generate-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ name, company: org, country }),
         credentials: 'include'
       });
@@ -3640,7 +3640,7 @@ export default function App() {
     try {
       const res = await fetch('http://localhost:4000/verify-email-details', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ email: emailToVerify }),
         credentials: 'include'
       });
@@ -3648,7 +3648,7 @@ export default function App() {
       const data = await res.json();
       setVerifyModalData(data);
       // Deduct 2 tokens on successful verification
-      fetch('http://localhost:4000/deduct-tokens', { method: 'POST', credentials: 'include' })
+      fetch('http://localhost:4000/deduct-tokens', { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
         .then(r => r.json())
         .then(t => {
           if (t.tokensLeft !== undefined) setTokensLeft(t.tokensLeft);
@@ -3669,7 +3669,7 @@ export default function App() {
       try {
           const res = await fetch(`http://localhost:4000/candidates/${resumeCandidate.id}/calculate-unmatched`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
               credentials: 'include'
           });
           if (!res.ok) {
