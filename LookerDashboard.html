@@ -1169,6 +1169,13 @@
 <script>
     // ================= CONFIGURATION =================
     const API_BASE = 'http://localhost:4000'; // Match server.js port
+
+    // Ensure same-origin so session cookies are always sent.
+    // If opened from file:// or a different host/port, redirect once to the server-served URL.
+    if (window.location.origin !== API_BASE) {
+        window.location.replace(API_BASE + '/LookerDashboard.html');
+    }
+
     let currentUser = null;
     let eventSource = null;
     let isPorting = false; // Flag to track porting process
