@@ -2385,7 +2385,7 @@ function syncMetricTokens(backendToken){
     const _roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
     fetch(TOKEN_UPDATE_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       credentials: 'same-origin',
       body: JSON.stringify({ userid: window.__SV_ACTIVE_USERID || '', username: window.__SV_ACTIVE_USERNAME || '', token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag })
     }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
@@ -3973,7 +3973,7 @@ async function triggerLevel1Assessment(tr, anchor) {
                             if(reason) {
                                 fetch(APPEAL_SAVE_API, {
                                     method: 'POST',
-                                    headers: {'Content-Type': 'application/json'},
+                                    headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
                                     body: JSON.stringify({ linkedinurl: anchor, field: 'appeal', value: reason })
                                 }).then(r => r.json()).then(d => {
                                     if (d.updated) setStatus("Appeal saved.", "success");
@@ -4347,7 +4347,7 @@ async function sendUpdate(linkedinurl, field, value, td) {
   const payload = { linkedinurl, field, value };
   if(td) td.style.opacity = .55;
   try {
-    const res = await fetch(API_UPDATE, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const res = await fetch(API_UPDATE, { method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'}, body:JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Update failed');
     if(td) clearDirty(td);
@@ -4938,7 +4938,7 @@ function renderTable(){
                     if (justification) {
                         fetch(APPEAL_SAVE_API, {
                             method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
+                            headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
                             body: JSON.stringify({ linkedinurl: anchor, field: 'appeal', value: justification })
                         }).then(r => r.json()).then(d => {
                             if (d.updated) { alert("Appeal saved successfully."); }
@@ -5565,7 +5565,7 @@ function renderTable(){
                           await fetch('/process/update', {
                               method: 'POST',
                               credentials: 'same-origin',
-                              headers: {'Content-Type': 'application/json'},
+                              headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
                               body: JSON.stringify({ linkedinurl: anchorLookup, tenure: tenureToSend })
                           }).catch(()=>{});
                       }
@@ -6126,7 +6126,7 @@ async function deleteSelected() {
   try {
     const res = await fetch(API_DELETE, {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
       body:JSON.stringify({ linkedinurls:selected })
     });
     const data = await res.json();
@@ -6169,7 +6169,7 @@ window.deleteBackendRow = async function(url) {
     if(!url) return;
     try {
         await fetch(API_DELETE, {
-            method:'POST', headers:{'Content-Type':'application/json'},
+            method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
             body:JSON.stringify({ linkedinurls:[url], include_process: true })
         });
     } catch(e) { console.error("Backend delete failed", e); throw e; }
@@ -6180,7 +6180,7 @@ window.applyTokenDelta = async function(delta) {
     if(!uid) return;
     try {
         await fetch(TOKEN_UPDATE_API, {
-            method:'POST', headers:{'Content-Type':'application/json'},
+            method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
             body:JSON.stringify({ userid: uid, delta: delta })
         });
     } catch(e) { console.error("Token update failed", e); }
@@ -6368,7 +6368,7 @@ async function exportCSV() {
     if (allUrls.length) {
       const res = await fetch(API_DELETE, {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
         body:JSON.stringify({ linkedinurls: allUrls })
       });
       const data = await res.json();
@@ -6454,7 +6454,7 @@ async function exportExcelXlsxAndPurge() {
     // Delete all sourcing rows for this user; appeal records are always protected server-side.
     const res = await fetch(API_DELETE, {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
       body:JSON.stringify({ userid: uid })
     });
     const data = await res.json();
@@ -6578,6 +6578,13 @@ if (bulkAssessmentBtn && bulkDirInput) {
         
         if (validFiles.length === 0) {
             alert('No valid PDF or DOC/DOCX files selected.');
+            return;
+        }
+
+        const BULK_MAX_BYTES = 80 * 1024 * 1024; // 80 MB
+        const totalBytes = validFiles.reduce((sum, f) => sum + f.size, 0);
+        if (totalBytes > BULK_MAX_BYTES) {
+            alert(`The selected files total ${(totalBytes / (1024 * 1024)).toFixed(1)} MB, which exceeds the 80 MB bulk upload limit.\n\nPlease select fewer files or smaller files and try again.`);
             return;
         }
 
