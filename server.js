@@ -692,7 +692,22 @@ const requireLogin = async (req, res, next) => {
   next();
 };
 
-// ========================= AUTH ROUTES =========================
+// CSRF mitigation: reject state-changing requests without X-Requested-With or X-CSRF-Token.
+// Browsers cannot set these custom headers in cross-site form submissions.
+// GET and OPTIONS requests are exempt; only POST/PUT/PATCH/DELETE are checked.
+const requireCsrfHeader = (req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    if (!req.headers['x-requested-with'] && !req.headers['x-csrf-token']) {
+      return res.status(403).json({ error: 'Missing required header (X-Requested-With or X-CSRF-Token)' });
+    }
+  }
+  next();
+};
+
+// Apply CSRF header check globally for all mutation requests
+app.use(requireCsrfHeader);
+
+// ========================= AUTH ROUTES ========================= 
 
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
@@ -718,8 +733,8 @@ app.post('/login', async (req, res) => {
     // Success
     const uid = user.id || user.userid || user.username;
     
-    // Set cookies (standard options); sameSite 'lax' ensures cookies are sent on same-site cross-port requests
-    const cookieOpts = { maxAge: 2592000000, httpOnly: false, path: '/', sameSite: 'lax' };
+    // Set cookies — httpOnly prevents JS access; Secure is enabled when running behind HTTPS (NODE_ENV=production)
+    const cookieOpts = { maxAge: 2592000000, httpOnly: true, path: '/', sameSite: 'lax', secure: process.env.NODE_ENV === 'production' };
     res.cookie('username', user.username, cookieOpts);
     res.cookie('userid', String(uid), cookieOpts);
 

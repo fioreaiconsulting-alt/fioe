@@ -31,6 +31,7 @@ import time
 import uuid
 from csv import DictWriter
 from datetime import datetime
+from functools import wraps
 import re
 import json
 import requests
@@ -39,6 +40,12 @@ import hashlib
 import heapq
 import difflib
 from flask import Flask, request, send_from_directory, jsonify, abort, Response, stream_with_context
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _LIMITER_AVAILABLE = True
+except ImportError:
+    _LIMITER_AVAILABLE = False
 
 # Import sector and product mappings from separate configuration file
 from sector_mappings import (
@@ -55,27 +62,86 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 
 # Set a secret key for session security (shared with data_sorter if integrated)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-in-production-webbridge")
+if app.secret_key == "change-me-in-production-webbridge":
+    raise RuntimeError(
+        "FLASK_SECRET_KEY must be set to a strong secret value. "
+        "Copy .env.example to .env and set FLASK_SECRET_KEY to a long random string."
+    )
+
+# Session cookie security flags
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
+
+# Global upload limit raised to 80 MB to support bulk CV uploads.
+# Single-file endpoints enforce their own 6 MB per-file check below.
+app.config['MAX_CONTENT_LENGTH'] = 80 * 1024 * 1024  # 80 MB
+_SINGLE_FILE_MAX = 6 * 1024 * 1024  # 6 MB per-file limit for single uploads
+
+# Rate limiting (requires flask-limiter: pip install flask-limiter)
+if _LIMITER_AVAILABLE:
+    _limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per hour", "30 per minute"],
+        storage_uri="memory://",
+    )
+    def _rate(limit_string):
+        """Return a flask_limiter limit decorator."""
+        return _limiter.limit(limit_string)
+else:
+    import functools
+    def _rate(limit_string):
+        """No-op when flask-limiter is not installed."""
+        def decorator(f):
+            return f
+        return decorator
+
+
+def _is_pdf_bytes(b: bytes) -> bool:
+    """Return True only if b starts with the PDF magic bytes (%PDF-)."""
+    return isinstance(b, (bytes, bytearray)) and len(b) >= 5 and b[:5] == b'%PDF-'
+
+
+# Semaphore to cap concurrent background CV analysis threads (prevent CPU/memory exhaustion)
+_CV_ANALYZE_SEMAPHORE = threading.Semaphore(4)
+
+# Allowlist for credentialed CORS. Override with ALLOWED_ORIGINS env var (comma-separated).
+_ALLOWED_ORIGINS = {
+    o.strip().lower()
+    for o in (os.getenv("ALLOWED_ORIGINS") or
+              "http://localhost:3000,http://127.0.0.1:3000,http://localhost:4000,http://127.0.0.1:4000,http://localhost:8091,http://127.0.0.1:8091").split(",")
+    if o.strip()
+}
+
+def _is_origin_allowed(origin: str) -> bool:
+    if not origin:
+        return False
+    return origin.strip().lower() in _ALLOWED_ORIGINS
 
 # Affected section: lightweight CORS support for local development
 def _apply_cors_headers(response):
     try:
-        origin = request.headers.get('Origin')
-        # Logic: Echo origin if present to support credentials, else wildcard (no credentials)
-        if origin:
+        origin = request.headers.get('Origin', '')
+        if origin and _is_origin_allowed(origin):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Vary'] = 'Origin'
         else:
             response.headers['Access-Control-Allow-Origin'] = '*'
-            # Credentials cannot be true if Origin is *
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers', 'Content-Type, Authorization')
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PATCH, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
     except Exception:
         pass
     return response
 
 @app.after_request
 def _apply_cors(response):
+    if os.getenv("FORCE_HTTPS", "0") == "1":
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains"
+        )
     return _apply_cors_headers(response)
 
 @app.route('/', methods=['OPTIONS'])
@@ -88,6 +154,18 @@ def _options(path):
     resp = app.make_response(('', 204))
     return _apply_cors_headers(resp)
 # End affected section (CORS)
+
+def _csrf_required(f):
+    """Reject state-changing requests that don't carry X-Requested-With or X-CSRF-Token.
+    This is a lightweight CSRF mitigation for XHR/fetch clients; browsers cannot set
+    these custom headers in cross-site form submissions, so the check is effective."""
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            if not (request.headers.get("X-Requested-With") or request.headers.get("X-CSRF-Token")):
+                return jsonify({"error": "Missing required header (X-Requested-With or X-CSRF-Token)"}), 403
+        return f(*args, **kwargs)
+    return wrapped
 
 logging.basicConfig(level=logging.INFO, format="(%(asctime)s) | %(levelname)s | %(message)s")
 logger = logging.getLogger("AutoSourcingServer")
@@ -791,11 +869,9 @@ def translate_company_endpoint():
                     "status":"translated" if out.lower()!=text.lower() else "unchanged"})
 
 @app.post("/gemini/analyze_jd")
+@_rate("10 per minute")
 def gemini_analyze_jd():
     """
-    Accepts JSON body: { "username": "...", "text": "...", "country": "..." }
-    If username provided but text empty, server may fetch stored JD from DB (optional).
-    
     Implements workflow:
     1. Identify companies mentioned in JD
     2. Determine sectors from identified companies (using sectors.json)
@@ -1947,6 +2023,7 @@ except NameError:
         return path
 
 @app.post("/gemini/company_job_extract")
+@_rate("10 per minute")
 def gemini_company_job_extract():
     data = request.get_json(force=True, silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -1979,6 +2056,7 @@ def gemini_company_job_extract():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/gemini/rebate_validate")
+@_rate("10 per minute")
 def gemini_rebate_validate():
     data = request.get_json(force=True, silent=True) or {}
     job_title = (data.get("job_title") or data.get("jobTitle") or "").strip()
@@ -2118,6 +2196,7 @@ def gemini_rebate_validate():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/gemini/experience_format")
+@_rate("10 per minute")
 def gemini_experience_format():
     data = request.get_json(force=True, silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -2225,6 +2304,7 @@ def _ensure_rating_metadata_columns(cur, conn):
 
 
 @app.post("/gemini/assess_profile")
+@_rate("10 per minute")
 def gemini_assess_profile():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurl = (data.get("linkedinurl") or "").strip()
@@ -3084,6 +3164,8 @@ Return ONLY the JSON object, no other text."""
 
 # ... [Login/Register/Auth functions kept as is] ...
 @app.post("/login")
+@_rate("10 per minute")
+@_csrf_required
 def login_account():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -3138,6 +3220,8 @@ def login_account():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/register")
+@_rate("10 per minute")
+@_csrf_required
 def register_account():
     data = request.get_json(force=True, silent=True) or {}
 
@@ -3295,6 +3379,7 @@ _token_guard_column_ensured = False
 _role_tag_session_column_ensured = False
 
 @app.post("/user/token_update")
+@_csrf_required
 def user_token_update():
     """
     POST /user/token_update
@@ -3577,6 +3662,7 @@ def get_user_jskillset():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/vskillset/infer")
+@_rate("5 per minute; 100 per day")
 def vskillset_infer():
     """
     POST /vskillset/infer
@@ -4482,6 +4568,25 @@ def google_cse_search_page(query: str, api_key: str, cx: str, num: int, start_in
         logger.warning(f"[CSE] page fetch failed: {e}")
         return []
 
+def _is_private_host(url: str) -> bool:
+    """Return True if the URL resolves to a private/loopback/reserved IP — used to block SSRF."""
+    import socket
+    import ipaddress
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            return True
+        for addrinfo in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(addrinfo[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_reserved
+                    or ip.is_link_local or ip.is_multicast):
+                return True
+        return False
+    except Exception:
+        return True
+
+
 def get_linkedin_profile_picture(linkedin_url: str):
     """
     Retrieve LinkedIn profile picture URL using scraping and Google Custom Search Image API.
@@ -4609,6 +4714,10 @@ def get_linkedin_profile_picture(linkedin_url: str):
     # Final validation: ensure URL is not empty or broken
     if profile_pic_url:
         try:
+            # SECURITY: reject URLs that resolve to private/loopback addresses (SSRF)
+            if _is_private_host(profile_pic_url):
+                logger.warning(f"[Profile Pic] SSRF: blocked private-host URL: {profile_pic_url}")
+                return None
             # Quick HEAD request to verify image exists
             head_response = requests.head(profile_pic_url, timeout=5)
             if head_response.status_code == 200:
@@ -4635,6 +4744,10 @@ def fetch_image_bytes_from_url(image_url: str, max_size_mb=5):
         return None
     
     try:
+        # SECURITY: block SSRF — reject URLs that resolve to private/loopback addresses
+        if _is_private_host(image_url):
+            logger.warning(f"[Fetch Image Bytes] SSRF: blocked private-host URL: {image_url}")
+            return None
         response = requests.get(image_url, timeout=15, stream=True)
         response.raise_for_status()
         
@@ -5130,6 +5243,7 @@ def _gemini_multi_sector(selected, user_job_title, user_company, languages=None)
     return None
 
 @app.post("/start_job")
+@_rate("5 per minute; 50 per day")
 def start_job():
     global _role_tag_session_column_ensured
     data=request.get_json(force=True, silent=True) or {}
@@ -5490,6 +5604,7 @@ def sourcing_list():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/sourcing/update")
+@_csrf_required
 def sourcing_update():
     data=request.get_json(force=True, silent=True) or {}
     linkedinurl=(data.get("linkedinurl") or "").strip()
@@ -5533,6 +5648,7 @@ def sourcing_update():
         return jsonify({"error":str(e)}), 500
 
 @app.post("/sourcing/delete")
+@_csrf_required
 def sourcing_delete():
     data=request.get_json(force=True, silent=True) or {}
     arr=data.get("linkedinurls")
@@ -5590,6 +5706,7 @@ def sourcing_delete():
         return jsonify({"error":str(e)}), 500
 
 @app.post("/process/delete")
+@_csrf_required
 def process_delete_entry():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurls = data.get("linkedinurls")
@@ -5682,6 +5799,7 @@ def process_delete_entry():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/process/update")
+@_csrf_required
 def process_update():
     """
     Update process table fields. Accepts linkedinurl and any allowed field to update.
@@ -6441,6 +6559,7 @@ def process_geography():
             return jsonify({"error": "Internal error"}), 500
 
 @app.post("/process/upload_cv")
+@_rate("20 per minute")
 def process_upload_cv():
     """
     Uploads a PDF CV file to the 'process' table, storing it in the 'cv' bytea column.
@@ -6461,8 +6580,17 @@ def process_upload_cv():
             linkedinurl = request.form.get('linkedinurl', '').strip()
             if not linkedinurl:
                  return jsonify({"error": "linkedinurl required"}), 400
-            
+
+            if (request.content_length or 0) > _SINGLE_FILE_MAX:
+                return jsonify({"error": "File too large (max 6 MB)"}), 413
+
             file_bytes = file.read()
+
+            if len(file_bytes) > _SINGLE_FILE_MAX:
+                return jsonify({"error": "File too large (max 6 MB)"}), 413
+
+            if not _is_pdf_bytes(file_bytes):
+                return jsonify({"error": "Uploaded file is not a valid PDF"}), 400
 
             # Validate that the candidate name appears in the PDF text
             if candidate_name:
@@ -6618,6 +6746,7 @@ def process_upload_cv():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/process/upload_multiple_cvs")
+@_rate("10 per minute")
 def process_upload_multiple_cvs():
     """
     Accept multiple CV files from a browser upload (FormData 'files').
@@ -6753,6 +6882,10 @@ def process_upload_multiple_cvs():
             try:
                 if matched_entry:
                     file_bytes = f.read()
+                    fname_lower = (f.filename or "").lower()
+                    if fname_lower.endswith('.pdf') and not _is_pdf_bytes(file_bytes):
+                        errors.append(f"{f.filename}: not a valid PDF (magic bytes mismatch)")
+                        continue
                     binary_cv = psycopg2.Binary(file_bytes)
                     m_link = matched_entry['linkedinurl']
                     sourcing_id = matched_entry['id']
@@ -8379,6 +8512,7 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
     - Employment history strictly follows format: "Job Title, Company, StartYear to EndYear"
       OR "Job Title, Company, StartYear to present" (for current positions)
     """
+    _CV_ANALYZE_SEMAPHORE.acquire()
     try:
         obj = _analyze_cv_bytes_sync(pdf_bytes)
         if not obj:
@@ -8657,6 +8791,8 @@ def analyze_cv_background(linkedinurl, pdf_bytes):
         cur.close(); conn.close()
     except Exception as e:
         logger.error(f"Error in CV analysis background task: {e}")
+    finally:
+        _CV_ANALYZE_SEMAPHORE.release()
 
 @app.post("/process/parse_cv_and_update")
 def process_parse_cv_and_update():
@@ -8952,6 +9088,7 @@ Return ONLY the JSON object, no other text."""
         return None
 
 @app.post("/process/bulk_assess")
+@_rate("5 per minute; 50 per day")
 def process_bulk_assess():
     """
     Accepts JSON payload like:
@@ -9620,6 +9757,7 @@ def process_bulk_assess_stream(job_id):
     )
 
 @app.patch("/process/profile_assessment/<path:linkedinurl>")
+@_csrf_required
 def patch_profile_assessment(linkedinurl):
     """
     HTTP PATCH endpoint for updating individual profile assessments.
@@ -9693,9 +9831,15 @@ def user_upload_jd():
         file = request.files['file']
         if file.filename == '': return jsonify({"error": "No selected file"}), 400
         filename = file.filename.lower()
+        if (request.content_length or 0) > _SINGLE_FILE_MAX:
+            return jsonify({"error": "File too large (max 6 MB)"}), 413
         file_bytes = file.read()
+        if len(file_bytes) > _SINGLE_FILE_MAX:
+            return jsonify({"error": "File too large (max 6 MB)"}), 413
         extracted_text = ""
         if filename.endswith('.pdf'):
+            if not _is_pdf_bytes(file_bytes):
+                return jsonify({"error": "Uploaded file is not a valid PDF"}), 400
             import io
             try:
                 from pypdf import PdfReader
@@ -9756,6 +9900,7 @@ def user_upload_jd():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/gemini/analyze_jd")
+@_rate("10 per minute")
 def gemini_jd_analyze():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -9821,6 +9966,7 @@ def user_update_skills():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/process/scan_and_upload_cvs")
+@_rate("10 per minute")
 def process_scan_and_upload_cvs():
     data = request.get_json(force=True, silent=True) or {}
     directory_path = (data.get("directory_path") or "").strip()
@@ -9859,6 +10005,9 @@ def process_scan_and_upload_cvs():
                 full_path = os.path.join(directory_path, fname)
                 try:
                     with open(full_path, "rb") as f: file_bytes = f.read()
+                    if not _is_pdf_bytes(file_bytes):
+                        errors.append(f"{fname}: not a valid PDF (magic bytes mismatch)")
+                        continue
                     binary_cv = psycopg2.Binary(file_bytes)
                     if cid: cur.execute("UPDATE process SET cv = %s WHERE id = %s", (binary_cv, cid))
                     else: cur.execute("UPDATE process SET cv = %s WHERE linkedinurl = %s", (binary_cv, clink))
