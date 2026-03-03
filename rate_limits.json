@@ -1,0 +1,14 @@
+{
+  "defaults": {
+    "login":                 {"requests": 10,  "window_seconds": 60},
+    "register":              {"requests": 10,  "window_seconds": 60},
+    "vskillset_infer":       {"requests": 5,   "window_seconds": 60},
+    "start_job":             {"requests": 5,   "window_seconds": 60},
+    "gemini":                {"requests": 10,  "window_seconds": 60},
+    "upload_cv":             {"requests": 20,  "window_seconds": 60},
+    "upload_multiple_cvs":   {"requests": 10,  "window_seconds": 60},
+    "candidates":            {"requests": 60,  "window_seconds": 60},
+    "bulk_delete":           {"requests": 10,  "window_seconds": 60}
+  },
+  "users": {}
+}

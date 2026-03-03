@@ -119,6 +119,161 @@ def _is_origin_allowed(origin: str) -> bool:
         return False
     return origin.strip().lower() in _ALLOWED_ORIGINS
 
+# ── Per-user rate limiter ──────────────────────────────────────────────────────
+# Loads per-user rate limit overrides from rate_limits.json (same directory).
+# Falls back to defaults defined in that file when no user-specific override exists.
+# Both webbridge.py and server.js read from this shared file.
+
+_RATE_LIMITS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rate_limits.json")
+
+def _load_rate_limits() -> dict:
+    """Return the parsed rate_limits.json; returns empty defaults on any error."""
+    try:
+        with open(_RATE_LIMITS_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {"defaults": {}, "users": {}}
+
+def _save_rate_limits(config: dict) -> None:
+    """Atomically write rate_limits.json."""
+    tmp = _RATE_LIMITS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2)
+    os.replace(tmp, _RATE_LIMITS_PATH)
+
+_NO_LIMIT = 999999  # sentinel: effectively no rate limit when feature has no config entry
+
+class _UserRateLimiter:
+    """Simple per-(username, feature) sliding-window rate limiter."""
+    def __init__(self):
+        self._state: dict = {}
+        self._lock = threading.Lock()
+
+    def is_allowed(self, username: str, feature: str) -> bool:
+        if not username:
+            return True  # no identity → fall through to global limiter
+        config = _load_rate_limits()
+        user_limits = config.get("users", {}).get(username, {})
+        default_limits = config.get("defaults", {})
+        limit_cfg = user_limits.get(feature) or default_limits.get(feature)
+        if not limit_cfg:
+            return True
+        max_req = int(limit_cfg.get("requests", _NO_LIMIT))
+        window  = int(limit_cfg.get("window_seconds", 60))
+        now = time.time()
+        key = (username, feature)
+        with self._lock:
+            history = [t for t in self._state.get(key, []) if now - t < window]
+            if len(history) >= max_req:
+                self._state[key] = history
+                return False
+            history.append(now)
+            self._state[key] = history
+            return True
+
+_user_limiter = _UserRateLimiter()
+
+def _check_user_rate(feature: str):
+    """Decorator that enforces the per-user rate limit for *feature*."""
+    def decorator(f):
+        import functools
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            # Best-effort username resolution from cookies or JSON body
+            username = (
+                request.cookies.get("username")
+                or (request.get_json(force=True, silent=True) or {}).get("username")
+                or ""
+            )
+            username = username.strip()
+            if username and not _user_limiter.is_allowed(username, feature):
+                return jsonify({"error": f"Rate limit exceeded for feature '{feature}'"}), 429
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def _require_admin(f):
+    """Decorator: reject request with 403 unless the caller is an admin."""
+    import functools
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        username = (request.cookies.get("username") or "").strip()
+        if not username:
+            return jsonify({"error": "Authentication required"}), 401
+        try:
+            import psycopg2
+            conn = psycopg2.connect(
+                host=os.getenv("PGHOST", "localhost"),
+                port=int(os.getenv("PGPORT", "5432")),
+                user=os.getenv("PGUSER", "postgres"),
+                password=os.getenv("PGPASSWORD", ""),
+                dbname=os.getenv("PGDATABASE", "candidate_db"),
+            )
+            cur = conn.cursor()
+            cur.execute("SELECT role_tag FROM login WHERE username=%s LIMIT 1", (username,))
+            row = cur.fetchone()
+            cur.close(); conn.close()
+            if not row or (row[0] or "").strip().lower() != "admin":
+                return jsonify({"error": "Admin access required"}), 403
+        except Exception as e:
+            return jsonify({"error": f"Auth check failed: {e}"}), 500
+        return f(*args, **kwargs)
+    return wrapper
+
+# ── Admin: rate-limit management API ──────────────────────────────────────────
+
+@app.get("/admin/rate-limits")
+@_require_admin
+def admin_get_rate_limits():
+    """Return current rate_limits.json content plus all known usernames."""
+    config = _load_rate_limits()
+    # Also return list of all usernames so the UI can populate the dropdown
+    users_list = []
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=os.getenv("PGHOST", "localhost"),
+            port=int(os.getenv("PGPORT", "5432")),
+            user=os.getenv("PGUSER", "postgres"),
+            password=os.getenv("PGPASSWORD", ""),
+            dbname=os.getenv("PGDATABASE", "candidate_db"),
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT username, userid, fullname, role_tag FROM login ORDER BY username")
+        users_list = [
+            {"username": r[0], "userid": str(r[1] or ""), "fullname": r[2] or "", "role_tag": r[3] or ""}
+            for r in cur.fetchall()
+        ]
+        cur.close(); conn.close()
+    except Exception:
+        pass
+    return jsonify({"config": config, "users": users_list}), 200
+
+@app.post("/admin/rate-limits")
+@_csrf_required
+@_require_admin
+def admin_save_rate_limits():
+    """Replace rate_limits.json with the POSTed body."""
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    defaults = body.get("defaults")
+    users = body.get("users")
+    if not isinstance(defaults, dict) or not isinstance(users, dict):
+        return jsonify({"error": "'defaults' and 'users' keys required"}), 400
+    # Validate structure: each limit must have requests (int ≥ 1) and window_seconds (int ≥ 1)
+    for scope_label, scope in [("defaults", defaults)] + [("users." + u, v) for u, v in users.items()]:
+        for feat, cfg in scope.items():
+            if not isinstance(cfg, dict):
+                return jsonify({"error": f"Invalid config at {scope_label}.{feat}"}), 400
+            if not (isinstance(cfg.get("requests"), int) and cfg["requests"] >= 1):
+                return jsonify({"error": f"'{scope_label}.{feat}.requests' must be int ≥ 1"}), 400
+            if not (isinstance(cfg.get("window_seconds"), int) and cfg["window_seconds"] >= 1):
+                return jsonify({"error": f"'{scope_label}.{feat}.window_seconds' must be int ≥ 1"}), 400
+    _save_rate_limits({"defaults": defaults, "users": users})
+    return jsonify({"ok": True}), 200
+
+# ── CORS ───────────────────────────────────────────────────────────────────────
 # Affected section: lightweight CORS support for local development
 def _apply_cors_headers(response):
     try:
@@ -870,6 +1025,7 @@ def translate_company_endpoint():
 
 @app.post("/gemini/analyze_jd")
 @_rate("10 per minute")
+@_check_user_rate("gemini")
 def gemini_analyze_jd():
     """
     Implements workflow:
@@ -2024,6 +2180,7 @@ except NameError:
 
 @app.post("/gemini/company_job_extract")
 @_rate("10 per minute")
+@_check_user_rate("gemini")
 def gemini_company_job_extract():
     data = request.get_json(force=True, silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -2057,6 +2214,7 @@ def gemini_company_job_extract():
 
 @app.post("/gemini/rebate_validate")
 @_rate("10 per minute")
+@_check_user_rate("gemini")
 def gemini_rebate_validate():
     data = request.get_json(force=True, silent=True) or {}
     job_title = (data.get("job_title") or data.get("jobTitle") or "").strip()
@@ -2197,6 +2355,7 @@ def gemini_rebate_validate():
 
 @app.post("/gemini/experience_format")
 @_rate("10 per minute")
+@_check_user_rate("gemini")
 def gemini_experience_format():
     data = request.get_json(force=True, silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -2305,6 +2464,7 @@ def _ensure_rating_metadata_columns(cur, conn):
 
 @app.post("/gemini/assess_profile")
 @_rate("10 per minute")
+@_check_user_rate("gemini")
 def gemini_assess_profile():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurl = (data.get("linkedinurl") or "").strip()
@@ -3165,6 +3325,7 @@ Return ONLY the JSON object, no other text."""
 # ... [Login/Register/Auth functions kept as is] ...
 @app.post("/login")
 @_rate("10 per minute")
+@_check_user_rate("login")
 @_csrf_required
 def login_account():
     data = request.get_json(force=True, silent=True) or {}
@@ -3221,6 +3382,7 @@ def login_account():
 
 @app.post("/register")
 @_rate("10 per minute")
+@_check_user_rate("register")
 @_csrf_required
 def register_account():
     data = request.get_json(force=True, silent=True) or {}
@@ -3663,6 +3825,7 @@ def get_user_jskillset():
 
 @app.post("/vskillset/infer")
 @_rate("5 per minute; 100 per day")
+@_check_user_rate("vskillset_infer")
 def vskillset_infer():
     """
     POST /vskillset/infer
@@ -5244,6 +5407,7 @@ def _gemini_multi_sector(selected, user_job_title, user_company, languages=None)
 
 @app.post("/start_job")
 @_rate("5 per minute; 50 per day")
+@_check_user_rate("start_job")
 def start_job():
     global _role_tag_session_column_ensured
     data=request.get_json(force=True, silent=True) or {}
@@ -6560,6 +6724,7 @@ def process_geography():
 
 @app.post("/process/upload_cv")
 @_rate("20 per minute")
+@_check_user_rate("upload_cv")
 def process_upload_cv():
     """
     Uploads a PDF CV file to the 'process' table, storing it in the 'cv' bytea column.
@@ -6747,6 +6912,7 @@ def process_upload_cv():
 
 @app.post("/process/upload_multiple_cvs")
 @_rate("10 per minute")
+@_check_user_rate("upload_multiple_cvs")
 def process_upload_multiple_cvs():
     """
     Accept multiple CV files from a browser upload (FormData 'files').
@@ -9089,6 +9255,7 @@ Return ONLY the JSON object, no other text."""
 
 @app.post("/process/bulk_assess")
 @_rate("5 per minute; 50 per day")
+@_check_user_rate("start_job")
 def process_bulk_assess():
     """
     Accepts JSON payload like:
@@ -9901,6 +10068,7 @@ def user_upload_jd():
 
 @app.post("/gemini/analyze_jd")
 @_rate("10 per minute")
+@_check_user_rate("gemini")
 def gemini_jd_analyze():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
