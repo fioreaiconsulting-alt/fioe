@@ -26,6 +26,7 @@ def _load_dotenv():
                 os.environ[_key] = _val
 
 _load_dotenv()
+import secrets
 import threading
 import time
 import uuid
@@ -61,12 +62,17 @@ from werkzeug.middleware.dispatcher import DispatcherMiddleware
 app = Flask(__name__, static_url_path='', static_folder='.')
 
 # Set a secret key for session security (shared with data_sorter if integrated)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-in-production-webbridge")
-if app.secret_key == "change-me-in-production-webbridge":
-    raise RuntimeError(
-        "FLASK_SECRET_KEY must be set to a strong secret value. "
-        "Copy .env.example to .env and set FLASK_SECRET_KEY to a long random string."
+_flask_secret = os.getenv("FLASK_SECRET_KEY", "")
+if not _flask_secret or _flask_secret == "change-me-in-production-webbridge":
+    _flask_secret = secrets.token_hex(32)
+    logging.warning(
+        "FLASK_SECRET_KEY is not set (or is the default placeholder). "
+        "A random key has been generated for this session — sessions will not "
+        "persist across restarts. "
+        "Set FLASK_SECRET_KEY in your .env file to a strong random value: "
+        "python -c \"import secrets; print(secrets.token_hex(32))\""
     )
+app.secret_key = _flask_secret
 
 # Session cookie security flags
 app.config['SESSION_COOKIE_HTTPONLY'] = True
