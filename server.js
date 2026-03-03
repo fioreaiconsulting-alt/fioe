@@ -46,11 +46,11 @@ app.use(cors({
 }));
 
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'candidate_db',
-  password: 'orlha',
-  port: 5432,
+  user: process.env.PGUSER || 'postgres',
+  host: process.env.PGHOST || 'localhost',
+  database: process.env.PGDATABASE || 'candidate_db',
+  password: process.env.PGPASSWORD || '',
+  port: parseInt(process.env.PGPORT || '5432', 10),
 });
 
 const mappingPath = path.resolve(__dirname, 'skillset-mapping.json');
