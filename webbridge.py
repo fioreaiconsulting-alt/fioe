@@ -31,6 +31,7 @@ import time
 import uuid
 from csv import DictWriter
 from datetime import datetime
+from functools import wraps
 import re
 import json
 import requests
@@ -55,21 +56,40 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 
 # Set a secret key for session security (shared with data_sorter if integrated)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-in-production-webbridge")
+if app.secret_key == "change-me-in-production-webbridge":
+    logging.getLogger("AutoSourcingServer").warning(
+        "Using default FLASK_SECRET_KEY. Set FLASK_SECRET_KEY in the environment to a strong random value.")
+
+# Session cookie security flags
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
+
+# Allowlist for credentialed CORS. Override with ALLOWED_ORIGINS env var (comma-separated).
+_ALLOWED_ORIGINS = {
+    o.strip().lower()
+    for o in (os.getenv("ALLOWED_ORIGINS") or
+              "http://localhost:3000,http://127.0.0.1:3000,http://localhost:4000,http://127.0.0.1:4000,http://localhost:8091,http://127.0.0.1:8091").split(",")
+    if o.strip()
+}
+
+def _is_origin_allowed(origin: str) -> bool:
+    if not origin:
+        return False
+    return origin.strip().lower() in _ALLOWED_ORIGINS
 
 # Affected section: lightweight CORS support for local development
 def _apply_cors_headers(response):
     try:
-        origin = request.headers.get('Origin')
-        # Logic: Echo origin if present to support credentials, else wildcard (no credentials)
-        if origin:
+        origin = request.headers.get('Origin', '')
+        if origin and _is_origin_allowed(origin):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Vary'] = 'Origin'
         else:
             response.headers['Access-Control-Allow-Origin'] = '*'
-            # Credentials cannot be true if Origin is *
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers', 'Content-Type, Authorization')
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PATCH, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
     except Exception:
         pass
     return response
@@ -88,6 +108,18 @@ def _options(path):
     resp = app.make_response(('', 204))
     return _apply_cors_headers(resp)
 # End affected section (CORS)
+
+def _csrf_required(f):
+    """Reject state-changing requests that don't carry X-Requested-With or X-CSRF-Token.
+    This is a lightweight CSRF mitigation for XHR/fetch clients; browsers cannot set
+    these custom headers in cross-site form submissions, so the check is effective."""
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            if not (request.headers.get("X-Requested-With") or request.headers.get("X-CSRF-Token")):
+                return jsonify({"error": "Missing required header (X-Requested-With or X-CSRF-Token)"}), 403
+        return f(*args, **kwargs)
+    return wrapped
 
 logging.basicConfig(level=logging.INFO, format="(%(asctime)s) | %(levelname)s | %(message)s")
 logger = logging.getLogger("AutoSourcingServer")
@@ -3084,6 +3116,7 @@ Return ONLY the JSON object, no other text."""
 
 # ... [Login/Register/Auth functions kept as is] ...
 @app.post("/login")
+@_csrf_required
 def login_account():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -3138,6 +3171,7 @@ def login_account():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/register")
+@_csrf_required
 def register_account():
     data = request.get_json(force=True, silent=True) or {}
 
@@ -3295,6 +3329,7 @@ _token_guard_column_ensured = False
 _role_tag_session_column_ensured = False
 
 @app.post("/user/token_update")
+@_csrf_required
 def user_token_update():
     """
     POST /user/token_update
@@ -5490,6 +5525,7 @@ def sourcing_list():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/sourcing/update")
+@_csrf_required
 def sourcing_update():
     data=request.get_json(force=True, silent=True) or {}
     linkedinurl=(data.get("linkedinurl") or "").strip()
@@ -5533,6 +5569,7 @@ def sourcing_update():
         return jsonify({"error":str(e)}), 500
 
 @app.post("/sourcing/delete")
+@_csrf_required
 def sourcing_delete():
     data=request.get_json(force=True, silent=True) or {}
     arr=data.get("linkedinurls")
@@ -5590,6 +5627,7 @@ def sourcing_delete():
         return jsonify({"error":str(e)}), 500
 
 @app.post("/process/delete")
+@_csrf_required
 def process_delete_entry():
     data = request.get_json(force=True, silent=True) or {}
     linkedinurls = data.get("linkedinurls")
@@ -5682,6 +5720,7 @@ def process_delete_entry():
         return jsonify({"error": str(e)}), 500
 
 @app.post("/process/update")
+@_csrf_required
 def process_update():
     """
     Update process table fields. Accepts linkedinurl and any allowed field to update.
@@ -9620,6 +9659,7 @@ def process_bulk_assess_stream(job_id):
     )
 
 @app.patch("/process/profile_assessment/<path:linkedinurl>")
+@_csrf_required
 def patch_profile_assessment(linkedinurl):
     """
     HTTP PATCH endpoint for updating individual profile assessments.

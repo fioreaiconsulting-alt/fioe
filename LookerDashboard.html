@@ -1271,7 +1271,7 @@
         try {
             const res = await fetch(`${API_BASE}/login`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({ username: user, password: pass }),
                 credentials: 'include'
             });
@@ -1293,7 +1293,7 @@
     }
 
     async function handleLogout() {
-        await fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' });
+        await fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
         currentUser = null;
         if(eventSource) eventSource.close();
         showLogin();
@@ -1373,7 +1373,7 @@
         try {
             const res = await fetch(`${API_BASE}/save-report-template`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({ reportId: reportId }),
                 credentials: 'include'
             });
