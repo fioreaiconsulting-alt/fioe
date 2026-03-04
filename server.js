@@ -927,12 +927,18 @@ app.get('/user-tokens', requireLogin, async (req, res) => {
 });
 
 // ── SMTP config persistence ──────────────────────────────────────────────────
-// Each user's SMTP config is stored in its own file: smtp-config-{username}.json
+// Each user's SMTP config is stored in its own file inside SMTP_CONFIG_DIR.
+// Set the SMTP_CONFIG_DIR environment variable to override the default location.
+// Default: <server directory>/smtp_config
+const SMTP_CONFIG_DIR = process.env.SMTP_CONFIG_DIR || path.join(__dirname, 'smtp_config');
+// Ensure the directory exists at startup (log its location so operators can verify)
+console.log('[SMTP] Config directory:', SMTP_CONFIG_DIR);
+fs.mkdirSync(SMTP_CONFIG_DIR, { recursive: true });
 
 function smtpConfigPath(username) {
   // Sanitise username: keep only alphanumeric and underscores to prevent path traversal
   const safe = username.replace(/[^a-zA-Z0-9_]/g, '_');
-  return path.join(__dirname, `smtp-config-${safe}.json`);
+  return path.join(SMTP_CONFIG_DIR, `smtp-config-${safe}.json`);
 }
 
 function loadSmtpConfig(username) {
@@ -947,7 +953,7 @@ function loadSmtpConfig(username) {
 function saveSmtpConfig(username, config) {
   const p = smtpConfigPath(username);
   const tmp = p + '.tmp';
-  // NOTE: password is stored as plaintext — ensure these files are outside the web root and not committed.
+  // NOTE: password is stored as plaintext — ensure this directory is outside the web root and not committed.
   fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf8');
   fs.renameSync(tmp, p);
 }

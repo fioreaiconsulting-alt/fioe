@@ -1,2 +1,3 @@
 # SMTP configuration (contains credentials — never commit)
 smtp-config-*.json
+smtp_config/
