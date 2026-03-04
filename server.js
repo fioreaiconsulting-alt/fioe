@@ -926,6 +926,73 @@ app.get('/user-tokens', requireLogin, async (req, res) => {
   }
 });
 
+// ── SMTP config persistence ──────────────────────────────────────────────────
+// Each user's SMTP config is stored in its own file inside SMTP_CONFIG_DIR.
+// Set the SMTP_CONFIG_DIR environment variable to override the default location.
+// Default: <server directory>/smtp_config
+const SMTP_CONFIG_DIR = process.env.SMTP_CONFIG_DIR || path.join(__dirname, 'smtp_config');
+// Ensure the directory exists at startup (log its location so operators can verify)
+console.log('[SMTP] Config directory:', SMTP_CONFIG_DIR);
+fs.mkdirSync(SMTP_CONFIG_DIR, { recursive: true });
+
+function smtpConfigPath(username) {
+  // Sanitise username: keep only alphanumeric and underscores to prevent path traversal
+  const safe = username.replace(/[^a-zA-Z0-9_]/g, '_');
+  return path.join(SMTP_CONFIG_DIR, `smtp-config-${safe}.json`);
+}
+
+function loadSmtpConfig(username) {
+  try {
+    return JSON.parse(fs.readFileSync(smtpConfigPath(username), 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('loadSmtpConfig parse error:', err.message);
+    return null;
+  }
+}
+
+function saveSmtpConfig(username, config) {
+  const p = smtpConfigPath(username);
+  const tmp = p + '.tmp';
+  // NOTE: password is stored as plaintext — ensure this directory is outside the web root and not committed.
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf8');
+  fs.renameSync(tmp, p);
+}
+
+// GET /smtp-config – return the current user's saved SMTP configuration
+app.get('/smtp-config', requireLogin, (req, res) => {
+  try {
+    const entry = loadSmtpConfig(req.user.username);
+    if (!entry) return res.json({ ok: true, config: null });
+    const { userid, username, host, port, user, secure } = entry;
+    // Return config without exposing the password
+    res.json({ ok: true, config: { userid, username, host, port, user, secure } });
+  } catch (err) {
+    console.error('GET /smtp-config error:', err);
+    res.status(500).json({ error: 'Failed to load SMTP config' });
+  }
+});
+
+// POST /smtp-config – save the current user's SMTP configuration
+app.post('/smtp-config', requireLogin, (req, res) => {
+  try {
+    const { host, port, user, pass, secure } = req.body || {};
+    if (!host || !user) return res.status(400).json({ error: 'host and user are required' });
+    saveSmtpConfig(req.user.username, {
+      userid: String(req.user.id),
+      username: req.user.username,
+      host,
+      port: port || '587',
+      user,
+      pass: pass || '',
+      secure: !!secure,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /smtp-config error:', err);
+    res.status(500).json({ error: 'Failed to save SMTP config' });
+  }
+});
+
 // POST /deduct-tokens - Deduct 2 tokens from the authenticated user (called on Verified Selection)
 // NOTE: Consider adding rate limiting for this endpoint in production
 app.post('/deduct-tokens', requireLogin, async (req, res) => {
