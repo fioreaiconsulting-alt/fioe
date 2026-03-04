@@ -589,13 +589,27 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
             finalBody += '\n\nJoin meeting: ' + meetLink;
           }
           const payload = {
-            to: candEmail, cc, bcc,
+            to: candEmail,
+            // Explicitly omit cc/bcc in individual send mode to prevent exposing other recipients
             subject: finalSubject,
             body: finalBody,
             from,
             smtpConfig,
           };
-          if (icsString) payload.ics = icsString;
+          if (icsString) {
+            // Strip ATTENDEE lines for other recipients so the calendar invite
+            // only lists the current recipient — prevents address exposure.
+            const recipientLower = candEmail.toLowerCase();
+            payload.ics = icsString
+              .split(/\r?\n/)
+              .filter(line => {
+                if (/^ATTENDEE[;:]/i.test(line)) {
+                  return line.toLowerCase().includes(`mailto:${recipientLower}`);
+                }
+                return true;
+              })
+              .join('\r\n');
+          }
           if (attachments.length > 0) payload.attachments = attachments;
           try {
             const res = await fetch('http://localhost:4000/send-email', {
@@ -3066,6 +3080,7 @@ export default function App() {
 
   // NEW: Resume tab state
   const [resumeCandidate, setResumeCandidate] = useState(null);
+  const [resumePicError, setResumePicError] = useState(false);
   
   // State for resume email updating
   const [resumeEmailList, setResumeEmailList] = useState([]);
@@ -3639,6 +3654,7 @@ export default function App() {
     const rawEmails = (candidate.email || '').split(/[;,]+/).map(s => s.trim()).filter(Boolean);
     // Initialize emails list with check state, and default confidence for existing emails (N/A)
     setResumeEmailList(rawEmails.map(e => ({ value: e, checked: false, confidence: 'Stored (N/A)' })));
+    setResumePicError(false);
     setResumeCandidate(candidate);
     setActiveTab('resume');
   };
@@ -4210,54 +4226,28 @@ export default function App() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderBottom: '1px solid var(--neutral-border)', paddingBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                             {/* Candidate Image */}
-                            {resumeCandidate.pic && typeof resumeCandidate.pic === 'string' ? (
-                                <>
-                                    <img 
-                                        src={(() => {
-                                            const p = resumeCandidate.pic.trim();
-                                            if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:')) return p;
-                                            // Strip any embedded whitespace (e.g., line-breaks in base64)
-                                            const b64 = p.replace(/\s/g, '');
-                                            return !b64.startsWith('data:image/') ? `data:image/jpeg;base64,${b64}` : b64;
-                                        })()}
-                                        alt={resumeCandidate.name || 'Candidate'}
-                                        style={{
-                                            width: 60,
-                                            height: 60,
-                                            borderRadius: '50%',
-                                            objectFit: 'cover',
-                                            border: '2px solid #e5e7eb',
-                                            display: 'block'
-                                        }}
-                                        onError={(e) => {
-                                            // Hide image and show placeholder
-                                            const imgElement = e.target;
-                                            const placeholder = imgElement.nextElementSibling;
-                                            if (imgElement && placeholder) {
-                                                imgElement.style.display = 'none';
-                                                placeholder.style.display = 'flex';
-                                            }
-                                        }}
-                                    />
-                                    {/* Placeholder for failed image load (hidden by default) */}
-                                    <div style={{
+                            {resumeCandidate.pic && typeof resumeCandidate.pic === 'string' && !resumePicError ? (
+                                <img 
+                                    src={(() => {
+                                        const p = resumeCandidate.pic.trim();
+                                        if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:')) return p;
+                                        // Strip any embedded whitespace (e.g., line-breaks in base64)
+                                        const b64 = p.replace(/\s/g, '');
+                                        return !b64.startsWith('data:image/') ? `data:image/jpeg;base64,${b64}` : b64;
+                                    })()}
+                                    alt={resumeCandidate.name || 'Candidate'}
+                                    style={{
                                         width: 60,
                                         height: 60,
                                         borderRadius: '50%',
-                                        background: '#f3f4f6',
-                                        display: 'none',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        color: '#9ca3af',
-                                        fontWeight: 600,
-                                        fontSize: 24,
-                                        border: '2px solid #e5e7eb'
-                                    }}>
-                                        {(resumeCandidate.name || '?').charAt(0).toUpperCase()}
-                                    </div>
-                                </>
+                                        objectFit: 'cover',
+                                        border: '2px solid #e5e7eb',
+                                        display: 'block'
+                                    }}
+                                    onError={() => setResumePicError(true)}
+                                />
                             ) : (
-                                // Placeholder for missing image
+                                // Placeholder for missing or failed image
                                 <div style={{
                                     width: 60,
                                     height: 60,
