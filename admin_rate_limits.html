@@ -24,27 +24,35 @@
       color:#fff; padding:5px 14px; border-radius:6px; cursor:pointer; font-size:13px; }
     #logoutBtn:hover { background:rgba(255,255,255,.32); }
 
-    main { max-width:1100px; margin:28px auto; padding:0 16px; }
+    main { max-width:1400px; margin:28px auto; padding:0 16px; }
     .page-msg { text-align:center; padding:32px; font-size:15px; color:var(--muted); }
 
     /* ── tabs ── */
-    .tabs { display:flex; gap:4px; margin-bottom:20px; }
-    .tab { padding:8px 20px; border-radius:8px 8px 0 0; border:1px solid var(--border);
-      background:#eef2f6; cursor:pointer; font-weight:600; color:var(--muted); }
-    .tab.active { background:#fff; border-bottom-color:#fff; color:var(--primary); }
+    .tabs { display:flex; gap:4px; margin-bottom:0; border-bottom:2px solid var(--border); }
+    .tab { padding:10px 22px; border-radius:8px 8px 0 0; border:1px solid transparent;
+      background:transparent; cursor:pointer; font-weight:600; color:var(--muted);
+      font-size:14px; border-bottom:none; }
+    .tab:hover { background:#eef2f6; color:#333; }
+    .tab.active { background:#fff; border:1px solid var(--border); border-bottom:2px solid #fff;
+      color:var(--primary); margin-bottom:-2px; }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
 
     /* ── cards ── */
-    .card { background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:0 12px 12px 12px;
       padding:20px 24px; margin-bottom:20px; }
     .card h2 { margin:0 0 16px; font-size:15px; color:var(--primary); }
 
     /* ── tables ── */
-    table { width:100%; border-collapse:collapse; }
+    .tbl-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; min-width:600px; }
     th { background:#f5f7fa; text-align:left; padding:8px 10px; font-size:12px;
       text-transform:uppercase; letter-spacing:.5px; color:var(--muted);
-      border-bottom:2px solid var(--border); }
-    td { padding:7px 10px; border-bottom:1px solid #eaedf1; vertical-align:middle; }
+      border-bottom:2px solid var(--border); white-space:nowrap; }
+    td { padding:7px 10px; border-bottom:1px solid #eaedf1; vertical-align:middle;
+      font-size:13px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     tr:last-child td { border-bottom:none; }
+    tr:hover td { background:#f9fbfd; }
 
     /* ── inputs ── */
     input[type=number] { width:80px; padding:4px 7px; border:1px solid var(--border);
@@ -62,6 +70,8 @@
     .btn-primary:hover { background:#084d94; }
     .btn-danger  { background:var(--danger);  color:#fff; }
     .btn-danger:hover { background:#8a0018; }
+    .btn-success { background:var(--success); color:#fff; }
+    .btn-success:hover { background:#156932; }
     .btn-sm { padding:4px 11px; font-size:12px; }
 
     /* ── user-overrides section ── */
@@ -69,6 +79,18 @@
     .user-row-header select { min-width:180px; }
     .user-override-table { margin-bottom:10px; }
     .no-override { color:var(--muted); font-style:italic; font-size:13px; }
+
+    /* ── token/limit inline editor ── */
+    .inline-num { width:72px; padding:3px 6px; border:1px solid var(--border);
+      border-radius:5px; font-size:13px; text-align:right; }
+    .inline-num:focus { outline:none; border-color:var(--primary); }
+    .save-inline { padding:3px 9px; font-size:12px; font-weight:600; border:none;
+      border-radius:5px; cursor:pointer; background:var(--primary); color:#fff; margin-left:4px; }
+    .save-inline:hover { background:#084d94; }
+
+    /* ── appeal badge ── */
+    .appeal-text { max-width:260px; white-space:normal; word-break:break-word;
+      font-size:12px; color:#333; }
 
     /* ── toast ── */
     #toast { position:fixed; bottom:24px; right:24px; background:#222; color:#fff;
@@ -90,6 +112,12 @@
     .login-panel input:focus { outline:none; border-color:var(--primary); }
     .login-panel .btn-primary { width:100%; padding:11px; font-size:15px; margin-top:6px; }
     #loginMsg { text-align:center; font-size:13px; min-height:20px; margin-top:6px; color:var(--danger); }
+
+    /* appeals empty state */
+    .empty-msg { text-align:center; padding:24px; color:var(--muted); font-style:italic; }
+    /* truncated link in appeals table */
+    .appeal-url { max-width:140px; display:inline-block; overflow:hidden;
+      text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
   </style>
 </head>
 <body>
@@ -112,7 +140,7 @@
 <!-- MAIN APP -->
 <div id="app" style="display:none">
   <header>
-    <h1>⚙️ Rate Limit Manager</h1>
+    <h1>⚙️ Admin Dashboard</h1>
     <button id="logoutBtn" class="btn">Logout</button>
   </header>
 
@@ -127,8 +155,6 @@
 'use strict';
 
 // ── Constants ────────────────────────────────────────────────────────────────
-// The admin page is served by webbridge.py (port 8091).
-// All fetch calls below are relative so they automatically target the right host.
 const API = '';  // same origin
 
 // ── Feature labels ───────────────────────────────────────────────────────────
@@ -147,7 +173,8 @@ const FEATURES = [
 // ── State ────────────────────────────────────────────────────────────────────
 let _config  = { defaults: {}, users: {} };
 let _users   = [];
-let _session = null;   // { username, userid }
+let _appeals = [];
+let _session = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function toast(msg, type = 'success') {
@@ -160,6 +187,10 @@ function toast(msg, type = 'success') {
 
 function csrfHeaders() {
   return { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -178,6 +209,7 @@ document.getElementById('loginForm').addEventListener('submit', async e => {
     });
     const data = await r.json();
     if (!r.ok || !data.ok) { msgEl.textContent = data.error || 'Login failed'; return; }
+    sessionStorage.removeItem('admin_logged_out');
     _session = { username: data.username, userid: data.userid };
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('app').style.display = '';
@@ -188,8 +220,13 @@ document.getElementById('loginForm').addEventListener('submit', async e => {
 });
 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
-  await fetch(`${API}/logout`, { method: 'POST', headers: csrfHeaders(), credentials: 'same-origin' });
-  location.reload();
+  try {
+    await fetch(`${API}/logout`, { method: 'POST', headers: csrfHeaders(), credentials: 'same-origin' });
+  } catch (_) {}
+  sessionStorage.setItem('admin_logged_out', '1');
+  _session = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginScreen').style.display = '';
 });
 
 // ── Load data ────────────────────────────────────────────────────────────────
@@ -197,15 +234,26 @@ async function loadData() {
   const mainEl = document.getElementById('mainContent');
   mainEl.innerHTML = '<div class="page-msg">Loading…</div>';
   try {
-    const r = await fetch(`${API}/admin/rate-limits`, { credentials: 'same-origin' });
-    if (r.status === 401) { location.reload(); return; }
-    if (r.status === 403) {
+    const [rlRes, appRes] = await Promise.all([
+      fetch(`${API}/admin/rate-limits`, { credentials: 'same-origin' }),
+      fetch(`${API}/admin/appeals`,     { credentials: 'same-origin' }),
+    ]);
+    if (rlRes.status === 401) { location.reload(); return; }
+    if (rlRes.status === 403) {
       mainEl.innerHTML = '<div class="page-msg" style="color:var(--danger)">Access denied — admin role required.</div>';
       return;
     }
-    const data = await r.json();
-    _config = data.config || { defaults: {}, users: {} };
-    _users  = data.users  || [];
+    const rlData = await rlRes.json();
+    _config = rlData.config || { defaults: {}, users: {} };
+    _users  = rlData.users  || [];
+    if (rlData.db_error) {
+      toast('Users could not be loaded from DB — check server logs', 'error');
+    }
+
+    if (appRes.ok) {
+      const appData = await appRes.json();
+      _appeals = appData.appeals || [];
+    }
     renderPage(mainEl);
   } catch (err) {
     mainEl.innerHTML = `<div class="page-msg" style="color:var(--danger)">Error: ${err.message}</div>`;
@@ -216,26 +264,70 @@ async function loadData() {
 function renderPage(container) {
   container.innerHTML = '';
 
-  // Default limits card
-  container.appendChild(renderDefaultsCard());
+  // Tab bar
+  const tabBar = document.createElement('div');
+  tabBar.className = 'tabs';
+  const tabDefs = [
+    { id: 'tab-rl',      label: '⚡ Rate Limits'  },
+    { id: 'tab-users',   label: '👥 Users'        },
+    { id: 'tab-appeals', label: `📋 Appeals${_appeals.length ? ' (' + _appeals.length + ')' : ''}` },
+  ];
+  tabDefs.forEach((t, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'tab' + (i === 0 ? ' active' : '');
+    btn.textContent = t.label;
+    btn.dataset.tab = t.id;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(t.id).classList.add('active');
+    });
+    tabBar.appendChild(btn);
+  });
+  container.appendChild(tabBar);
 
-  // Per-user overrides card
-  container.appendChild(renderUserOverridesCard());
+  // ── Tab: Rate Limits ─────────────────────────────────────────────────────
+  const rlPanel = document.createElement('div');
+  rlPanel.id = 'tab-rl';
+  rlPanel.className = 'tab-panel active';
 
-  // Save button
+  const rlCard = document.createElement('div');
+  rlCard.className = 'card';
+
+  rlCard.appendChild(renderDefaultsCard());
+  rlCard.appendChild(renderUserOverridesCard());
+
   const saveRow = document.createElement('div');
-  saveRow.style.cssText = 'text-align:right;margin-top:8px;';
+  saveRow.style.cssText = 'text-align:right;margin-top:16px;';
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn btn-primary';
-  saveBtn.textContent = '💾 Save All Changes';
+  saveBtn.textContent = '💾 Save Rate Limits';
   saveBtn.addEventListener('click', saveAll);
   saveRow.appendChild(saveBtn);
-  container.appendChild(saveRow);
+  rlCard.appendChild(saveRow);
+
+  rlPanel.appendChild(rlCard);
+  container.appendChild(rlPanel);
+
+  // ── Tab: Users ────────────────────────────────────────────────────────────
+  const usersPanel = document.createElement('div');
+  usersPanel.id = 'tab-users';
+  usersPanel.className = 'tab-panel';
+  usersPanel.appendChild(renderUsersCard());
+  container.appendChild(usersPanel);
+
+  // ── Tab: Appeals ──────────────────────────────────────────────────────────
+  const appealsPanel = document.createElement('div');
+  appealsPanel.id = 'tab-appeals';
+  appealsPanel.className = 'tab-panel';
+  appealsPanel.appendChild(renderAppealsCard());
+  container.appendChild(appealsPanel);
 }
 
+// ── Rate Limits cards ────────────────────────────────────────────────────────
 function renderDefaultsCard() {
   const card = document.createElement('div');
-  card.className = 'card';
   card.innerHTML = '<h2>Default Rate Limits (all users)</h2>';
 
   const table = document.createElement('table');
@@ -265,11 +357,10 @@ function renderDefaultsCard() {
 }
 
 function renderUserOverridesCard() {
-  const card = document.createElement('div');
-  card.className = 'card';
-  card.innerHTML = '<h2>Per-User Rate Limit Overrides</h2>';
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '24px';
+  wrap.innerHTML = '<h2>Per-User Rate Limit Overrides</h2>';
 
-  // User selector + Add override button
   const headerRow = document.createElement('div');
   headerRow.className = 'user-row-header';
 
@@ -299,15 +390,14 @@ function renderUserOverridesCard() {
   addBtn.textContent = '+ Add Override';
   addBtn.addEventListener('click', addOverride);
   headerRow.appendChild(addBtn);
-  card.appendChild(headerRow);
+  wrap.appendChild(headerRow);
 
-  // Existing overrides
   const overrideContainer = document.createElement('div');
   overrideContainer.id = 'overrideContainer';
   refreshOverrideContainer(overrideContainer);
-  card.appendChild(overrideContainer);
+  wrap.appendChild(overrideContainer);
 
-  return card;
+  return wrap;
 }
 
 function refreshOverrideContainer(container) {
@@ -328,7 +418,7 @@ function refreshOverrideContainer(container) {
 
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:6px;';
-    titleRow.innerHTML = `<strong style="font-size:14px">👤 ${username}</strong>`;
+    titleRow.innerHTML = `<strong style="font-size:14px">👤 ${escHtml(username)}</strong>`;
     const removeUserBtn = document.createElement('button');
     removeUserBtn.className = 'btn btn-danger btn-sm';
     removeUserBtn.textContent = '✕ Remove All';
@@ -351,15 +441,15 @@ function refreshOverrideContainer(container) {
       const featureLabel = (FEATURES.find(f => f.key === key) || { label: key }).label;
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td>${featureLabel}<br><small style="color:var(--muted)">${key}</small></td>
+        <td>${escHtml(featureLabel)}<br><small style="color:var(--muted)">${escHtml(key)}</small></td>
         <td><input type="number" min="1"
-              data-scope="users" data-username="${username}" data-key="${key}" data-field="requests"
+              data-scope="users" data-username="${escHtml(username)}" data-key="${escHtml(key)}" data-field="requests"
               value="${cfg.requests}"></td>
         <td><input type="number" min="1"
-              data-scope="users" data-username="${username}" data-key="${key}" data-field="window_seconds"
+              data-scope="users" data-username="${escHtml(username)}" data-key="${escHtml(key)}" data-field="window_seconds"
               value="${cfg.window_seconds}"></td>
         <td>
-          <button class="btn btn-danger btn-sm" data-rm-user="${username}" data-rm-key="${key}">✕</button>
+          <button class="btn btn-danger btn-sm" data-rm-user="${escHtml(username)}" data-rm-key="${escHtml(key)}">✕</button>
         </td>`;
       tbody.appendChild(tr);
     });
@@ -368,7 +458,6 @@ function refreshOverrideContainer(container) {
     container.appendChild(section);
   });
 
-  // Delete single override
   container.querySelectorAll('[data-rm-user]').forEach(btn => {
     btn.addEventListener('click', () => {
       const u = btn.dataset.rmUser;
@@ -389,22 +478,18 @@ function addOverride() {
     toast('Override for this feature already exists — edit it in the table below', 'error');
     return;
   }
-  // Seed with current default values
   const def = _config.defaults[feature] || { requests: 10, window_seconds: 60 };
   _config.users[username][feature] = { requests: def.requests, window_seconds: def.window_seconds };
   refreshOverrideContainer();
 }
 
-// ── Collect changes from DOM ─────────────────────────────────────────────────
 function collectConfig() {
-  // Collect defaults
   document.querySelectorAll('[data-scope="defaults"]').forEach(inp => {
     const key   = inp.dataset.key;
     const field = inp.dataset.field;
     if (!_config.defaults[key]) _config.defaults[key] = {};
     _config.defaults[key][field] = parseInt(inp.value, 10) || 1;
   });
-  // Collect user overrides
   document.querySelectorAll('[data-scope="users"]').forEach(inp => {
     const username = inp.dataset.username;
     const key      = inp.dataset.key;
@@ -416,7 +501,6 @@ function collectConfig() {
   return _config;
 }
 
-// ── Save ─────────────────────────────────────────────────────────────────────
 async function saveAll() {
   const payload = collectConfig();
   try {
@@ -434,20 +518,246 @@ async function saveAll() {
   }
 }
 
+// ── Users tab ────────────────────────────────────────────────────────────────
+const USER_COLS = [
+  { key: 'userid',                label: 'User ID'           },
+  { key: 'username',              label: 'Username'          },
+  { key: 'cemail',                label: 'Email'             },
+  { key: 'password',              label: 'Password (hash)'   },
+  { key: 'fullname',              label: 'Full Name'         },
+  { key: 'corporation',           label: 'Corporation'       },
+  { key: 'created_at',            label: 'Created'           },
+  { key: 'role_tag',              label: 'Role Tag'          },
+  { key: 'token',                 label: 'Tokens'            },
+  { key: 'target_limit',          label: 'Target Limit'      },
+  { key: 'jd',                    label: 'JD (preview)'      },
+  { key: 'jskillset',             label: 'JSkillset'         },
+  { key: 'google_refresh_token',  label: 'Google Token'      },
+  { key: 'google_token_expires',  label: 'Google Exp.'       },
+  { key: 'last_result_count',     label: 'Last Results'      },
+];
+
+function renderUsersCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<h2>User Management</h2>';
+
+  if (!_users.length) {
+    card.innerHTML += '<p class="empty-msg">No users found.</p>';
+    return card;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'tbl-wrap';
+
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  USER_COLS.forEach(c => {
+    const th = document.createElement('th');
+    th.textContent = c.label;
+    htr.appendChild(th);
+  });
+  // Actions column
+  const thAct = document.createElement('th');
+  thAct.textContent = 'Actions';
+  htr.appendChild(thAct);
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  _users.forEach(u => {
+    const tr = document.createElement('tr');
+    USER_COLS.forEach(c => {
+      const td = document.createElement('td');
+      if (c.key === 'token') {
+        td.innerHTML = `<input class="inline-num" type="number" min="0" data-user="${escHtml(u.username)}" data-field="token" value="${u.token ?? 0}">`;
+      } else if (c.key === 'target_limit') {
+        td.innerHTML = `<input class="inline-num" type="number" min="1" data-user="${escHtml(u.username)}" data-field="target_limit" value="${u.target_limit ?? 10}">`;
+      } else {
+        td.title = String(u[c.key] ?? '');
+        td.textContent = String(u[c.key] ?? '');
+      }
+      tr.appendChild(td);
+    });
+    // Save button
+    const tdAct = document.createElement('td');
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'save-inline';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', () => saveUserRow(u.username, tr));
+    tdAct.appendChild(saveBtn);
+    tr.appendChild(tdAct);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  card.appendChild(wrap);
+  return card;
+}
+
+async function saveUserRow(username, tr) {
+  const tokenInput  = tr.querySelector('[data-field="token"]');
+  const limitInput  = tr.querySelector('[data-field="target_limit"]');
+  const tokenVal    = parseInt(tokenInput?.value, 10);
+  const limitVal    = parseInt(limitInput?.value, 10);
+  const errs = [];
+  if (isNaN(tokenVal) || tokenVal < 0) errs.push('Token must be ≥ 0');
+  if (isNaN(limitVal) || limitVal < 1) errs.push('Target limit must be ≥ 1');
+  if (errs.length) { toast(errs.join('; '), 'error'); return; }
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(`${API}/admin/update-token`, {
+        method: 'POST', headers: csrfHeaders(), credentials: 'same-origin',
+        body: JSON.stringify({ username, token: tokenVal }),
+      }),
+      fetch(`${API}/admin/update-target-limit`, {
+        method: 'POST', headers: csrfHeaders(), credentials: 'same-origin',
+        body: JSON.stringify({ username, target_limit: limitVal }),
+      }),
+    ]);
+    const d1 = await r1.json();
+    const d2 = await r2.json();
+    if (!r1.ok) { toast(d1.error || 'Token update failed', 'error'); return; }
+    if (!r2.ok) { toast(d2.error || 'Target limit update failed', 'error'); return; }
+    toast(`Saved for ${username} ✓`, 'success');
+  } catch (err) {
+    toast('Network error: ' + err.message, 'error');
+  }
+}
+
+// ── Appeals tab ──────────────────────────────────────────────────────────────
+function renderAppealsCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'appealsCard';
+  card.innerHTML = '<h2>Pending Appeals</h2>';
+  renderAppealsTable(card);
+  return card;
+}
+
+function renderAppealsTable(card) {
+  const existing = card.querySelector('.appeals-wrap');
+  if (existing) existing.remove();
+
+  if (!_appeals.length) {
+    const msg = document.createElement('p');
+    msg.className = 'empty-msg';
+    msg.textContent = 'No pending appeals.';
+    card.appendChild(msg);
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'tbl-wrap appeals-wrap';
+
+  const table = document.createElement('table');
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Name</th>
+        <th>Job Title</th>
+        <th>Company</th>
+        <th>LinkedIn URL</th>
+        <th>Appeal Text</th>
+        <th>Actions</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+
+  _appeals.forEach(ap => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escHtml(ap.username)}</td>
+      <td>${escHtml(ap.name)}</td>
+      <td>${escHtml(ap.jobtitle)}</td>
+      <td>${escHtml(ap.company)}</td>
+      <td><a href="${escHtml(ap.linkedinurl)}" target="_blank" rel="noopener" title="${escHtml(ap.linkedinurl)}"
+             class="appeal-url">${escHtml(ap.linkedinurl)}</a></td>
+      <td class="appeal-text">${escHtml(ap.appeal)}</td>
+      <td></td>`;
+    const tdAct = tr.querySelector('td:last-child');
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'btn btn-success btn-sm';
+    approveBtn.style.marginRight = '6px';
+    approveBtn.textContent = '✓ Approve (+1 token)';
+    approveBtn.addEventListener('click', () => handleAppeal(ap, 'approve', tr));
+
+    const rejectBtn = document.createElement('button');
+    rejectBtn.className = 'btn btn-danger btn-sm';
+    rejectBtn.textContent = '✕ Reject';
+    rejectBtn.addEventListener('click', () => handleAppeal(ap, 'reject', tr));
+
+    tdAct.appendChild(approveBtn);
+    tdAct.appendChild(rejectBtn);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  card.appendChild(wrap);
+}
+
+async function handleAppeal(ap, action, tr) {
+  const label = action === 'approve' ? 'Approve (+1 token)' : 'Reject';
+  if (!confirm(`${label} appeal for ${ap.username || ap.linkedinurl}?`)) return;
+  try {
+    const r = await fetch(`${API}/admin/appeal-action`, {
+      method: 'POST',
+      headers: csrfHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify({ linkedinurl: ap.linkedinurl, username: ap.username, action }),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Action failed', 'error'); return; }
+    const msg = action === 'approve'
+      ? `Appeal approved — 1 token added to ${ap.username} ✓`
+      : `Appeal rejected and record removed ✓`;
+    toast(msg, 'success');
+    // Remove from local state and refresh table
+    _appeals = _appeals.filter(a => a.linkedinurl !== ap.linkedinurl);
+    const card = document.getElementById('appealsCard');
+    if (card) {
+      // Update tab label with new count
+      document.querySelectorAll('.tab').forEach(b => {
+        if (b.dataset.tab === 'tab-appeals') {
+          b.textContent = `📋 Appeals${_appeals.length ? ' (' + _appeals.length + ')' : ''}`;
+        }
+      });
+      renderAppealsTable(card);
+    }
+    // Also refresh token in users table if approved
+    if (action === 'approve' && data.new_token !== null && ap.username) {
+      const tokenInput = document.querySelector(
+        `[data-user="${CSS.escape(ap.username)}"][data-field="token"]`
+      );
+      if (tokenInput) tokenInput.value = data.new_token;
+    }
+  } catch (err) {
+    toast('Network error: ' + err.message, 'error');
+  }
+}
+
 // ── Auto-redirect if already logged in ───────────────────────────────────────
 (async () => {
+  // Don't auto-login if the user explicitly logged out this session
+  if (sessionStorage.getItem('admin_logged_out')) return;
   try {
-    // If the user already has a valid session (cookie), skip login screen
     const r = await fetch(`${API}/admin/rate-limits`, { credentials: 'same-origin' });
     if (r.status === 200) {
-      const data = await r.json();
-      _config = data.config || { defaults: {}, users: {} };
-      _users  = data.users  || [];
+      const rlData = await r.json();
+      _config = rlData.config || { defaults: {}, users: {} };
+      _users  = rlData.users  || [];
+      try {
+        const ar = await fetch(`${API}/admin/appeals`, { credentials: 'same-origin' });
+        if (ar.ok) { const ad = await ar.json(); _appeals = ad.appeals || []; }
+      } catch (_) {}
       document.getElementById('loginScreen').style.display = 'none';
       document.getElementById('app').style.display = '';
       renderPage(document.getElementById('mainContent'));
     }
-    // 401/403 → show login form (already visible by default)
   } catch (_) { /* network error — keep login form */ }
 })();
 </script>

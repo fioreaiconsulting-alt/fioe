@@ -47,10 +47,27 @@
                 } catch(_){}
                 window.__ACTIVE_USERID = uid;
               }
+              // Pre-populate Target Limit from user's stored setting
+              var tl = data && data.target_limit;
+              if (tl && parseInt(tl, 10) >= 1) {
+                var inp = document.getElementById('userTargetInput');
+                if (inp) inp.value = parseInt(tl, 10);
+              }
             })
             .catch(function(){ /* silent */ });
         } else {
           window.__ACTIVE_USERID = String(existingUid).trim();
+          // Still fetch target_limit even when userid is already cached
+          fetch('/user/resolve?username=' + encodeURIComponent(activeUsername), { method: 'GET', credentials: 'same-origin' })
+            .then(function(r){ return r.ok ? r.json() : null; })
+            .then(function(data){
+              var tl = data && data.target_limit;
+              if (tl && parseInt(tl, 10) >= 1) {
+                var inp = document.getElementById('userTargetInput');
+                if (inp) inp.value = parseInt(tl, 10);
+              }
+            })
+            .catch(function(){ /* silent */ });
         }
       } catch (_) {}
     })(window.__ACTIVE_USERNAME);
