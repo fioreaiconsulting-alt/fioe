@@ -927,27 +927,35 @@ app.get('/user-tokens', requireLogin, async (req, res) => {
 });
 
 // ── SMTP config persistence ──────────────────────────────────────────────────
-const SMTP_CONFIG_PATH = path.join(__dirname, 'smtp-config.json');
+// Each user's SMTP config is stored in its own file: smtp-config-{username}.json
 
-function loadSmtpConfigs() {
+function smtpConfigPath(username) {
+  // Sanitise username: keep only alphanumeric and underscores to prevent path traversal
+  const safe = username.replace(/[^a-zA-Z0-9_]/g, '_');
+  return path.join(__dirname, `smtp-config-${safe}.json`);
+}
+
+function loadSmtpConfig(username) {
   try {
-    return JSON.parse(fs.readFileSync(SMTP_CONFIG_PATH, 'utf8'));
-  } catch (_) {
-    return {};
+    return JSON.parse(fs.readFileSync(smtpConfigPath(username), 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('loadSmtpConfig parse error:', err.message);
+    return null;
   }
 }
 
-function saveSmtpConfigs(configs) {
-  const tmp = SMTP_CONFIG_PATH + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(configs, null, 2), 'utf8');
-  fs.renameSync(tmp, SMTP_CONFIG_PATH);
+function saveSmtpConfig(username, config) {
+  const p = smtpConfigPath(username);
+  const tmp = p + '.tmp';
+  // NOTE: password is stored as plaintext — ensure these files are outside the web root and not committed.
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf8');
+  fs.renameSync(tmp, p);
 }
 
 // GET /smtp-config – return the current user's saved SMTP configuration
 app.get('/smtp-config', requireLogin, (req, res) => {
   try {
-    const configs = loadSmtpConfigs();
-    const entry = configs[String(req.user.id)];
+    const entry = loadSmtpConfig(req.user.username);
     if (!entry) return res.json({ ok: true, config: null });
     const { userid, username, host, port, user, secure } = entry;
     // Return config without exposing the password
@@ -963,9 +971,7 @@ app.post('/smtp-config', requireLogin, (req, res) => {
   try {
     const { host, port, user, pass, secure } = req.body || {};
     if (!host || !user) return res.status(400).json({ error: 'host and user are required' });
-    const configs = loadSmtpConfigs();
-    // NOTE: password is stored as plaintext — ensure the file is outside the web root and not committed.
-    configs[String(req.user.id)] = {
+    saveSmtpConfig(req.user.username, {
       userid: String(req.user.id),
       username: req.user.username,
       host,
@@ -973,8 +979,7 @@ app.post('/smtp-config', requireLogin, (req, res) => {
       user,
       pass: pass || '',
       secure: !!secure,
-    };
-    saveSmtpConfigs(configs);
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /smtp-config error:', err);

@@ -1341,6 +1341,19 @@ function CandidatesTable({
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
+  // Load saved SMTP config from server when user logs in
+  useEffect(() => {
+    if (!user || !user.username) return;
+    fetch('http://localhost:4000/smtp-config', { credentials: 'include' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && data.ok && data.config) {
+          setSmtpConfig(data.config);
+        }
+      })
+      .catch(() => {}); // ignore errors, user can configure manually
+  }, [user]);
+
   const tableRef = useRef(null);
 
   // User-pinned middle columns (click header to toggle freeze)
@@ -3473,19 +3486,6 @@ export default function App() {
     setLoading(false);
   };
   useEffect(()=>{ if(user) fetchCandidates(); },[user]);
-
-  // Load saved SMTP config from server when user logs in
-  useEffect(() => {
-    if (!user) return;
-    fetch('http://localhost:4000/smtp-config', { credentials: 'include' })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data && data.ok && data.config) {
-          setSmtpConfig(data.config);
-        }
-      })
-      .catch(() => {}); // ignore errors, user can configure manually
-  }, [user]);
 
   // Robust merging (from earlier)
   const mergedCandidates = useMemo(()=>{
