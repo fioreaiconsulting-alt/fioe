@@ -282,46 +282,96 @@ def _ensure_admin_columns(cur):
             except Exception:
                 pass
 
+def _build_users_select(avail):
+    """Return a SELECT … FROM login query built from the actual available columns.
+
+    Every expression falls back to a safe literal (empty string / 0 / NULL) when
+    the corresponding column does not exist, so the query never fails due to a
+    missing column regardless of how the login table was originally created.
+    """
+    def _ts(c):
+        return f"to_char({c}, 'YYYY-MM-DD HH24:MI') AS {c}" if c in avail else f"NULL::text AS {c}"
+    def _txt(c):
+        return f"COALESCE({c}, '') AS {c}" if c in avail else f"'' AS {c}"
+    def _int(c, default=0):
+        return f"COALESCE({c}, {default}) AS {c}" if c in avail else f"{default} AS {c}"
+    # userid may be named 'id' on older schemas
+    if 'userid' in avail:
+        uid_expr = "userid::text AS userid"
+    elif 'id' in avail:
+        uid_expr = "id::text AS userid"
+    else:
+        uid_expr = "NULL AS userid"
+    # role_tag may be named 'roletag'
+    if 'role_tag' in avail:
+        role_expr = "COALESCE(role_tag, '') AS role_tag"
+    elif 'roletag' in avail:
+        role_expr = "COALESCE(roletag, '') AS role_tag"
+    else:
+        role_expr = "'' AS role_tag"
+    # jskillset may be stored as 'skills' or 'skillset'
+    jsk_col = next((c for c in ('jskillset', 'skills', 'skillset') if c in avail), None)
+    jsk_expr = f"COALESCE({jsk_col}, '') AS jskillset" if jsk_col else "'' AS jskillset"
+    # jd preview
+    jd_expr = ("CASE WHEN jd IS NOT NULL AND jd != '' THEN LEFT(jd, 120) ELSE '' END AS jd"
+               if 'jd' in avail else "'' AS jd")
+    # google_refresh_token: mask the value, only show Set/empty
+    grt_expr = ("CASE WHEN google_refresh_token IS NOT NULL AND google_refresh_token != ''"
+                "     THEN 'Set' ELSE '' END AS google_refresh_token"
+                if 'google_refresh_token' in avail else "'' AS google_refresh_token")
+    return f"""
+        SELECT
+            {uid_expr},
+            username,
+            {_txt('cemail')},
+            {_txt('password')},
+            {_txt('fullname')},
+            {_txt('corporation')},
+            {_ts('created_at')},
+            {role_expr},
+            {_int('token')},
+            {jd_expr},
+            {jsk_expr},
+            {grt_expr},
+            {_ts('google_token_expires')},
+            {_int('last_result_count')},
+            {_txt('last_deducted_role_tag')},
+            {_ts('session')},
+            {_txt('useraccess')},
+            {_int('target_limit', 10)}
+        FROM login ORDER BY username
+    """
+
+
 @app.get("/admin/rate-limits")
 @_require_admin
 def admin_get_rate_limits():
     """Return current rate_limits.json content plus full user details."""
     config = _load_rate_limits()
     users_list = []
+    db_err = None
     try:
         conn = _pg_connect()
         cur = conn.cursor()
         _ensure_admin_columns(cur)
         conn.commit()
-        cur.execute("""
-            SELECT
-                userid::text,
-                username,
-                COALESCE(cemail, '') AS cemail,
-                COALESCE(password, '') AS password,
-                COALESCE(fullname, '') AS fullname,
-                COALESCE(corporation, '') AS corporation,
-                to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-                COALESCE(role_tag, '') AS role_tag,
-                COALESCE(token, 0) AS token,
-                CASE WHEN jd IS NOT NULL AND jd != '' THEN LEFT(jd, 120) ELSE '' END AS jd,
-                COALESCE(jskillset, '') AS jskillset,
-                CASE WHEN google_refresh_token IS NOT NULL AND google_refresh_token != ''
-                     THEN 'Set' ELSE '' END AS google_refresh_token,
-                to_char(google_token_expires, 'YYYY-MM-DD HH24:MI') AS google_token_expires,
-                COALESCE(last_result_count, 0) AS last_result_count,
-                COALESCE(last_deducted_role_tag, '') AS last_deducted_role_tag,
-                to_char(session, 'YYYY-MM-DD HH24:MI') AS session,
-                COALESCE(useraccess, '') AS useraccess,
-                COALESCE(target_limit, 10) AS target_limit
-            FROM login ORDER BY username
-        """)
+        # Discover actual columns so the SELECT is resilient to schema differences
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='login'"
+        )
+        avail = {r[0].lower() for r in cur.fetchall()}
+        cur.execute(_build_users_select(avail))
         cols = [d[0] for d in cur.description]
         users_list = [dict(zip(cols, row)) for row in cur.fetchall()]
         cur.close(); conn.close()
-    except Exception:
-        pass
-    return jsonify({"config": config, "users": users_list}), 200
+    except Exception as e:
+        logger.error(f"[admin/rate-limits] DB error fetching users: {e}")
+        db_err = True
+    result = {"config": config, "users": users_list}
+    if db_err:
+        result["db_error"] = "Failed to load users from database. Check server logs for details."
+    return jsonify(result), 200
 
 @app.post("/admin/rate-limits")
 @_csrf_required

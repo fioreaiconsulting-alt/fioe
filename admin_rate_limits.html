@@ -246,6 +246,9 @@ async function loadData() {
     const rlData = await rlRes.json();
     _config = rlData.config || { defaults: {}, users: {} };
     _users  = rlData.users  || [];
+    if (rlData.db_error) {
+      toast('Users could not be loaded from DB — check server logs', 'error');
+    }
 
     if (appRes.ok) {
       const appData = await appRes.json();

@@ -169,37 +169,70 @@ async function ensureAdminColumns() {
   }
 }
 
+// Build a SELECT for the login table using only columns that actually exist.
+// Falls back to safe literals for missing columns so the query never fails.
+function buildUsersSelect(avail) {
+  const ts  = c => avail.has(c) ? `to_char(${c}, 'YYYY-MM-DD HH24:MI') AS ${c}` : `NULL::text AS ${c}`;
+  const txt = c => avail.has(c) ? `COALESCE(${c}, '') AS ${c}` : `'' AS ${c}`;
+  const int = (c, def = 0) => avail.has(c) ? `COALESCE(${c}, ${def}) AS ${c}` : `${def} AS ${c}`;
+  const uid  = avail.has('userid') ? 'userid::text AS userid'
+             : avail.has('id')     ? 'id::text AS userid'
+             : 'NULL AS userid';
+  const role = avail.has('role_tag') ? "COALESCE(role_tag, '') AS role_tag"
+             : avail.has('roletag')  ? "COALESCE(roletag, '') AS role_tag"
+             : "'' AS role_tag";
+  const jskCol = ['jskillset','skills','skillset'].find(c => avail.has(c));
+  const jsk  = jskCol ? `COALESCE(${jskCol}, '') AS jskillset` : `'' AS jskillset`;
+  const jd   = avail.has('jd')
+    ? "CASE WHEN jd IS NOT NULL AND jd != '' THEN LEFT(jd, 120) ELSE '' END AS jd"
+    : "'' AS jd";
+  const grt  = avail.has('google_refresh_token')
+    ? "CASE WHEN google_refresh_token IS NOT NULL AND google_refresh_token != '' THEN 'Set' ELSE '' END AS google_refresh_token"
+    : "'' AS google_refresh_token";
+  return `
+    SELECT
+      ${uid},
+      username,
+      ${txt('cemail')},
+      ${txt('password')},
+      ${txt('fullname')},
+      ${txt('corporation')},
+      ${ts('created_at')},
+      ${role},
+      ${int('token')},
+      ${jd},
+      ${jsk},
+      ${grt},
+      ${ts('google_token_expires')},
+      ${int('last_result_count')},
+      ${txt('last_deducted_role_tag')},
+      ${ts('session')},
+      ${txt('useraccess')},
+      ${int('target_limit', 10)}
+    FROM login ORDER BY username
+  `;
+}
+
 app.get('/admin/rate-limits', dashboardRateLimit, requireAdmin, async (req, res) => {
   const config = loadRateLimits();
   let users = [];
+  let dbError = null;
   try {
     await ensureAdminColumns();
-    const r = await pool.query(`
-      SELECT
-        userid::text,
-        username,
-        COALESCE(cemail, '') AS cemail,
-        COALESCE(password, '') AS password,
-        COALESCE(fullname, '') AS fullname,
-        COALESCE(corporation, '') AS corporation,
-        to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-        COALESCE(role_tag, '') AS role_tag,
-        COALESCE(token, 0) AS token,
-        CASE WHEN jd IS NOT NULL AND jd != '' THEN LEFT(jd, 120) ELSE '' END AS jd,
-        COALESCE(jskillset, '') AS jskillset,
-        CASE WHEN google_refresh_token IS NOT NULL AND google_refresh_token != ''
-             THEN 'Set' ELSE '' END AS google_refresh_token,
-        to_char(google_token_expires, 'YYYY-MM-DD HH24:MI') AS google_token_expires,
-        COALESCE(last_result_count, 0) AS last_result_count,
-        COALESCE(last_deducted_role_tag, '') AS last_deducted_role_tag,
-        to_char(session, 'YYYY-MM-DD HH24:MI') AS session,
-        COALESCE(useraccess, '') AS useraccess,
-        COALESCE(target_limit, 10) AS target_limit
-      FROM login ORDER BY username
-    `);
+    // Discover actual columns so the SELECT is resilient to schema differences
+    const colRes = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='login'`
+    );
+    const avail = new Set(colRes.rows.map(r => r.column_name.toLowerCase()));
+    const r = await pool.query(buildUsersSelect(avail));
     users = r.rows;
-  } catch (_) {}
-  res.json({ config, users });
+  } catch (err) {
+    console.error('[admin/rate-limits] DB error fetching users:', err.message);
+    dbError = true;
+  }
+  const resp = { config, users };
+  if (dbError) resp.db_error = 'Failed to load users from database. Check server logs for details.';
+  res.json(resp);
 });
 
 app.post('/admin/rate-limits', dashboardRateLimit, requireAdmin, (req, res) => {
