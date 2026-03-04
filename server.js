@@ -153,19 +153,97 @@ async function requireAdmin(req, res, next) {
 }
 
 // ── Admin: rate-limits CRUD ───────────────────────────────────────────────────
+async function ensureAdminColumns() {
+  const ddls = [
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS target_limit INTEGER DEFAULT 10`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS last_result_count INTEGER`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS corporation TEXT`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS useraccess TEXT`,
+  ];
+  for (const ddl of ddls) {
+    try { await pool.query(ddl); } catch (_) {}
+  }
+}
+
+// Build a SELECT for the login table using only columns that actually exist.
+// avail must be a Map/object of {column_name -> data_type} from information_schema.
+// Falls back to safe literals for missing columns so the query never fails.
+// For timestamp columns stored as TEXT (to_char only works on date/timestamp types),
+// the column value is returned as-is rather than passed through to_char.
+function buildUsersSelect(avail) {
+  const ts  = c => {
+    if (!avail.has(c)) return `NULL::text AS ${c}`;
+    const dtype = avail.get(c) || '';
+    if (dtype.includes('timestamp') || dtype === 'date') {
+      return `to_char(${c}, 'YYYY-MM-DD HH24:MI') AS ${c}`;
+    }
+    return `COALESCE(${c}::text, '') AS ${c}`;
+  };
+  const txt = c => avail.has(c) ? `COALESCE(${c}, '') AS ${c}` : `'' AS ${c}`;
+  const int = (c, def = 0) => avail.has(c) ? `COALESCE(${c}, ${def}) AS ${c}` : `${def} AS ${c}`;
+  const uid  = avail.has('userid') ? 'userid::text AS userid'
+             : avail.has('id')     ? 'id::text AS userid'
+             : 'NULL AS userid';
+  const role = avail.has('role_tag') ? "COALESCE(role_tag, '') AS role_tag"
+             : avail.has('roletag')  ? "COALESCE(roletag, '') AS role_tag"
+             : "'' AS role_tag";
+  const jskCol = ['jskillset','skills','skillset'].find(c => avail.has(c));
+  const jsk  = jskCol ? `COALESCE(${jskCol}, '') AS jskillset` : `'' AS jskillset`;
+  const jd   = avail.has('jd')
+    ? "CASE WHEN jd IS NOT NULL AND jd != '' THEN LEFT(jd, 120) ELSE '' END AS jd"
+    : "'' AS jd";
+  const grt  = avail.has('google_refresh_token')
+    ? "CASE WHEN google_refresh_token IS NOT NULL AND google_refresh_token != '' THEN 'Set' ELSE '' END AS google_refresh_token"
+    : "'' AS google_refresh_token";
+  return `
+    SELECT
+      ${uid},
+      username,
+      ${txt('cemail')},
+      ${txt('password')},
+      ${txt('fullname')},
+      ${txt('corporation')},
+      ${ts('created_at')},
+      ${role},
+      ${int('token')},
+      ${jd},
+      ${jsk},
+      ${grt},
+      ${ts('google_token_expires')},
+      ${int('last_result_count')},
+      ${txt('last_deducted_role_tag')},
+      ${ts('session')},
+      ${txt('useraccess')},
+      ${int('target_limit', 10)}
+    FROM login ORDER BY username
+  `;
+}
+
 app.get('/admin/rate-limits', dashboardRateLimit, requireAdmin, async (req, res) => {
   const config = loadRateLimits();
   let users = [];
+  let dbError = null;
   try {
-    const r = await pool.query('SELECT username, userid::text, fullname, role_tag FROM login ORDER BY username');
-    users = r.rows.map(u => ({
-      username: u.username,
-      userid:   String(u.userid || ''),
-      fullname: u.fullname || '',
-      role_tag: u.role_tag || '',
-    }));
-  } catch (_) {}
-  res.json({ config, users });
+    await ensureAdminColumns();
+    // Discover actual columns with their data types so the SELECT is resilient
+    // to schema differences and to columns stored as TEXT instead of TIMESTAMPTZ.
+    const colRes = await pool.query(
+      `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='login'`
+    );
+    const avail = new Map(colRes.rows.map(r => [r.column_name.toLowerCase(), r.data_type.toLowerCase()]));
+    const r = await pool.query(buildUsersSelect(avail));
+    users = r.rows;
+  } catch (err) {
+    console.error('[admin/rate-limits] DB error fetching users:', err.message);
+    dbError = true;
+  }
+  const resp = { config, users };
+  if (dbError) resp.db_error = 'Failed to load users from database. Check server logs for details.';
+  res.json(resp);
 });
 
 app.post('/admin/rate-limits', dashboardRateLimit, requireAdmin, (req, res) => {
@@ -182,6 +260,78 @@ app.post('/admin/rate-limits', dashboardRateLimit, requireAdmin, (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+app.post('/admin/update-token', dashboardRateLimit, requireAdmin, async (req, res) => {
+  const { username, token } = req.body || {};
+  if (!username || token === undefined) return res.status(400).json({ error: 'username and token required' });
+  const tokenInt = parseInt(token, 10);
+  if (isNaN(tokenInt) || tokenInt < 0) return res.status(400).json({ error: 'token must be integer >= 0' });
+  try {
+    const r = await pool.query('UPDATE login SET token = $1 WHERE username = $2 RETURNING token', [tokenInt, username]);
+    if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json({ ok: true, username, token: r.rows[0].token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/admin/update-target-limit', dashboardRateLimit, requireAdmin, async (req, res) => {
+  const { username, target_limit } = req.body || {};
+  if (!username || target_limit === undefined) return res.status(400).json({ error: 'username and target_limit required' });
+  const limitInt = parseInt(target_limit, 10);
+  if (isNaN(limitInt) || limitInt < 1) return res.status(400).json({ error: 'target_limit must be integer >= 1' });
+  try {
+    await ensureAdminColumns();
+    const r = await pool.query('UPDATE login SET target_limit = $1 WHERE username = $2 RETURNING target_limit', [limitInt, username]);
+    if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json({ ok: true, username, target_limit: r.rows[0].target_limit });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/admin/appeals', dashboardRateLimit, requireAdmin, async (req, res) => {
+  try {
+    await pool.query(`ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS appeal TEXT`).catch(() => {});
+    const r = await pool.query(`
+      SELECT linkedinurl,
+             COALESCE(name, '') AS name,
+             COALESCE(jobtitle, '') AS jobtitle,
+             COALESCE(company, '') AS company,
+             appeal,
+             COALESCE(username, '') AS username,
+             COALESCE(userid, '') AS userid
+      FROM sourcing
+      WHERE appeal IS NOT NULL AND appeal != ''
+      ORDER BY linkedinurl
+    `);
+    res.json({ appeals: r.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/admin/appeal-action', dashboardRateLimit, requireAdmin, async (req, res) => {
+  const { linkedinurl, username, action } = req.body || {};
+  if (!linkedinurl || !['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ error: "linkedinurl and action ('approve'|'reject') required" });
+  }
+  try {
+    let newToken = null;
+    if (action === 'approve' && username) {
+      const r = await pool.query(
+        'UPDATE login SET token = COALESCE(token, 0) + 1 WHERE username = $1 RETURNING token',
+        [username]
+      );
+      if (r.rows.length) newToken = r.rows[0].token;
+    }
+    const del = await pool.query('DELETE FROM sourcing WHERE linkedinurl = $1', [linkedinurl]);
+    res.json({ ok: true, action, deleted: del.rowCount, new_token: newToken });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 const allowedOrigins = [
   'http://localhost:3000', 'http://127.0.0.1:3000',
@@ -750,6 +900,8 @@ async function ensureLoginColumns() {
     await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP`);
     // Add corporation column for email template tag [Your Company Name]
     await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS corporation TEXT`);
+    // Add per-user target result limit (default 10)
+    await pool.query(`ALTER TABLE "login" ADD COLUMN IF NOT EXISTS target_limit INTEGER DEFAULT 10`);
   } catch (err) {
     console.error('[INIT] Failed to ensure login table columns exist:', err);
   }
