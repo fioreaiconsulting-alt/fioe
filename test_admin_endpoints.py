@@ -14,8 +14,15 @@ from unittest.mock import MagicMock
 # ---------------------------------------------------------------------------
 
 def _build_users_select(avail):
+    """avail is a dict {column_name: data_type} from information_schema.columns."""
     def _ts(c):
-        return f"to_char({c}, 'YYYY-MM-DD HH24:MI') AS {c}" if c in avail else f"NULL::text AS {c}"
+        if c not in avail:
+            return f"NULL::text AS {c}"
+        # Only use to_char for actual date/timestamp types; TEXT columns are returned as-is.
+        dtype = avail[c]
+        if 'timestamp' in dtype or dtype == 'date':
+            return f"to_char({c}, 'YYYY-MM-DD HH24:MI') AS {c}"
+        return f"COALESCE({c}::text, '') AS {c}"
     def _txt(c):
         return f"COALESCE({c}, '') AS {c}" if c in avail else f"'' AS {c}"
     def _int(c, default=0):
@@ -95,16 +102,23 @@ def _ensure_admin_columns(cur):
 
 class TestBuildUsersSelect(unittest.TestCase):
 
+    # Convenience: build an avail dict where all timestamp-like columns have the
+    # correct data_type so to_char is exercised, all others are 'text'.
+    _FULL_AVAIL = {
+        'userid': 'integer', 'username': 'text', 'cemail': 'text',
+        'password': 'text', 'fullname': 'text', 'corporation': 'text',
+        'created_at': 'timestamp without time zone', 'role_tag': 'text',
+        'token': 'integer', 'jd': 'text', 'jskillset': 'text',
+        'google_refresh_token': 'text',
+        'google_token_expires': 'timestamp without time zone',
+        'last_result_count': 'integer', 'last_deducted_role_tag': 'text',
+        'session': 'timestamp with time zone',
+        'useraccess': 'text', 'target_limit': 'integer',
+    }
+
     def test_full_schema_contains_all_aliases(self):
         """A fully-populated schema produces a SELECT with all expected aliases."""
-        avail = {
-            'userid', 'username', 'cemail', 'password', 'fullname', 'corporation',
-            'created_at', 'role_tag', 'token', 'jd', 'jskillset',
-            'google_refresh_token', 'google_token_expires',
-            'last_result_count', 'last_deducted_role_tag', 'session',
-            'useraccess', 'target_limit',
-        }
-        sql = _build_users_select(avail)
+        sql = _build_users_select(self._FULL_AVAIL)
         for alias in ('userid', 'cemail', 'password', 'fullname', 'corporation',
                       'created_at', 'role_tag', 'token', 'jd', 'jskillset',
                       'google_refresh_token', 'google_token_expires',
@@ -115,7 +129,7 @@ class TestBuildUsersSelect(unittest.TestCase):
 
     def test_minimal_schema_uses_safe_fallbacks(self):
         """A login table with only username/password produces safe literal fallbacks."""
-        sql = _build_users_select({'username', 'password'})
+        sql = _build_users_select({'username': 'text', 'password': 'text'})
         self.assertIn('NULL AS userid', sql)
         self.assertIn("'' AS role_tag", sql)
         self.assertIn('0 AS token', sql)
@@ -124,51 +138,58 @@ class TestBuildUsersSelect(unittest.TestCase):
 
     def test_roletag_fallback(self):
         """'roletag' column maps correctly to the role_tag alias."""
-        sql = _build_users_select({'username', 'roletag'})
+        sql = _build_users_select({'username': 'text', 'roletag': 'text'})
         self.assertIn('roletag', sql)
         self.assertIn('AS role_tag', sql)
         self.assertNotIn("'' AS role_tag", sql)
 
     def test_skills_fallback_for_jskillset(self):
         """'skills' column is accepted as fallback for jskillset."""
-        sql = _build_users_select({'username', 'skills'})
+        sql = _build_users_select({'username': 'text', 'skills': 'text'})
         self.assertIn('skills', sql)
         self.assertIn('AS jskillset', sql)
 
     def test_id_fallback_for_userid(self):
         """'id' column is used when 'userid' is absent."""
-        sql = _build_users_select({'id', 'username'})
+        sql = _build_users_select({'id': 'integer', 'username': 'text'})
         self.assertIn('id::text AS userid', sql)
 
     def test_google_refresh_token_always_masked(self):
         """google_refresh_token must never expose the raw value."""
-        sql = _build_users_select({'username', 'google_refresh_token'})
+        sql = _build_users_select({'username': 'text', 'google_refresh_token': 'text'})
         self.assertIn("'Set'", sql)
         self.assertNotIn('COALESCE(google_refresh_token', sql)
 
     def test_no_alias_duplicates(self):
         """Each output alias appears exactly once."""
-        avail = {
-            'userid', 'username', 'cemail', 'password', 'fullname', 'corporation',
-            'created_at', 'role_tag', 'token', 'jd', 'jskillset',
-            'google_refresh_token', 'google_token_expires',
-            'last_result_count', 'last_deducted_role_tag', 'session',
-            'useraccess', 'target_limit',
-        }
-        sql = _build_users_select(avail)
+        sql = _build_users_select(self._FULL_AVAIL)
         for alias in ('userid', 'cemail', 'role_tag', 'jskillset', 'target_limit'):
             count = sql.count(f'AS {alias}')
             self.assertEqual(count, 1, f"Alias '{alias}' appears {count} times, expected 1")
 
     def test_missing_created_at_does_not_raise(self):
         """Query builds fine even when created_at is absent (common in older schemas)."""
-        sql = _build_users_select({'username', 'password', 'userid'})
+        sql = _build_users_select({'username': 'text', 'password': 'text', 'userid': 'integer'})
         self.assertIn('NULL::text AS created_at', sql)
 
     def test_missing_google_token_expires_does_not_raise(self):
         """Query builds fine even when google_token_expires is absent."""
-        sql = _build_users_select({'username', 'password', 'userid'})
+        sql = _build_users_select({'username': 'text', 'password': 'text', 'userid': 'integer'})
         self.assertIn('NULL::text AS google_token_expires', sql)
+
+    def test_session_as_text_does_not_use_to_char(self):
+        """When session column is TEXT, to_char must NOT be used (it would crash)."""
+        sql = _build_users_select({'username': 'text', 'session': 'text'})
+        # Must not call to_char on a text session column
+        self.assertNotIn('to_char(session', sql)
+        # Must still expose a 'session' alias
+        self.assertIn('AS session', sql)
+
+    def test_session_as_timestamptz_uses_to_char(self):
+        """When session column is TIMESTAMPTZ, to_char should be used."""
+        sql = _build_users_select({'username': 'text', 'session': 'timestamp with time zone'})
+        self.assertIn('to_char(session', sql)
+        self.assertIn('AS session', sql)
 
 
 class TestEnsureAdminColumns(unittest.TestCase):

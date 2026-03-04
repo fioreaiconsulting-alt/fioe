@@ -285,12 +285,19 @@ def _ensure_admin_columns(cur):
 def _build_users_select(avail):
     """Return a SELECT … FROM login query built from the actual available columns.
 
+    avail must be a dict {column_name: data_type} (from information_schema.columns).
     Every expression falls back to a safe literal (empty string / 0 / NULL) when
     the corresponding column does not exist, so the query never fails due to a
     missing column regardless of how the login table was originally created.
     """
     def _ts(c):
-        return f"to_char({c}, 'YYYY-MM-DD HH24:MI') AS {c}" if c in avail else f"NULL::text AS {c}"
+        if c not in avail:
+            return f"NULL::text AS {c}"
+        # Only use to_char for actual date/timestamp types; TEXT columns are returned as-is.
+        dtype = avail[c]
+        if 'timestamp' in dtype or dtype == 'date':
+            return f"to_char({c}, 'YYYY-MM-DD HH24:MI') AS {c}"
+        return f"COALESCE({c}::text, '') AS {c}"
     def _txt(c):
         return f"COALESCE({c}, '') AS {c}" if c in avail else f"'' AS {c}"
     def _int(c, default=0):
@@ -355,12 +362,14 @@ def admin_get_rate_limits():
         cur = conn.cursor()
         _ensure_admin_columns(cur)
         conn.commit()
-        # Discover actual columns so the SELECT is resilient to schema differences
+        # Discover actual columns (with their data types) so the SELECT is
+        # resilient to schema differences and to columns stored as TEXT instead
+        # of TIMESTAMPTZ (to_char only works on date/timestamp types).
         cur.execute(
-            "SELECT column_name FROM information_schema.columns "
+            "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_schema='public' AND table_name='login'"
         )
-        avail = {r[0].lower() for r in cur.fetchall()}
+        avail = {r[0].lower(): r[1].lower() for r in cur.fetchall()}
         cur.execute(_build_users_select(avail))
         cols = [d[0] for d in cur.description]
         users_list = [dict(zip(cols, row)) for row in cur.fetchall()]

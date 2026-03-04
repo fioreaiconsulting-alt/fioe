@@ -170,9 +170,19 @@ async function ensureAdminColumns() {
 }
 
 // Build a SELECT for the login table using only columns that actually exist.
+// avail must be a Map/object of {column_name -> data_type} from information_schema.
 // Falls back to safe literals for missing columns so the query never fails.
+// For timestamp columns stored as TEXT (to_char only works on date/timestamp types),
+// the column value is returned as-is rather than passed through to_char.
 function buildUsersSelect(avail) {
-  const ts  = c => avail.has(c) ? `to_char(${c}, 'YYYY-MM-DD HH24:MI') AS ${c}` : `NULL::text AS ${c}`;
+  const ts  = c => {
+    if (!avail.has(c)) return `NULL::text AS ${c}`;
+    const dtype = avail.get(c) || '';
+    if (dtype.includes('timestamp') || dtype === 'date') {
+      return `to_char(${c}, 'YYYY-MM-DD HH24:MI') AS ${c}`;
+    }
+    return `COALESCE(${c}::text, '') AS ${c}`;
+  };
   const txt = c => avail.has(c) ? `COALESCE(${c}, '') AS ${c}` : `'' AS ${c}`;
   const int = (c, def = 0) => avail.has(c) ? `COALESCE(${c}, ${def}) AS ${c}` : `${def} AS ${c}`;
   const uid  = avail.has('userid') ? 'userid::text AS userid'
@@ -219,11 +229,12 @@ app.get('/admin/rate-limits', dashboardRateLimit, requireAdmin, async (req, res)
   let dbError = null;
   try {
     await ensureAdminColumns();
-    // Discover actual columns so the SELECT is resilient to schema differences
+    // Discover actual columns with their data types so the SELECT is resilient
+    // to schema differences and to columns stored as TEXT instead of TIMESTAMPTZ.
     const colRes = await pool.query(
-      `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='login'`
+      `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='login'`
     );
-    const avail = new Set(colRes.rows.map(r => r.column_name.toLowerCase()));
+    const avail = new Map(colRes.rows.map(r => [r.column_name.toLowerCase(), r.data_type.toLowerCase()]));
     const r = await pool.query(buildUsersSelect(avail));
     users = r.rows;
   } catch (err) {
