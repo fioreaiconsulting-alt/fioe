@@ -209,6 +209,7 @@ document.getElementById('loginForm').addEventListener('submit', async e => {
     });
     const data = await r.json();
     if (!r.ok || !data.ok) { msgEl.textContent = data.error || 'Login failed'; return; }
+    sessionStorage.removeItem('admin_logged_out');
     _session = { username: data.username, userid: data.userid };
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('app').style.display = '';
@@ -219,8 +220,13 @@ document.getElementById('loginForm').addEventListener('submit', async e => {
 });
 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
-  await fetch(`${API}/logout`, { method: 'POST', headers: csrfHeaders(), credentials: 'same-origin' });
-  location.reload();
+  try {
+    await fetch(`${API}/logout`, { method: 'POST', headers: csrfHeaders(), credentials: 'same-origin' });
+  } catch (_) {}
+  sessionStorage.setItem('admin_logged_out', '1');
+  _session = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginScreen').style.display = '';
 });
 
 // ── Load data ────────────────────────────────────────────────────────────────
@@ -733,6 +739,8 @@ async function handleAppeal(ap, action, tr) {
 
 // ── Auto-redirect if already logged in ───────────────────────────────────────
 (async () => {
+  // Don't auto-login if the user explicitly logged out this session
+  if (sessionStorage.getItem('admin_logged_out')) return;
   try {
     const r = await fetch(`${API}/admin/rate-limits`, { credentials: 'same-origin' });
     if (r.status === 200) {

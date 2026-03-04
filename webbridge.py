@@ -252,7 +252,14 @@ def _pg_connect():
     )
 
 def _ensure_admin_columns(cur):
-    """Idempotently add columns used by admin endpoints."""
+    """Idempotently add columns used by admin endpoints.
+
+    Each DDL is wrapped in a savepoint so that a failure (e.g. column already
+    exists with a different type, permission error, lock timeout) does NOT
+    abort the surrounding psycopg2 transaction.  Without savepoints, a failed
+    ALTER TABLE leaves the connection in an 'InFailedSqlTransaction' state and
+    every subsequent statement in the same transaction also fails.
+    """
     ddls = [
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS target_limit INTEGER DEFAULT 10",
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_result_count INTEGER",
@@ -261,12 +268,19 @@ def _ensure_admin_columns(cur):
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS google_refresh_token TEXT",
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP",
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS corporation TEXT",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS useraccess TEXT",
     ]
-    for ddl in ddls:
+    for i, ddl in enumerate(ddls):
+        sp = f"_adm_col_{i}"
         try:
+            cur.execute(f"SAVEPOINT {sp}")
             cur.execute(ddl)
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
         except Exception:
-            pass
+            try:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            except Exception:
+                pass
 
 @app.get("/admin/rate-limits")
 @_require_admin
@@ -3549,9 +3563,25 @@ def login_account():
             if stored_pw != hashed and stored_pw != password:
                 return jsonify({"error":"Invalid credentials"}), 401
 
-        return jsonify({"ok": True, "userid": userid or "", "username": username, "cemail": cemail or "", "fullname": fullname or "", "role_tag": role_tag or "", "token": int(token_val or 0)}), 200
+        resp = jsonify({"ok": True, "userid": userid or "", "username": username, "cemail": cemail or "", "fullname": fullname or "", "role_tag": role_tag or "", "token": int(token_val or 0)})
+        # httponly=False: AutoSourcing.html (and other pages) read the username
+        # cookie via document.cookie to identify the logged-in user.  This
+        # matches the behaviour of chatbot_api.py which also sets httponly=False.
+        _cookie_opts = dict(max_age=2592000, path="/", httponly=False, samesite="lax",
+                            secure=os.getenv("FORCE_HTTPS", "0") == "1")
+        resp.set_cookie("username", username, **_cookie_opts)
+        resp.set_cookie("userid", str(userid or ""), **_cookie_opts)
+        return resp, 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.post("/logout")
+@_csrf_required
+def logout_account():
+    resp = jsonify({"ok": True})
+    resp.delete_cookie("username", path="/")
+    resp.delete_cookie("userid", path="/")
+    return resp
 
 @app.post("/register")
 @_rate("10 per minute")

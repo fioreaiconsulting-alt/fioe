@@ -159,6 +159,10 @@ async function ensureAdminColumns() {
     `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS last_result_count INTEGER`,
     `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT`,
     `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS corporation TEXT`,
+    `ALTER TABLE "login" ADD COLUMN IF NOT EXISTS useraccess TEXT`,
   ];
   for (const ddl of ddls) {
     try { await pool.query(ddl); } catch (_) {}
