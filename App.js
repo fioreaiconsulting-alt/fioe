@@ -297,6 +297,13 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   if (!isOpen) return null;
 
   // Apply dynamic template tags from candidate and user data
+  const getInterviewDateTimeStrings = () => {
+    const selectedSlot = (selectedSlotIndex != null && calendarSlots[selectedSlotIndex]) ? calendarSlots[selectedSlotIndex] : null;
+    const interviewDate = selectedSlot ? new Date(selectedSlot.start).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : '';
+    const interviewTime = selectedSlot ? new Date(selectedSlot.start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+    return { interviewDate, interviewTime };
+  };
+
   const applyTags = (text) => {
     let t = text;
     // Candidate tags
@@ -309,6 +316,11 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
     // User / sender tags
     t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
     t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
+    // Interview / calendar tags
+    const { interviewDate, interviewTime } = getInterviewDateTimeStrings();
+    t = t.replace(/\[Date of Interview\]/gi, interviewDate);
+    t = t.replace(/\[Time of Interview\]/gi, interviewTime);
+    t = t.replace(/\[Video Conference Link\]/gi, meetLink || '');
     return t;
   };
 
@@ -322,6 +334,11 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
     t = t.replace(/\[name\]/gi, c?.name || '');
     t = t.replace(/\[Your Name\]/gi, userData?.full_name || userData?.username || '');
     t = t.replace(/\[Your Company Name\]/gi, userData?.corporation || '');
+    // Interview / calendar tags (same slot for all recipients when bulk-sending)
+    const { interviewDate, interviewTime } = getInterviewDateTimeStrings();
+    t = t.replace(/\[Date of Interview\]/gi, interviewDate);
+    t = t.replace(/\[Time of Interview\]/gi, interviewTime);
+    t = t.replace(/\[Video Conference Link\]/gi, meetLink || '');
     return t;
   };
 
@@ -769,6 +786,10 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                       <div><b style={{color:'#93c5fd'}}>[Country]</b> – Candidate's geographic location</div>
                       <div><b style={{color:'#86efac'}}>[Your Name]</b> – Your account's full name</div>
                       <div><b style={{color:'#86efac'}}>[Your Company Name]</b> – Your registered company name</div>
+                      <div style={{ borderTop: '1px solid #334155', marginTop: 6, paddingTop: 6, fontWeight: 700, fontSize: 11, color: '#94a3b8' }}>Calendar / Interview</div>
+                      <div><b style={{color:'#fde68a'}}>[Date of Interview]</b> – Selected interview date (from calendar slot)</div>
+                      <div><b style={{color:'#fde68a'}}>[Time of Interview]</b> – Selected interview time (from calendar slot)</div>
+                      <div><b style={{color:'#fde68a'}}>[Video Conference Link]</b> – Google Meet link (after creating event)</div>
                     </div>
                   )}
                 </span>
