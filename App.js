@@ -244,6 +244,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   const [files, setFiles] = useState([]);
   const [sending, setSending] = useState(false);
   const [directSending, setDirectSending] = useState(false); // State for Direct Send
+  const [sendMode, setSendMode] = useState('individual'); // 'individual' (BCC-style) or 'group' (CC-style)
 
   // Calendar / Google Meet state
   const [addMeet, setAddMeet] = useState(false);
@@ -554,8 +555,8 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
     const isMulti = recipientCandidates && recipientCandidates.length > 1;
 
     try {
-      if (isMulti) {
-        // Sequential per-candidate dispatch — each email is fully personalised
+      if (isMulti && sendMode === 'individual') {
+        // Sequential per-candidate dispatch — each email is fully personalised, recipient only sees their own address
         let sent = 0;
         const failures = [];
         for (const cand of recipientCandidates) {
@@ -599,7 +600,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
         }
         onClose();
       } else {
-        // Single-candidate send (original behaviour)
+        // Single-candidate send or group send (all recipients see each other)
         let finalBody = applyTags(body);
         if (meetLink && !finalBody.includes(meetLink)) {
           finalBody += '\n\nJoin meeting: ' + meetLink;
@@ -697,6 +698,23 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                 />
               </div>
             </div>
+
+            {/* Send Mode Toggle — only shown when multiple recipients are selected */}
+            {recipientCandidates && recipientCandidates.length > 1 && (
+              <div style={{ marginBottom: 16, padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: '#0369a1' }}>Recipient Visibility</div>
+                <div style={{ display: 'flex', gap: 20 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                    <input type="radio" name="sendMode" value="individual" checked={sendMode === 'individual'} onChange={() => setSendMode('individual')} />
+                    <span><b>Send individually</b> – each recipient gets a separate email and sees only their own address <span style={{ color: '#0369a1', fontSize: 12 }}>(default, recommended)</span></span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                    <input type="radio" name="sendMode" value="group" checked={sendMode === 'group'} onChange={() => setSendMode('group')} />
+                    <span><b>Send as group</b> – one email to all recipients; everyone sees each other's address</span>
+                  </label>
+                </div>
+              </div>
+            )}
 
             {/* Template & AI Tools Section */}
             <div style={{ marginBottom: 16, padding: '12px', background: '#f8fafc', borderRadius: 8, border: '1px solid var(--neutral-border)' }}>
@@ -1775,6 +1793,7 @@ function CandidatesTable({
                   <option value="Junior">Junior</option>
                   <option value="Mid">Mid</option>
                   <option value="Senior">Senior</option>
+                  <option value="Lead">Lead</option>
                   <option value="Manager">Manager</option>
                   <option value="Director">Director</option>
                   <option value="Executive">Executive</option>
