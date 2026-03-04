@@ -854,7 +854,7 @@ app.post('/login', userRateLimit('login'), async (req, res) => {
       ok: true,
       userid: uid,
       username: user.username,
-      full_name: user.full_name || user.username,
+      full_name: user.fullname || user.username,
       corporation: user.corporation || ''
     });
 
@@ -877,7 +877,7 @@ app.get('/user/resolve', async (req, res) => {
   if (userid && username) {
     // UPDATED: query full_name from DB instead of just returning cookies
     try {
-      const r = await pool.query('SELECT full_name, corporation FROM login WHERE username = $1', [username]);
+      const r = await pool.query('SELECT fullname AS full_name, corporation FROM login WHERE username = $1', [username]);
       const full_name = (r.rows.length > 0 && r.rows[0].full_name) ? r.rows[0].full_name : "";
       const corporation = (r.rows.length > 0 && r.rows[0].corporation) ? r.rows[0].corporation : "";
       return res.json({ ok: true, userid, username, full_name, corporation });
@@ -891,7 +891,7 @@ app.get('/user/resolve', async (req, res) => {
   const qName = req.query.username;
   if (qName) {
      try {
-       const result = await pool.query('SELECT id, username, full_name, corporation FROM login WHERE username = $1', [qName]);
+       const result = await pool.query('SELECT id, username, fullname AS full_name, corporation FROM login WHERE username = $1', [qName]);
        if (result.rows.length > 0) {
          const u = result.rows[0];
          return res.json({ ok: true, userid: u.id, username: u.username, full_name: u.full_name, corporation: u.corporation || '' });

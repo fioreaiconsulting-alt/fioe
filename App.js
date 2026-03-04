@@ -235,7 +235,7 @@ function EmailVerificationModal({ data, onClose, email }) {
 }
 
 /* ========================= EMAIL COMPOSE MODAL ========================= */
-function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candidateData, userData, smtpConfig, recipientCandidates = [] }) {
+function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candidateData, userData, smtpConfig, recipientCandidates = [], onSendSuccess, statusOptions = [] }) {
   const [from, setFrom] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -245,6 +245,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   const [sending, setSending] = useState(false);
   const [directSending, setDirectSending] = useState(false); // State for Direct Send
   const [sendMode, setSendMode] = useState('individual'); // 'individual' (BCC-style) or 'group' (CC-style)
+  const [recipientVisibilityExpanded, setRecipientVisibilityExpanded] = useState(false);
 
   // Calendar / Google Meet state
   const [addMeet, setAddMeet] = useState(false);
@@ -595,8 +596,16 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
         }
         if (failures.length === 0) {
           alert(`${sent} email${sent !== 1 ? 's' : ''} sent successfully!`);
+          if (typeof onSendSuccess === 'function') onSendSuccess(recipientCandidates);
         } else {
           alert(`${sent} sent. ${failures.length} failed:\n${failures.join('\n')}`);
+          if (sent > 0 && typeof onSendSuccess === 'function') {
+            const sentCandidates = recipientCandidates.filter(c => {
+              const e = (c.email || '').trim();
+              return e && !failures.some(f => f.includes(e));
+            });
+            if (sentCandidates.length) onSendSuccess(sentCandidates);
+          }
         }
         onClose();
       } else {
@@ -622,6 +631,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to send');
         alert('Email sent successfully!');
+        if (typeof onSendSuccess === 'function') onSendSuccess(recipientCandidates);
         onClose();
       }
     } catch (e) {
@@ -699,20 +709,36 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
               </div>
             </div>
 
-            {/* Send Mode Toggle — only shown when multiple recipients are selected */}
+            {/* Recipient Visibility — collapsible bar, only shown when multiple recipients are selected */}
             {recipientCandidates && recipientCandidates.length > 1 && (
-              <div style={{ marginBottom: 16, padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: '#0369a1' }}>Recipient Visibility</div>
-                <div style={{ display: 'flex', gap: 20 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
-                    <input type="radio" name="sendMode" value="individual" checked={sendMode === 'individual'} onChange={() => setSendMode('individual')} />
-                    <span><b>Send individually</b> – each recipient gets a separate email and sees only their own address <span style={{ color: '#0369a1', fontSize: 12 }}>(default, recommended)</span></span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
-                    <input type="radio" name="sendMode" value="group" checked={sendMode === 'group'} onChange={() => setSendMode('group')} />
-                    <span><b>Send as group</b> – one email to all recipients; everyone sees each other's address</span>
-                  </label>
-                </div>
+              <div style={{ marginBottom: 16 }}>
+                <button
+                  type="button"
+                  onClick={() => setRecipientVisibilityExpanded(e => !e)}
+                  aria-expanded={recipientVisibilityExpanded}
+                  aria-label={`Recipient Visibility – ${sendMode === 'individual' ? 'Send individually' : 'Send as group'}. Click to ${recipientVisibilityExpanded ? 'collapse' : 'expand'}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', width: '100%', textAlign: 'left', color: '#0369a1', fontWeight: 700, fontSize: 13 }}
+                >
+                  <span style={{ fontSize: 11, transition: 'transform 0.15s', display: 'inline-block', transform: recipientVisibilityExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                  Recipient Visibility
+                  <span style={{ marginLeft: 'auto', fontWeight: 400, fontSize: 12, color: '#0369a1' }}>
+                    {sendMode === 'individual' ? '✓ Send individually (default)' : 'Send as group'}
+                  </span>
+                </button>
+                {recipientVisibilityExpanded && (
+                  <div style={{ padding: '10px 14px', background: '#f0f9ff', borderRadius: '0 0 8px 8px', border: '1px solid #bae6fd', borderTop: 'none' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                        <input type="radio" name="sendMode" value="individual" checked={sendMode === 'individual'} onChange={() => setSendMode('individual')} style={{ marginTop: 2 }} />
+                        <span><b>Send individually</b> – each recipient gets a separate email and sees only their own address <span style={{ color: '#0369a1', fontSize: 12 }}>(default, recommended)</span></span>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                        <input type="radio" name="sendMode" value="group" checked={sendMode === 'group'} onChange={() => setSendMode('group')} style={{ marginTop: 2 }} />
+                        <span><b>Send as group</b> – one email to all recipients; everyone sees each other's address</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1581,6 +1607,16 @@ function CandidatesTable({
     setEmailModalOpen(true);
   };
 
+  const handleEmailSendSuccess = (sentCandidates) => {
+    if (!Array.isArray(sentCandidates) || !sentCandidates.length) return;
+    if (!statusOptions.includes('Contacted')) return;
+    sentCandidates.forEach(cand => {
+      if (cand && cand.id !== null && cand.id !== undefined) {
+        handleEditChange(cand.id, 'sourcing_status', 'Contacted');
+      }
+    });
+  };
+
   const handleEditChange = (id, field, value) => {
     if (['skillset', 'type'].includes(field)) return;
     if (field === 'compensation' && value !== '' && !/^\d*\.?\d*$/.test(value)) return;
@@ -2117,6 +2153,8 @@ function CandidatesTable({
         userData={user}
         smtpConfig={smtpConfig}
         recipientCandidates={emailRecipients}
+        onSendSuccess={handleEmailSendSuccess}
+        statusOptions={statusOptions}
       />
       <SmtpConfigModal
         isOpen={smtpModalOpen}
