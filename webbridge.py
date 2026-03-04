@@ -240,28 +240,69 @@ def _csrf_required(f):
 
 # ── Admin: rate-limit management API ──────────────────────────────────────────
 
+def _pg_connect():
+    """Return a new psycopg2 connection using environment variables."""
+    import psycopg2
+    return psycopg2.connect(
+        host=os.getenv("PGHOST", "localhost"),
+        port=int(os.getenv("PGPORT", "5432")),
+        user=os.getenv("PGUSER", "postgres"),
+        password=os.getenv("PGPASSWORD", ""),
+        dbname=os.getenv("PGDATABASE", "candidate_db"),
+    )
+
+def _ensure_admin_columns(cur):
+    """Idempotently add columns used by admin endpoints."""
+    ddls = [
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS target_limit INTEGER DEFAULT 10",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_result_count INTEGER",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS last_deducted_role_tag TEXT",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS session TIMESTAMPTZ",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS google_refresh_token TEXT",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS corporation TEXT",
+    ]
+    for ddl in ddls:
+        try:
+            cur.execute(ddl)
+        except Exception:
+            pass
+
 @app.get("/admin/rate-limits")
 @_require_admin
 def admin_get_rate_limits():
-    """Return current rate_limits.json content plus all known usernames."""
+    """Return current rate_limits.json content plus full user details."""
     config = _load_rate_limits()
-    # Also return list of all usernames so the UI can populate the dropdown
     users_list = []
     try:
-        import psycopg2
-        conn = psycopg2.connect(
-            host=os.getenv("PGHOST", "localhost"),
-            port=int(os.getenv("PGPORT", "5432")),
-            user=os.getenv("PGUSER", "postgres"),
-            password=os.getenv("PGPASSWORD", ""),
-            dbname=os.getenv("PGDATABASE", "candidate_db"),
-        )
+        conn = _pg_connect()
         cur = conn.cursor()
-        cur.execute("SELECT username, userid, fullname, useraccess FROM login ORDER BY username")
-        users_list = [
-            {"username": r[0], "userid": str(r[1] or ""), "fullname": r[2] or "", "useraccess": r[3] or ""}
-            for r in cur.fetchall()
-        ]
+        _ensure_admin_columns(cur)
+        conn.commit()
+        cur.execute("""
+            SELECT
+                userid::text,
+                username,
+                COALESCE(cemail, '') AS cemail,
+                COALESCE(fullname, '') AS fullname,
+                COALESCE(corporation, '') AS corporation,
+                to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                COALESCE(role_tag, '') AS role_tag,
+                COALESCE(token, 0) AS token,
+                CASE WHEN jd IS NOT NULL AND jd != '' THEN LEFT(jd, 120) ELSE '' END AS jd,
+                COALESCE(jskillset, '') AS jskillset,
+                CASE WHEN google_refresh_token IS NOT NULL AND google_refresh_token != ''
+                     THEN 'Set' ELSE '' END AS google_refresh_token,
+                to_char(google_token_expires, 'YYYY-MM-DD HH24:MI') AS google_token_expires,
+                COALESCE(last_result_count, 0) AS last_result_count,
+                COALESCE(last_deducted_role_tag, '') AS last_deducted_role_tag,
+                to_char(session, 'YYYY-MM-DD HH24:MI') AS session,
+                COALESCE(useraccess, '') AS useraccess,
+                COALESCE(target_limit, 10) AS target_limit
+            FROM login ORDER BY username
+        """)
+        cols = [d[0] for d in cur.description]
+        users_list = [dict(zip(cols, row)) for row in cur.fetchall()]
         cur.close(); conn.close()
     except Exception:
         pass
@@ -290,6 +331,131 @@ def admin_save_rate_limits():
                 return jsonify({"error": f"'{scope_label}.{feat}.window_seconds' must be int ≥ 1"}), 400
     _save_rate_limits({"defaults": defaults, "users": users})
     return jsonify({"ok": True}), 200
+
+@app.post("/admin/update-token")
+@_csrf_required
+@_require_admin
+def admin_update_token():
+    """Set the token balance for a specific user."""
+    body = request.get_json(force=True, silent=True) or {}
+    username = (body.get("username") or "").strip()
+    token_val = body.get("token")
+    if not username or token_val is None:
+        return jsonify({"error": "username and token required"}), 400
+    try:
+        token_int = int(token_val)
+        if token_int < 0:
+            return jsonify({"error": "token must be >= 0"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "token must be an integer"}), 400
+    try:
+        conn = _pg_connect()
+        cur = conn.cursor()
+        cur.execute("UPDATE login SET token = %s WHERE username = %s RETURNING token", (token_int, username))
+        row = cur.fetchone()
+        conn.commit(); cur.close(); conn.close()
+        if not row:
+            return jsonify({"error": "User not found"}), 404
+        return jsonify({"ok": True, "username": username, "token": row[0]}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.post("/admin/update-target-limit")
+@_csrf_required
+@_require_admin
+def admin_update_target_limit():
+    """Set the per-user default result target limit."""
+    body = request.get_json(force=True, silent=True) or {}
+    username = (body.get("username") or "").strip()
+    limit_val = body.get("target_limit")
+    if not username or limit_val is None:
+        return jsonify({"error": "username and target_limit required"}), 400
+    try:
+        limit_int = int(limit_val)
+        if limit_int < 1:
+            return jsonify({"error": "target_limit must be >= 1"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "target_limit must be an integer"}), 400
+    try:
+        conn = _pg_connect()
+        cur = conn.cursor()
+        _ensure_admin_columns(cur)
+        cur.execute(
+            "UPDATE login SET target_limit = %s WHERE username = %s RETURNING target_limit",
+            (limit_int, username)
+        )
+        row = cur.fetchone()
+        conn.commit(); cur.close(); conn.close()
+        if not row:
+            return jsonify({"error": "User not found"}), 404
+        return jsonify({"ok": True, "username": username, "target_limit": row[0]}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.get("/admin/appeals")
+@_require_admin
+def admin_get_appeals():
+    """Return sourcing rows that have a non-empty appeal value."""
+    try:
+        conn = _pg_connect()
+        cur = conn.cursor()
+        # Ensure appeal column exists in sourcing table
+        cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS appeal TEXT")
+        conn.commit()
+        cur.execute("""
+            SELECT s.linkedinurl,
+                   COALESCE(s.name, '') AS name,
+                   COALESCE(s.jobtitle, '') AS jobtitle,
+                   COALESCE(s.company, '') AS company,
+                   s.appeal,
+                   COALESCE(s.username, '') AS username,
+                   COALESCE(s.userid, '') AS userid
+            FROM sourcing s
+            WHERE s.appeal IS NOT NULL AND s.appeal != ''
+            ORDER BY s.linkedinurl
+        """)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify({"appeals": rows}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.post("/admin/appeal-action")
+@_csrf_required
+@_require_admin
+def admin_appeal_action():
+    """Approve or reject a user appeal.
+
+    Body: { "linkedinurl": "...", "username": "...", "action": "approve"|"reject" }
+    Approve: adds 1 token to the user's login record, then deletes the sourcing row.
+    Reject: deletes the sourcing row without adding a token.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    linkedinurl = (body.get("linkedinurl") or "").strip()
+    username = (body.get("username") or "").strip()
+    action = (body.get("action") or "").strip().lower()
+    if not linkedinurl or action not in ("approve", "reject"):
+        return jsonify({"error": "linkedinurl and action ('approve'|'reject') required"}), 400
+    try:
+        conn = _pg_connect()
+        cur = conn.cursor()
+        new_token = None
+        if action == "approve" and username:
+            cur.execute(
+                "UPDATE login SET token = COALESCE(token, 0) + 1 WHERE username = %s RETURNING token",
+                (username,)
+            )
+            row = cur.fetchone()
+            if row:
+                new_token = row[0]
+        # Delete the sourcing row (appeal handled)
+        cur.execute("DELETE FROM sourcing WHERE linkedinurl = %s", (linkedinurl,))
+        deleted = cur.rowcount
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({"ok": True, "action": action, "deleted": deleted, "new_token": new_token}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
 # Affected section: lightweight CORS support for local development
