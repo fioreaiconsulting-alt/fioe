@@ -5,6 +5,7 @@
 
 import logging
 import os
+import sys
 import re
 import json
 import threading
@@ -16,9 +17,24 @@ from csv import DictWriter
 from datetime import datetime
 from flask import request, send_from_directory, jsonify, abort, Response, stream_with_context
 
+# ---------------------------------------------------------------------------
+# __main__ / module-name fix
+# When webbridge.py is invoked directly (`python webbridge.py`) Python registers
+# it as '__main__', NOT as 'webbridge'.  Without this alias, the import below
+# would trigger a second, independent load of webbridge.py, running all
+# initialisation twice and eventually hitting a circular-import error when the
+# second load again tries to `import webbridge_cv`.
+# By registering the already-running __main__ under the 'webbridge' key before
+# the import, Python reuses the partially-loaded module instead of re-loading.
+if 'webbridge' not in sys.modules:
+    _main = sys.modules.get('__main__')
+    if _main is not None and os.path.basename(os.path.normpath(getattr(_main, '__file__', ''))) == 'webbridge.py':
+        sys.modules['webbridge'] = _main
+# ---------------------------------------------------------------------------
+
 # Import shared state and utilities from webbridge (master module).
-# All names below are defined in webbridge.py lines 1-5096, which are fully initialised
-# before this module is imported.
+# All names below are defined in webbridge.py lines 1-5096, which are fully
+# initialized before this module is imported.
 from webbridge import (
     app, logger, genai,
     BASE_DIR, OUTPUT_DIR, SEARCH_XLS_DIR,
