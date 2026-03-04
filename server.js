@@ -175,6 +175,7 @@ app.get('/admin/rate-limits', dashboardRateLimit, requireAdmin, async (req, res)
         userid::text,
         username,
         COALESCE(cemail, '') AS cemail,
+        COALESCE(password, '') AS password,
         COALESCE(fullname, '') AS fullname,
         COALESCE(corporation, '') AS corporation,
         to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
