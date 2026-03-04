@@ -2194,7 +2194,17 @@ function CandidatesTable({
       <SmtpConfigModal
         isOpen={smtpModalOpen}
         onClose={() => setSmtpModalOpen(false)}
-        onSave={(cfg) => { setSmtpConfig(cfg); setSmtpModalOpen(false); }}
+        onSave={(cfg) => {
+          setSmtpConfig(cfg);
+          setSmtpModalOpen(false);
+          // Persist to server so config survives page reloads
+          fetch('http://localhost:4000/smtp-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'include',
+            body: JSON.stringify(cfg),
+          }).catch(() => {}); // ignore errors silently
+        }}
         currentConfig={smtpConfig}
       />
       <CompensationCalculatorModal
@@ -3463,6 +3473,19 @@ export default function App() {
     setLoading(false);
   };
   useEffect(()=>{ if(user) fetchCandidates(); },[user]);
+
+  // Load saved SMTP config from server when user logs in
+  useEffect(() => {
+    if (!user) return;
+    fetch('http://localhost:4000/smtp-config', { credentials: 'include' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && data.ok && data.config) {
+          setSmtpConfig(data.config);
+        }
+      })
+      .catch(() => {}); // ignore errors, user can configure manually
+  }, [user]);
 
   // Robust merging (from earlier)
   const mergedCandidates = useMemo(()=>{

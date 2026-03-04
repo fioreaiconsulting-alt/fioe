@@ -926,6 +926,62 @@ app.get('/user-tokens', requireLogin, async (req, res) => {
   }
 });
 
+// ── SMTP config persistence ──────────────────────────────────────────────────
+const SMTP_CONFIG_PATH = path.join(__dirname, 'smtp-config.json');
+
+function loadSmtpConfigs() {
+  try {
+    return JSON.parse(fs.readFileSync(SMTP_CONFIG_PATH, 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveSmtpConfigs(configs) {
+  const tmp = SMTP_CONFIG_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(configs, null, 2), 'utf8');
+  fs.renameSync(tmp, SMTP_CONFIG_PATH);
+}
+
+// GET /smtp-config – return the current user's saved SMTP configuration
+app.get('/smtp-config', requireLogin, (req, res) => {
+  try {
+    const configs = loadSmtpConfigs();
+    const entry = configs[String(req.user.id)];
+    if (!entry) return res.json({ ok: true, config: null });
+    const { userid, username, host, port, user, secure } = entry;
+    // Return config without exposing the password
+    res.json({ ok: true, config: { userid, username, host, port, user, secure } });
+  } catch (err) {
+    console.error('GET /smtp-config error:', err);
+    res.status(500).json({ error: 'Failed to load SMTP config' });
+  }
+});
+
+// POST /smtp-config – save the current user's SMTP configuration
+app.post('/smtp-config', requireLogin, (req, res) => {
+  try {
+    const { host, port, user, pass, secure } = req.body || {};
+    if (!host || !user) return res.status(400).json({ error: 'host and user are required' });
+    const configs = loadSmtpConfigs();
+    // NOTE: password is stored as plaintext — ensure the file is outside the web root and not committed.
+    configs[String(req.user.id)] = {
+      userid: String(req.user.id),
+      username: req.user.username,
+      host,
+      port: port || '587',
+      user,
+      pass: pass || '',
+      secure: !!secure,
+    };
+    saveSmtpConfigs(configs);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /smtp-config error:', err);
+    res.status(500).json({ error: 'Failed to save SMTP config' });
+  }
+});
+
 // POST /deduct-tokens - Deduct 2 tokens from the authenticated user (called on Verified Selection)
 // NOTE: Consider adding rate limiting for this endpoint in production
 app.post('/deduct-tokens', requireLogin, async (req, res) => {
