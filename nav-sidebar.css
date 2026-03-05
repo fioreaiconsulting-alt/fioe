@@ -9,16 +9,19 @@
      Argent         #87888a   idle text / sub-items
    ============================================================ */
 
-/* Reset body margin/padding so the sidebar flush-fills the viewport */
+/* Reset html + body margin/padding so the sidebar flush-fills the viewport */
+html:has(.page-shell),
 body:has(.page-shell) {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 /* ── Page shell ── */
 .page-shell {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* ── Sidebar ── */

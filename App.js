@@ -1870,6 +1870,24 @@ function CandidatesTable({
     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
     const displayValue = getDisplayValue(c, f);
     const cellBg = idx % 2 ? '#ffffff' : '#f9fafb';
+
+    // Name cell: avatar circle + editable input
+    if (f.key === 'name') {
+      const rawName = displayValue || '';
+      const initials = rawName.split(/\s+/).slice(0, 2).map(s => s[0]?.toUpperCase()).filter(Boolean).join('') || '?';
+      const avatarPalette = ['#4c82b8', '#073679', '#6deaf9'];
+      const avatarBg = avatarPalette[(rawName.charCodeAt(0) || 0) % 3];
+      const avatarText = avatarBg === '#6deaf9' ? '#222529' : '#fff';
+      return (
+        <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span style={{ width: 28, height: 28, borderRadius: '50%', background: avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: avatarText, flexShrink: 0, letterSpacing: '0.5px' }}>{initials}</span>
+            <input type="text" value={displayValue} onChange={e => handleEditChange(c.id, 'name', e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
+          </div>
+        </td>
+      );
+    }
+
     return (
       <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
         {readOnly
@@ -2076,8 +2094,8 @@ function CandidatesTable({
 
         {/* Single table: checkbox+Name sticky-left, Sourcing Status+Actions sticky-right, middle scrolls */}
         {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
-        <div ref={tableRef} style={{ overflowX: 'auto', marginBottom: 12 }}>
-          <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
+        <div ref={tableRef} className="candidates-grid-wrap" style={{ overflowX: 'auto', marginBottom: 12, border: '1px solid var(--neutral-border)', borderRadius: 10, boxShadow: '0 4px 14px rgba(7,54,121,0.08)' }}>
+          <table className="candidates-grid" style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
             <thead>
               {/* Row 1: column labels */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
