@@ -6,6 +6,7 @@ import html2canvas from 'html2canvas';
 import { Tree, TreeNode } from 'react-organizational-chart';
 import './cms.css'; // CMS theme with Resume Tab enhancements
 import './print-org-chart.css'; // Print-only: restrict output to org chart tree
+import './nav-sidebar.css'; // Left-column navigation sidebar
 // Admin feature removed (AdminUploadButton not imported)
 
 /* ========================= CONSTANTS ========================= */
@@ -1341,6 +1342,9 @@ function CandidatesTable({
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
+  // Filter row visibility toggle (matches Bulk Upload vskillset-section pattern)
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+
   // Load saved SMTP config from server when user logs in.
   // The login response already includes the full config (with password) so we
   // use it directly when present.  For sessions restored via cookie (user/resolve)
@@ -1869,6 +1873,24 @@ function CandidatesTable({
     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
     const displayValue = getDisplayValue(c, f);
     const cellBg = idx % 2 ? '#ffffff' : '#f9fafb';
+
+    // Name cell: avatar circle + editable input
+    if (f.key === 'name') {
+      const rawName = displayValue || '';
+      const initials = rawName.split(/\s+/).slice(0, 2).map(s => s[0]?.toUpperCase()).filter(Boolean).join('') || '?';
+      const avatarPalette = ['#4c82b8', '#073679', '#6deaf9'];
+      const avatarBg = avatarPalette[(rawName.charCodeAt(0) || 0) % 3];
+      const avatarText = avatarBg === '#6deaf9' ? '#222529' : '#fff';
+      return (
+        <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span style={{ width: 28, height: 28, borderRadius: '50%', background: avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: avatarText, flexShrink: 0, letterSpacing: '0.5px' }}>{initials}</span>
+            <input type="text" value={displayValue} onChange={e => handleEditChange(c.id, 'name', e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
+          </div>
+        </td>
+      );
+    }
+
     return (
       <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
         {readOnly
@@ -2073,10 +2095,18 @@ function CandidatesTable({
           </div>
         )}
 
+        {/* Filter toggle bar — same pattern as Bulk Upload vskillset-section */}
+        <div className="vskillset-section" style={{ marginBottom: 8 }}>
+          <div className="vskillset-header" onClick={() => setFiltersExpanded(prev => !prev)} style={{ cursor: 'pointer' }}>
+            <span className="vskillset-title">Column Filters</span>
+            <span className="vskillset-arrow">{filtersExpanded ? '▼' : '▶'}</span>
+          </div>
+        </div>
+
         {/* Single table: checkbox+Name sticky-left, Sourcing Status+Actions sticky-right, middle scrolls */}
         {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
-        <div ref={tableRef} style={{ overflowX: 'auto', marginBottom: 12 }}>
-          <table style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
+        <div ref={tableRef} className="candidates-grid-wrap" style={{ overflowX: 'auto', marginBottom: 12, border: '1px solid var(--neutral-border)', borderRadius: 10, boxShadow: '0 4px 14px rgba(7,54,121,0.08)' }}>
+          <table className="candidates-grid" style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
             <thead>
               {/* Row 1: column labels */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
@@ -2119,7 +2149,8 @@ function CandidatesTable({
                 })()}
                 <th style={{ position: 'sticky', right: 0, top: 0, zIndex: 40, width: FROZEN_ACTIONS_WIDTH, background: '#f1f5f9', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT, textAlign: 'center' }}>Actions</th>
               </tr>
-              {/* Row 2: filter inputs */}
+              {/* Row 2: filter inputs — hidden when filtersExpanded is false */}
+              {filtersExpanded && (
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
                 <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
                 </th>
@@ -2147,6 +2178,7 @@ function CandidatesTable({
                 })()}
                 <th style={{ position: 'sticky', right: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: FROZEN_ACTIONS_WIDTH, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }} />
               </tr>
+              )}
             </thead>
             <tbody>
               {candidates.map((c, idx) => {
@@ -3087,6 +3119,98 @@ function CandidateUpload({ onUpload }) {
 }
 
 /* ========================= MAIN APP ========================= */
+/* ========================= NAV SIDEBAR COMPONENT ========================= */
+function NavSidebar({ activePage = 'candidate-management' }) {
+  const [servicesExpanded, setServicesExpanded] = useState(false);
+
+  return (
+    <nav className="nav-sidebar" aria-label="Main navigation">
+      <a href="http://localhost:3000/" className="nav-sidebar__brand">FIOE</a>
+      <ul className="nav-sidebar__list">
+
+        <li className="nav-sidebar__item">
+          <a href="http://localhost:3000/" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span>Home</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__divider"></li>
+
+        <li
+          className="nav-sidebar__item nav-sidebar__item--has-sub"
+          onMouseEnter={() => setServicesExpanded(true)}
+          onMouseLeave={() => setServicesExpanded(false)}
+        >
+          <span
+            className="nav-sidebar__link"
+            role="button"
+            tabIndex={0}
+            aria-haspopup="true"
+            aria-expanded={servicesExpanded ? 'true' : 'false'}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setServicesExpanded(v => !v);
+              }
+            }}
+          >
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            <span>Services</span>
+            <svg className="nav-sidebar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width="11" height="11">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </span>
+          <ul className="nav-sidebar__submenu" role="menu" style={{ maxHeight: servicesExpanded ? '300px' : undefined }}>
+            <li><a href="http://localhost:8091/AutoSourcing.html" className="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
+            <li><a href="http://localhost:8091/SourcingVerify.html" className="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
+            <li><a href="http://localhost:3000/" className={'nav-sidebar__submenu-link' + (activePage === 'candidate-management' ? ' active' : '')} role="menuitem">Candidate Management</a></li>
+            <li><a href="http://localhost:5000/LookerDashboard.html" className="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+          </ul>
+        </li>
+
+        <li className="nav-sidebar__divider"></li>
+
+        <li className="nav-sidebar__item">
+          <a href="#ai-agent" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+            <span>AI Agent</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__item">
+          <a href="#community" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+            </svg>
+            <span>Community</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__item">
+          <a href="#contact" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            <span>Contact Us</span>
+          </a>
+        </li>
+
+      </ul>
+    </nav>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -4058,20 +4182,15 @@ export default function App() {
   };
 
   return (
-    <div style={{
-      width: '100%',
-      minHeight: '100vh',
-      margin: 0,
-      padding: 24,
-      boxSizing: 'border-box',
-      background:'var(--bg)',
-      color: 'var(--muted)',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'stretch',
-      justifyContent: 'flex-start',
-      overflowX: 'hidden' // Ensure no horizontal body scroll
-    }}>
+    <div className="page-shell">
+      <NavSidebar activePage="candidate-management" />
+      <div className="page-main" style={{
+        padding: 24,
+        boxSizing: 'border-box',
+        background:'var(--bg)',
+        color: 'var(--muted)',
+        overflowX: 'hidden'
+      }}>
       {/* Updated Session Banner UI */}
       <div style={{
         width: '100%',
@@ -4928,6 +5047,7 @@ export default function App() {
         onAddStatus={handleAddStatus}
         onRemoveStatus={handleRemoveStatus}
       />
+      </div>
     </div>
   );
 }
