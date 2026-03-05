@@ -252,6 +252,13 @@ const webbridge = {
   /* ─ Job search ─ */
 
   /**
+   * Return the current Xray search engine status (AI Studio vs CSE).
+   * Useful for monitoring the daily query counter and active engine.
+   * @returns {{ engine: string, query_count: number, daily_limit: number, date_sgt: string, reset_done_today: boolean, reset_hour_sgt: number }}
+   */
+  xraySearchStatus: () => _get('/xray_search_status'),
+
+  /**
    * Start a sourcing/search job.
    * @param {{ queries: string[], jobTitles?: string[], [key: string]: any }} data
    * @returns {{ job_id: string }}

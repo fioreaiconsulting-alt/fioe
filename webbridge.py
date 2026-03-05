@@ -626,6 +626,148 @@ except Exception as e:
     genai = None
     logger.warning(f"Gemini init failed: {e}")
 
+# ── AI Studio Xray Search with Native Grounding ───────────────────────────────
+# Primary search engine for Autosourcing Xray search.  Falls back to Google CSE
+# once the daily query limit is reached.  Resets to AI Studio at 4 PM SGT daily.
+AI_STUDIO_API_KEY = os.getenv("AI_STUDIO_API_KEY", "AIzaSyByx7NR-GKWseaJK0xy56yijGVwzSHEXTA")
+AI_STUDIO_GROUNDING_MODEL = os.getenv("AI_STUDIO_GROUNDING_MODEL", "gemini-2.0-flash")
+AI_STUDIO_DAILY_LIMIT = int(os.getenv("AI_STUDIO_DAILY_LIMIT", "1400"))
+_AI_STUDIO_RESET_HOUR_SGT = 16  # 4 PM Singapore time (UTC+8)
+
+_ai_studio_lock = threading.Lock()
+_ai_studio_state: dict = {
+    "date_sgt": None,         # current SGT date as "YYYY-MM-DD"
+    "query_count": 0,         # queries issued today
+    "reset_done_today": False, # True once the 4 PM reset has fired today
+    "engine": "ai_studio",    # "ai_studio" | "cse"
+}
+
+def _sgt_now():
+    """Return current datetime in Singapore Time (UTC+8)."""
+    from datetime import timezone, timedelta
+    return datetime.now(tz=timezone(timedelta(hours=8)))
+
+def _ai_studio_check_and_reset():
+    """Check if the 4 PM SGT reset should fire; must be called with _ai_studio_lock held."""
+    now_sgt = _sgt_now()
+    today_str = now_sgt.strftime("%Y-%m-%d")
+    if _ai_studio_state["date_sgt"] != today_str:
+        _ai_studio_state["date_sgt"] = today_str
+        _ai_studio_state["query_count"] = 0
+        _ai_studio_state["reset_done_today"] = False
+        _ai_studio_state["engine"] = "ai_studio"
+        logger.info("[XraySearch] New SGT day %s — counter reset, engine=ai_studio", today_str)
+    if now_sgt.hour >= _AI_STUDIO_RESET_HOUR_SGT and not _ai_studio_state["reset_done_today"]:
+        prev_engine = _ai_studio_state["engine"]
+        prev_count = _ai_studio_state["query_count"]
+        _ai_studio_state["reset_done_today"] = True
+        _ai_studio_state["engine"] = "ai_studio"
+        logger.info(
+            "[XraySearch] 4 PM SGT reset — engine restored to ai_studio "
+            "(was=%s, count_before_reset=%d)", prev_engine, prev_count
+        )
+
+def _ai_studio_active() -> bool:
+    """Return True if Google AI Studio grounding is the active search engine."""
+    with _ai_studio_lock:
+        _ai_studio_check_and_reset()
+        return _ai_studio_state["engine"] == "ai_studio"
+
+def _ai_studio_increment() -> tuple:
+    """Increment daily query count; switch to CSE if limit reached. Returns (engine, count)."""
+    with _ai_studio_lock:
+        _ai_studio_check_and_reset()
+        _ai_studio_state["query_count"] += 1
+        count = _ai_studio_state["query_count"]
+        if count >= AI_STUDIO_DAILY_LIMIT and _ai_studio_state["engine"] == "ai_studio":
+            _ai_studio_state["engine"] = "cse"
+            logger.warning(
+                "[XraySearch] Daily limit of %d reached (count=%d) — switching to CSE",
+                AI_STUDIO_DAILY_LIMIT, count
+            )
+        return _ai_studio_state["engine"], count
+
+def _ai_studio_get_status() -> dict:
+    """Return a read-only snapshot of the current AI Studio / CSE state."""
+    with _ai_studio_lock:
+        _ai_studio_check_and_reset()
+        return {
+            "engine": _ai_studio_state["engine"],
+            "query_count": _ai_studio_state["query_count"],
+            "daily_limit": AI_STUDIO_DAILY_LIMIT,
+            "date_sgt": _ai_studio_state["date_sgt"],
+            "reset_done_today": _ai_studio_state["reset_done_today"],
+            "reset_hour_sgt": _AI_STUDIO_RESET_HOUR_SGT,
+        }
+
+def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
+    """
+    Perform a grounded web search via Google AI Studio (Gemini with google_search_retrieval).
+    Increments the daily counter and may switch engine to CSE on limit hit.
+    Returns a list of {"link": ..., "title": ..., "snippet": ...} dicts (same format as CSE).
+    Returns [] if the daily limit has already been reached or the request fails.
+    """
+    engine, count = _ai_studio_increment()
+    if engine != "ai_studio":
+        return []
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{AI_STUDIO_GROUNDING_MODEL}:generateContent?key={AI_STUDIO_API_KEY}"
+    )
+    prompt = (
+        "You are a talent sourcing assistant performing an Xray LinkedIn search. "
+        "Search the web for LinkedIn profiles that match the following query and "
+        "return all relevant LinkedIn profile URLs you find. "
+        f"Query: {query}"
+    )
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "tools": [{"google_search_retrieval": {}}],
+    }
+    try:
+        resp = requests.post(endpoint, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning("[AIStudio] Grounding request failed: %s", e)
+        return []
+    results = []
+    for candidate in data.get("candidates") or []:
+        gm = candidate.get("groundingMetadata") or {}
+        for chunk in gm.get("groundingChunks") or []:
+            web = chunk.get("web") or {}
+            uri = (web.get("uri") or "").strip()
+            title = (web.get("title") or "").strip()
+            if uri:
+                results.append({"link": uri, "title": title, "snippet": ""})
+    logger.info(
+        "[AIStudio] Grounding search count=%d returned %d chunks for: %s",
+        count, len(results), query[:100]
+    )
+    return results[:max_results]
+
+def _perform_ai_studio_queries(job_id, queries, target_limit, country):
+    """
+    Xray search using Google AI Studio with Native Grounding.
+    Mirrors the interface of _perform_cse_queries.
+    Stops issuing new grounding queries once the daily limit is hit.
+    """
+    results = []
+    total_queries = max(1, len(queries))
+    per_query_target = max(1, target_limit // total_queries)
+    for q in queries:
+        if not _ai_studio_active():
+            add_message(job_id, f"[XraySearch] AI Studio daily limit reached — remaining queries will use CSE.")
+            break
+        add_message(job_id, f"[XraySearch] AI Studio grounding: {q[:100]} target={per_query_target}")
+        page = _ai_studio_grounding_search(q, max_results=per_query_target)
+        if not page:
+            add_message(job_id, "  AI Studio returned no results for this query.")
+        else:
+            results.extend(page)
+            add_message(job_id, f"  AI Studio collected {len(page)} result(s).")
+    return _dedupe_links(results)
+
 TRANSLATION_ENABLED = os.getenv("TRANSLATION_ENABLED", "1") != "0"
 TRANSLATION_PROVIDER = (os.getenv("TRANSLATION_PROVIDER", "auto") or "auto").lower()
 TRANSLATOR_BASE = (os.getenv("TRANSLATOR_BASE", "") or "").rstrip("/")
@@ -5367,6 +5509,11 @@ def index():
 
 @app.get("/AutoSourcing.html")
 def autosourcing_explicit(): return send_from_directory(BASE_DIR, "AutoSourcing.html")
+
+@app.get("/xray_search_status")
+def xray_search_status():
+    """Return current Xray search engine status (AI Studio vs CSE) for monitoring."""
+    return jsonify(_ai_studio_get_status())
 
 @app.get('/favicon.ico')
 def favicon():
