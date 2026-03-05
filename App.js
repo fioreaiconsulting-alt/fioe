@@ -5016,7 +5016,7 @@ export default function App() {
         onAddStatus={handleAddStatus}
         onRemoveStatus={handleRemoveStatus}
       />
-      </div>{/* /.page-main */}
-    </div>{/* /.page-shell */}
+      </div>
+    </div>
   );
 }
