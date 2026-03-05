@@ -9,6 +9,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="sourcing_verify.css">
+<!-- Left Column Navigation -->
+<link rel="stylesheet" href="nav-sidebar.css">
+<script src="nav-sidebar.js" defer></script>
 
 <style>
 /* Professional iOS-style toggle switch for L1/L2 mode */
@@ -79,6 +82,67 @@
 
 </head>
 <body>
+<!-- ===== Page Shell: sidebar + main ===== -->
+<div class="page-shell">
+
+<!-- ===== Left Navigation Sidebar ===== -->
+<nav class="nav-sidebar" aria-label="Main navigation">
+  <a href="http://localhost:4000/SourcingVerify.html" class="nav-sidebar__brand">FIOE</a>
+  <ul class="nav-sidebar__list">
+
+    <li class="nav-sidebar__item">
+      <a href="http://localhost:4000/SourcingVerify.html" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span>Home</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__divider"></li>
+
+    <!-- Services with hover-expand sub-menu -->
+    <li class="nav-sidebar__item nav-sidebar__item--has-sub">
+      <span class="nav-sidebar__link" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <span>Services</span>
+        <svg class="nav-sidebar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="11" height="11"><polyline points="9 18 15 12 9 6"/></svg>
+      </span>
+      <ul class="nav-sidebar__submenu" role="menu">
+        <li><a href="http://localhost:4000/AutoSourcing.html" class="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
+        <li><a href="http://localhost:4000/SourcingVerify.html" class="nav-sidebar__submenu-link active" role="menuitem">Talent Evaluation</a></li>
+        <li><a href="http://localhost:3000/" class="nav-sidebar__submenu-link" role="menuitem">Candidate Management</a></li>
+        <li><a href="http://localhost:5000/LookerDashboard.html" class="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+      </ul>
+    </li>
+
+    <li class="nav-sidebar__divider"></li>
+
+    <li class="nav-sidebar__item">
+      <a href="#ai-agent" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        <span>AI Agent</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="#community" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        <span>Community</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="#contact" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        <span>Contact Us</span>
+      </a>
+    </li>
+
+  </ul>
+</nav>
+<!-- ===== End Sidebar ===== -->
+
+<!-- ===== Main Content ===== -->
+<div class="page-main" style="padding: 24px; box-sizing: border-box; overflow-x: hidden;">
 <h1>Talent Evaluation Panel</h1>
 
 <!-- Tab Navigation -->
@@ -199,19 +263,19 @@
       </div>
   </div>
 
-  <div id="tableContainer" style="overflow:auto; max-height:65vh; border:1px solid #d0d7de; border-radius:8px; background:#fff;">
-      <table id="sourcingTable">
+  <div id="tableContainer" style="overflow:auto; max-height:65vh; border:1px solid #d0d7de; border-radius:8px; background:#fff; box-shadow: 0 4px 14px rgba(7,54,121,0.08);">
+      <table id="sourcingTable" style="table-layout: fixed; width: 100%;">
           <thead>
               <tr>
-                  <!-- Empty checkbox column retained for layout consistency (previously contained select all checkbox) -->
-                  <th class="checkbox-cell"></th>
-                  <th style="width:60px;">Profile</th>
-                  <th>Name</th>
-                  <th>Company</th>
-                  <th>Job Title</th>
-                  <th style="width:8%;">Country</th>
-                  <th style="width:8%;">Action</th>
-                  <th id="matchLevelHeader" style="width:33.33%; cursor:pointer; user-select:none;" title="Click to sort by Match Level" aria-sort="none" role="columnheader">Match Level <span aria-hidden="true"></span></th>
+                  <!-- Checkbox column -->
+                  <th class="checkbox-cell" style="width:44px;"></th>
+                  <th style="width:68px; text-align:center;">Profile</th>
+                  <th style="width:16%;">Name</th>
+                  <th style="width:16%;">Company</th>
+                  <th style="width:22%;">Job Title</th>
+                  <th style="width:10%;">Country</th>
+                  <th style="width:9%; text-align:center;">Action</th>
+                  <th id="matchLevelHeader" style="width:auto; cursor:pointer; user-select:none;" title="Click to sort by Match Level" aria-sort="none" role="columnheader">Match Level <span aria-hidden="true"></span></th>
               </tr>
           </thead>
           <tbody id="tableBody">
@@ -7457,5 +7521,7 @@ document.getElementById('ds-export-excel-btn').addEventListener('click', () => {
 });
 
 </script>
+</div><!-- /.page-main -->
+</div><!-- /.page-shell -->
 </body>
 </html>
