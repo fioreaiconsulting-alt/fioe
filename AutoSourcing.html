@@ -10,6 +10,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&family=Orbitron:wght@400;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- Shared Styles -->
 <link rel="stylesheet" href="sourcing_verify.css">
+<!-- Left Column Navigation -->
+<link rel="stylesheet" href="nav-sidebar.css">
+<script src="nav-sidebar.js" defer></script>
 
 <!-- Auth gate -->
 <script>
@@ -474,6 +477,67 @@ pre {
 </style>
 </head>
 <body>
+<!-- ===== Page Shell: sidebar + main ===== -->
+<div class="page-shell">
+
+<!-- ===== Left Navigation Sidebar ===== -->
+<nav class="nav-sidebar" aria-label="Main navigation">
+  <a href="/" class="nav-sidebar__brand">FIOE<br>Platform</a>
+  <ul class="nav-sidebar__list">
+
+    <li class="nav-sidebar__item">
+      <a href="/" class="nav-sidebar__link">
+        <span class="nav-sidebar__icon">🏠</span>
+        <span>Home</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__divider"></li>
+
+    <!-- Services with hover-expand sub-menu -->
+    <li class="nav-sidebar__item nav-sidebar__item--has-sub">
+      <span class="nav-sidebar__link" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false">
+        <span class="nav-sidebar__icon">⚙️</span>
+        <span>Services</span>
+        <span class="nav-sidebar__chevron">›</span>
+      </span>
+      <ul class="nav-sidebar__submenu" role="menu">
+        <li><a href="/AutoSourcing.html" class="nav-sidebar__submenu-link active" role="menuitem">Autosourcing</a></li>
+        <li><a href="/SourcingVerify.html" class="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
+        <li><a href="/" class="nav-sidebar__submenu-link" role="menuitem">Candidate Management</a></li>
+        <li><a href="/LookerDashboard.html" class="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+      </ul>
+    </li>
+
+    <li class="nav-sidebar__divider"></li>
+
+    <li class="nav-sidebar__item">
+      <a href="#ai-agent" class="nav-sidebar__link">
+        <span class="nav-sidebar__icon">🤖</span>
+        <span>AI Agent</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="#community" class="nav-sidebar__link">
+        <span class="nav-sidebar__icon">👥</span>
+        <span>Community</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="#contact" class="nav-sidebar__link">
+        <span class="nav-sidebar__icon">✉️</span>
+        <span>Contact Us</span>
+      </a>
+    </li>
+
+  </ul>
+</nav>
+<!-- ===== End Sidebar ===== -->
+
+<!-- ===== Main Content ===== -->
+<div class="page-main">
   <!-- Header -->
   <div id="sessionBanner" class="panel-header" style="background:#ffffff; padding: 12px 24px;">
     <div id="bannerLeft" style="display:flex; align-items:center; gap:16px;">
@@ -2863,5 +2927,7 @@ function renderExternalSuggestions(jobs, comps){
   } catch(_){}
 })();
 </script>
+</div><!-- /.page-main -->
+</div><!-- /.page-shell -->
 </body>
 </html>
