@@ -1342,6 +1342,9 @@ function CandidatesTable({
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
+  // Filter row visibility toggle (matches Bulk Upload vskillset-section pattern)
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
+
   // Load saved SMTP config from server when user logs in.
   // The login response already includes the full config (with password) so we
   // use it directly when present.  For sessions restored via cookie (user/resolve)
@@ -2092,7 +2095,18 @@ function CandidatesTable({
           </div>
         )}
 
+        {/* Filter toggle bar — same pattern as Bulk Upload vskillset-section */}
+        <div className="vskillset-section" style={{ marginBottom: 8 }}>
+          <div className="vskillset-header" onClick={() => setFiltersExpanded(prev => !prev)} style={{ cursor: 'pointer' }}>
+            <span className="vskillset-title">Column Filters</span>
+            <span className="vskillset-arrow">{filtersExpanded ? '▼' : '▶'}</span>
+          </div>
+        </div>
+
         {/* Single table: checkbox+Name sticky-left, Sourcing Status+Actions sticky-right, middle scrolls */}
+        {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
+        <div ref={tableRef} className="candidates-grid-wrap" style={{ overflowX: 'auto', marginBottom: 12, border: '1px solid var(--neutral-border)', borderRadius: 10, boxShadow: '0 4px 14px rgba(7,54,121,0.08)' }}>
+          <table className="candidates-grid" style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
         {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
         <div ref={tableRef} className="candidates-grid-wrap" style={{ overflowX: 'auto', marginBottom: 12, border: '1px solid var(--neutral-border)', borderRadius: 10, boxShadow: '0 4px 14px rgba(7,54,121,0.08)' }}>
           <table className="candidates-grid" style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
@@ -2138,7 +2152,8 @@ function CandidatesTable({
                 })()}
                 <th style={{ position: 'sticky', right: 0, top: 0, zIndex: 40, width: FROZEN_ACTIONS_WIDTH, background: '#f1f5f9', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT, textAlign: 'center' }}>Actions</th>
               </tr>
-              {/* Row 2: filter inputs */}
+              {/* Row 2: filter inputs — hidden when filtersExpanded is false */}
+              {filtersExpanded && (
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
                 <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
                 </th>
@@ -2166,6 +2181,7 @@ function CandidatesTable({
                 })()}
                 <th style={{ position: 'sticky', right: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: FROZEN_ACTIONS_WIDTH, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }} />
               </tr>
+              )}
             </thead>
             <tbody>
               {candidates.map((c, idx) => {
