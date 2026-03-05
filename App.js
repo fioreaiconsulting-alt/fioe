@@ -6,6 +6,7 @@ import html2canvas from 'html2canvas';
 import { Tree, TreeNode } from 'react-organizational-chart';
 import './cms.css'; // CMS theme with Resume Tab enhancements
 import './print-org-chart.css'; // Print-only: restrict output to org chart tree
+import './nav-sidebar.css'; // Left-column navigation sidebar
 // Admin feature removed (AdminUploadButton not imported)
 
 /* ========================= CONSTANTS ========================= */
@@ -3087,6 +3088,98 @@ function CandidateUpload({ onUpload }) {
 }
 
 /* ========================= MAIN APP ========================= */
+/* ========================= NAV SIDEBAR COMPONENT ========================= */
+function NavSidebar({ activePage = 'candidate-management' }) {
+  const [servicesExpanded, setServicesExpanded] = useState(false);
+
+  return (
+    <nav className="nav-sidebar" aria-label="Main navigation">
+      <a href="http://localhost:3000/" className="nav-sidebar__brand">FIOE</a>
+      <ul className="nav-sidebar__list">
+
+        <li className="nav-sidebar__item">
+          <a href="http://localhost:3000/" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span>Home</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__divider"></li>
+
+        <li
+          className="nav-sidebar__item nav-sidebar__item--has-sub"
+          onMouseEnter={() => setServicesExpanded(true)}
+          onMouseLeave={() => setServicesExpanded(false)}
+        >
+          <span
+            className="nav-sidebar__link"
+            role="button"
+            tabIndex={0}
+            aria-haspopup="true"
+            aria-expanded={servicesExpanded ? 'true' : 'false'}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setServicesExpanded(v => !v);
+              }
+            }}
+          >
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            <span>Services</span>
+            <svg className="nav-sidebar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width="11" height="11">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </span>
+          <ul className="nav-sidebar__submenu" role="menu" style={{ maxHeight: servicesExpanded ? '300px' : undefined }}>
+            <li><a href="http://localhost:4000/AutoSourcing.html" className="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
+            <li><a href="http://localhost:4000/SourcingVerify.html" className="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
+            <li><a href="http://localhost:3000/" className={'nav-sidebar__submenu-link' + (activePage === 'candidate-management' ? ' active' : '')} role="menuitem">Candidate Management</a></li>
+            <li><a href="http://localhost:4000/LookerDashboard.html" className="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+          </ul>
+        </li>
+
+        <li className="nav-sidebar__divider"></li>
+
+        <li className="nav-sidebar__item">
+          <a href="#ai-agent" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+            <span>AI Agent</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__item">
+          <a href="#community" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+            </svg>
+            <span>Community</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__item">
+          <a href="#contact" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            <span>Contact Us</span>
+          </a>
+        </li>
+
+      </ul>
+    </nav>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -4058,20 +4151,15 @@ export default function App() {
   };
 
   return (
-    <div style={{
-      width: '100%',
-      minHeight: '100vh',
-      margin: 0,
-      padding: 24,
-      boxSizing: 'border-box',
-      background:'var(--bg)',
-      color: 'var(--muted)',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'stretch',
-      justifyContent: 'flex-start',
-      overflowX: 'hidden' // Ensure no horizontal body scroll
-    }}>
+    <div className="page-shell">
+      <NavSidebar activePage="candidate-management" />
+      <div className="page-main" style={{
+        padding: 24,
+        boxSizing: 'border-box',
+        background:'var(--bg)',
+        color: 'var(--muted)',
+        overflowX: 'hidden'
+      }}>
       {/* Updated Session Banner UI */}
       <div style={{
         width: '100%',
@@ -4928,6 +5016,7 @@ export default function App() {
         onAddStatus={handleAddStatus}
         onRemoveStatus={handleRemoveStatus}
       />
-    </div>
+      </div>{/* /.page-main */}
+    </div>{/* /.page-shell */}
   );
 }
