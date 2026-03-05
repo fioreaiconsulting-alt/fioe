@@ -702,27 +702,51 @@ def _ai_studio_get_status() -> dict:
 
 def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
     """
-    Perform a grounded web search via Google AI Studio (Gemini with google_search_retrieval).
+    Perform a grounded web search via Google AI Studio (Gemini with Google Search grounding).
     Increments the daily counter and may switch engine to CSE on limit hit.
     Returns a list of {"link": ..., "title": ..., "snippet": ...} dicts (same format as CSE).
     Returns [] if the daily limit has already been reached or the request fails.
+
+    Tool selection:
+      - Gemini 2.0+ models use the "google_search" tool.
+      - Gemini 1.5 models use "google_search_retrieval" with dynamic_threshold=0 to force grounding.
     """
     engine, count = _ai_studio_increment()
     if engine != "ai_studio":
         return []
+
+    model = AI_STUDIO_GROUNDING_MODEL
     endpoint = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{AI_STUDIO_GROUNDING_MODEL}:generateContent?key={AI_STUDIO_API_KEY}"
+        f"{model}:generateContent?key={AI_STUDIO_API_KEY}"
     )
+
+    # Choose the correct grounding tool based on model generation
+    _is_v2_plus = bool(re.search(r'gemini[-_]2', model, re.I))
+    if _is_v2_plus:
+        tools = [{"google_search": {}}]
+    else:
+        tools = [{"google_search_retrieval": {
+            "dynamic_retrieval_config": {
+                "mode": "MODE_DYNAMIC",
+                "dynamic_threshold": 0  # always use grounding
+            }
+        }}]
+
+    # Tell Gemini to run the xray query verbatim and list every LinkedIn profile URL it finds
     prompt = (
-        "You are a talent sourcing assistant performing an Xray LinkedIn search. "
-        "Search the web for LinkedIn profiles that match the following query and "
-        "return all relevant LinkedIn profile URLs you find. "
-        f"Query: {query}"
+        f"Perform a Google web search using exactly this query:\n\n{query}\n\n"
+        "From the search results, extract and list every LinkedIn profile URL "
+        "(pages whose path starts with /in/) that appears. "
+        "For each profile URL found, output one line in this format:\n"
+        "URL | Person Name - Job Title at Company\n\n"
+        "If you cannot find a name or title, leave it blank after the pipe. "
+        "Do not include job listings, company pages, or non-profile LinkedIn pages."
     )
+
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "tools": [{"google_search_retrieval": {}}],
+        "tools": tools,
     }
     try:
         resp = requests.post(endpoint, json=body, timeout=30)
@@ -731,7 +755,17 @@ def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
     except Exception as e:
         logger.warning("[AIStudio] Grounding request failed: %s", e)
         return []
+
     results = []
+    seen_uris: set = set()
+
+    def _add(uri, title="", snippet=""):
+        uri = uri.rstrip("/")
+        if uri and uri not in seen_uris:
+            seen_uris.add(uri)
+            results.append({"link": uri, "title": title, "snippet": snippet})
+
+    # 1. Parse grounding chunks (structured metadata from the search tool)
     for candidate in data.get("candidates") or []:
         gm = candidate.get("groundingMetadata") or {}
         for chunk in gm.get("groundingChunks") or []:
@@ -739,11 +773,37 @@ def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
             uri = (web.get("uri") or "").strip()
             title = (web.get("title") or "").strip()
             if uri:
-                results.append({"link": uri, "title": title, "snippet": ""})
-    logger.info(
-        "[AIStudio] Grounding search count=%d returned %d chunks for: %s",
-        count, len(results), query[:100]
-    )
+                _add(uri, title)
+
+        # 2. Also scan Gemini's generated text response for LinkedIn profile URLs.
+        #    The model often embeds the grounded URLs inline even when groundingChunks
+        #    is empty or incomplete.
+        for part in (candidate.get("content") or {}).get("parts") or []:
+            text = part.get("text") or ""
+            if not text:
+                continue
+            # Extract all LinkedIn /in/ profile URLs from the response text
+            for m in re.finditer(
+                r'https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[A-Za-z0-9\-_%]+/?',
+                text
+            ):
+                raw_url = m.group(0)
+                # Try to find a title on the same line: "URL | Name - Role"
+                line = text[max(0, m.start() - 5):m.end() + 120]
+                pipe_m = re.search(r'\|\s*(.+)', line)
+                title_hint = pipe_m.group(1).strip() if pipe_m else ""
+                _add(raw_url, title_hint)
+
+    if not results:
+        logger.warning(
+            "[AIStudio] Grounding search count=%d returned 0 results for model=%s query=%s",
+            count, model, query[:120]
+        )
+    else:
+        logger.info(
+            "[AIStudio] Grounding search count=%d returned %d result(s) for: %s",
+            count, len(results), query[:100]
+        )
     return results[:max_results]
 
 def _perform_ai_studio_queries(job_id, queries, target_limit, country):
