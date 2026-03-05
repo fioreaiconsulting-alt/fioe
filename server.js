@@ -1002,12 +1002,22 @@ app.post('/login', userRateLimit('login'), async (req, res) => {
     res.cookie('username', user.username, cookieOpts);
     res.cookie('userid', String(uid), cookieOpts);
 
+    // Load the user's SMTP config from their per-user JSON file so the
+    // frontend can reflect the saved settings immediately without a separate
+    // round-trip.  The password is intentionally excluded here — it stays
+    // on the server and is injected by the /send-email handler as needed.
+    const smtpCfgFull = loadSmtpConfig(user.username);
+    const smtpCfgPublic = smtpCfgFull
+      ? { host: smtpCfgFull.host, port: smtpCfgFull.port, user: smtpCfgFull.user, secure: smtpCfgFull.secure }
+      : null;
+
     res.json({
       ok: true,
       userid: uid,
       username: user.username,
       full_name: user.fullname || user.username,
-      corporation: user.corporation || ''
+      corporation: user.corporation || '',
+      smtpConfig: smtpCfgPublic
     });
 
   } catch (err) {
@@ -3099,31 +3109,53 @@ app.post('/send-email', requireLogin, async (req, res) => {
 
     let transporterConfig;
 
-    if (smtpConfig && smtpConfig.user && smtpConfig.pass) {
-        // Use provided config
+    // Build effective SMTP config: start from whatever the frontend sent, then
+    // supplement with the server-side file when the password is absent.
+    let effectiveSmtp = smtpConfig || {};
+    if (effectiveSmtp.user && !effectiveSmtp.pass) {
+        // The frontend knows the host/user but the password was not sent for
+        // security reasons — load it from the per-user config file.
+        const stored = loadSmtpConfig(req.user.username);
+        if (stored && stored.pass) {
+            effectiveSmtp = { ...effectiveSmtp, pass: stored.pass };
+        }
+    }
+
+    if (effectiveSmtp.user && effectiveSmtp.pass) {
+        // Use provided (or file-supplemented) config
         transporterConfig = {
-            host: smtpConfig.host || 'smtp.gmail.com',
-            port: parseInt(smtpConfig.port || '587'),
-            secure: smtpConfig.secure === true || smtpConfig.secure === 'true', // Handle string/bool
+            host: effectiveSmtp.host || 'smtp.gmail.com',
+            port: parseInt(effectiveSmtp.port || '587'),
+            secure: effectiveSmtp.secure === true || effectiveSmtp.secure === 'true', // Handle string/bool
             auth: {
-                user: smtpConfig.user,
-                pass: smtpConfig.pass,
+                user: effectiveSmtp.user,
+                pass: effectiveSmtp.pass,
             },
         };
     } else {
-        // Fallback to Env
-        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-            return res.status(500).json({ error: "Server configuration error: SMTP_USER or SMTP_PASS is missing in environment variables, and no custom config provided." });
+        // Fallback: try the per-user config file, then env vars
+        const stored = loadSmtpConfig(req.user.username);
+        if (stored && stored.user && stored.pass) {
+            transporterConfig = {
+                host: stored.host || 'smtp.gmail.com',
+                port: parseInt(stored.port || '587'),
+                secure: stored.secure === true || stored.secure === 'true',
+                auth: { user: stored.user, pass: stored.pass },
+            };
+        } else {
+            if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+                return res.status(500).json({ error: "Server configuration error: SMTP_USER or SMTP_PASS is missing in environment variables, and no custom config provided." });
+            }
+            transporterConfig = {
+                host: process.env.SMTP_HOST || 'smtp.gmail.com',
+                port: parseInt(process.env.SMTP_PORT || '587'),
+                secure: process.env.SMTP_SECURE === 'true',
+                auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                },
+            };
         }
-        transporterConfig = {
-            host: process.env.SMTP_HOST || 'smtp.gmail.com',
-            port: parseInt(process.env.SMTP_PORT || '587'),
-            secure: process.env.SMTP_SECURE === 'true',
-            auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASS,
-            },
-        };
     }
 
     try {

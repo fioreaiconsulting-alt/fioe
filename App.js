@@ -1341,9 +1341,16 @@ function CandidatesTable({
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
-  // Load saved SMTP config from server when user logs in
+  // Load saved SMTP config from server when user logs in.
+  // The login response already includes the full config (with password) so we
+  // use it directly when present.  For sessions restored via cookie (user/resolve)
+  // the config isn't bundled, so we fall back to the dedicated endpoint.
   useEffect(() => {
     if (!user || !user.username) return;
+    if (user.smtpConfig) {
+      setSmtpConfig(user.smtpConfig);
+      return;
+    }
     fetch('http://localhost:4000/smtp-config', { credentials: 'include' })
       .then(res => res.ok ? res.json() : null)
       .then(data => {
