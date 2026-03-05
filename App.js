@@ -1343,7 +1343,7 @@ function CandidatesTable({
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
   // Filter row visibility toggle (matches Bulk Upload vskillset-section pattern)
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   // Load saved SMTP config from server when user logs in.
   // The login response already includes the full config (with password) so we
@@ -2118,25 +2118,19 @@ function CandidatesTable({
                 </th>
                 {(() => {
                   return visibleFields.map(f => {
-                    const isLeft = f.key === 'name';
-                    const isRight = f.key === 'sourcing_status';
-                    const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
+                    const isPinned = frozenMiddleCols.has(f.key);
                     const maxForField = FIELD_MAX_WIDTHS[f.key] || GLOBAL_MAX_WIDTH;
                     let frozenStyle;
-                    if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 40, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
-                    } else if (isRight) {
-                      frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 40, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#f1f5f9' };
-                    } else if (isPinned) {
+                    if (isPinned) {
                       frozenStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 30, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: '#f1f5f9' };
                     } else {
                       frozenStyle = { background: '#f1f5f9' };
                     }
                     return (
                       <th key={f.key} data-field={f.key}
-                          onClick={(!isLeft && !isRight) ? () => toggleFrozenMiddleCol(f.key) : undefined}
+                          onClick={() => toggleFrozenMiddleCol(f.key)}
                           onDoubleClick={(e) => handleHeaderDoubleClick(e, f.key)}
-                          style={{ position: 'sticky', top: 0, zIndex: (isLeft || isRight) ? 40 : (isPinned ? 30 : 20), width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, maxWidth: maxForField, userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: (!isLeft && !isRight) ? 'pointer' : 'default', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
+                          style={{ position: 'sticky', top: 0, zIndex: isPinned ? 30 : 20, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, maxWidth: maxForField, userSelect: 'none', padding: '6px 8px 4px', verticalAlign: 'bottom', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid var(--neutral-border)', fontFamily: 'Orbitron', cursor: 'pointer', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                           <span className="header-label" style={{ flex: '1 1 auto' }}>{f.label}{isPinned ? ' 📌' : ''}</span>
                           <span role="separator" tabIndex={0} style={{ cursor: 'col-resize', padding: '0 4px', userSelect: 'none', height: '100%', display: 'flex', alignItems: 'center', fontSize: 14, lineHeight: 1, color: 'var(--argent)' }}
@@ -2156,21 +2150,15 @@ function CandidatesTable({
                 </th>
                 {(() => {
                   return visibleFields.map(f => {
-                    const isLeft = f.key === 'name';
-                    const isRight = f.key === 'sourcing_status';
-                    const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
+                    const isPinned = frozenMiddleCols.has(f.key);
                     let frozenStyle;
-                    if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
-                    } else if (isRight) {
-                      frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 39, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
-                    } else if (isPinned) {
+                    if (isPinned) {
                       frozenStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 29, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: '#ffffff' };
                     } else {
                       frozenStyle = { background: '#ffffff' };
                     }
                     return (
-                      <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: (isLeft || isRight) ? 39 : (isPinned ? 29 : 15), width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, padding: 4, borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
+                      <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: isPinned ? 29 : 15, width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, padding: 4, borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
                         <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
                       </th>
                     );
@@ -2189,15 +2177,9 @@ function CandidatesTable({
                       <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => handleCheckboxChange(c.id)} style={{ cursor: 'pointer' }} />
                     </td>
                     {visibleFields.map(f => {
-                      const isLeft = f.key === 'name';
-                      const isRight = f.key === 'sourcing_status';
-                      const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
+                      const isPinned = frozenMiddleCols.has(f.key);
                       let extraStyle;
-                      if (isLeft) {
-                        extraStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 10, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
-                      } else if (isRight) {
-                        extraStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 10, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: rowBg };
-                      } else if (isPinned) {
+                      if (isPinned) {
                         extraStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 5, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: rowBg };
                       } else {
                         extraStyle = {};
@@ -3167,8 +3149,8 @@ function NavSidebar({ activePage = 'candidate-management' }) {
             </svg>
           </span>
           <ul className="nav-sidebar__submenu" role="menu" style={{ maxHeight: servicesExpanded ? '300px' : undefined }}>
-            <li><a href="http://localhost:4000/AutoSourcing.html" className="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
-            <li><a href="http://localhost:4000/SourcingVerify.html" className="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
+            <li><a href="http://localhost:8091/AutoSourcing.html" className="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
+            <li><a href="http://localhost:8091/SourcingVerify.html" className="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
             <li><a href="http://localhost:3000/" className={'nav-sidebar__submenu-link' + (activePage === 'candidate-management' ? ' active' : '')} role="menuitem">Candidate Management</a></li>
             <li><a href="http://localhost:4000/LookerDashboard.html" className="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
           </ul>
