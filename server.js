@@ -46,7 +46,7 @@ app.use('/image', express.static(path.join(__dirname, 'image')));
 // path of LookerDashboard.html relative to this file (e.g. ../frontend/src/LookerDashboard.html).
 const lookerDashboardFile = process.env.LOOKER_DASHBOARD_PATH
   ? path.resolve(__dirname, process.env.LOOKER_DASHBOARD_PATH)
-  : path.join(__dirname, 'LookerDashboard.html');
+  : path.join(__dirname, '../frontend/src/LookerDashboard.html');
 
 // Simple in-memory rate-limiter: max 30 requests per IP per minute for the static-file routes.
 const _dashboardHits = new Map();

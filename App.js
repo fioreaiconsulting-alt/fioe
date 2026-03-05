@@ -3170,7 +3170,7 @@ function NavSidebar({ activePage = 'candidate-management' }) {
             <li><a href="http://localhost:8091/AutoSourcing.html" className="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
             <li><a href="http://localhost:8091/SourcingVerify.html" className="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
             <li><a href="http://localhost:3000/" className={'nav-sidebar__submenu-link' + (activePage === 'candidate-management' ? ' active' : '')} role="menuitem">Candidate Management</a></li>
-            <li><a href="http://localhost:4000/LookerDashboard.html" className="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+            <li><a href="http://localhost:5000/LookerDashboard.html" className="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
           </ul>
         </li>
 
