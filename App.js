@@ -2107,9 +2107,6 @@ function CandidatesTable({
         {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
         <div ref={tableRef} className="candidates-grid-wrap" style={{ overflowX: 'auto', marginBottom: 12, border: '1px solid var(--neutral-border)', borderRadius: 10, boxShadow: '0 4px 14px rgba(7,54,121,0.08)' }}>
           <table className="candidates-grid" style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
-        {/* Middle columns can be user-pinned by clicking their header (📌 toggle) */}
-        <div ref={tableRef} className="candidates-grid-wrap" style={{ overflowX: 'auto', marginBottom: 12, border: '1px solid var(--neutral-border)', borderRadius: 10, boxShadow: '0 4px 14px rgba(7,54,121,0.08)' }}>
-          <table className="candidates-grid" style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0, overflow: 'visible', border: 0, background: 'transparent', borderRadius: 0, boxShadow: 'none' }}>
             <thead>
               {/* Row 1: column labels */}
               <tr style={{ height: HEADER_ROW_HEIGHT }}>
