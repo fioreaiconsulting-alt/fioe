@@ -100,13 +100,13 @@ body {
 /* Header: Fixed height, does not scroll */
 #sessionBanner {
   flex: 0 0 auto;
-  margin: 24px 24px 16px 24px !important; /* Margins inside body flex */
+  margin: 24px 24px 16px 16px !important; /* Margins inside body flex */
   border: 1px solid var(--neutral-border) !important;
   box-shadow: var(--shadow) !important;
   /* Constraint width */
-  width: calc(100% - 48px);
+  width: calc(100% - 40px);
   max-width: 1380px; 
-  margin-left: auto !important;
+  margin-left: 16px !important;
   margin-right: auto !important;
   box-sizing: border-box;
   z-index: 10;
@@ -117,9 +117,9 @@ body {
   flex: 1 1 auto; /* Grow to fill space */
   display: flex;
   flex-direction: column;
-  width: calc(100% - 48px);
+  width: calc(100% - 40px);
   max-width: 1380px; 
-  margin: 0 auto 24px auto; /* Bottom margin for spacing */
+  margin: 0 auto 24px 16px; /* Left-aligned close to sidebar */
   padding: 24px;
   background: var(--panel);
   border-radius: var(--radius);
