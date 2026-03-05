@@ -700,6 +700,106 @@ def _ai_studio_get_status() -> dict:
             "reset_hour_sgt": _AI_STUDIO_RESET_HOUR_SGT,
         }
 
+_COUNTRY_NAMES = {
+    "cn": "China", "jp": "Japan", "kr": "South Korea", "sg": "Singapore",
+    "au": "Australia", "in": "India", "gb": "United Kingdom", "de": "Germany",
+    "fr": "France", "us": "United States", "ca": "Canada", "hk": "Hong Kong",
+    "tw": "Taiwan", "my": "Malaysia", "id": "Indonesia", "th": "Thailand",
+    "vn": "Vietnam", "ph": "Philippines", "nz": "New Zealand",
+    "nl": "Netherlands", "se": "Sweden", "no": "Norway", "dk": "Denmark",
+    "fi": "Finland", "it": "Italy", "es": "Spain", "br": "Brazil",
+    "mx": "Mexico", "ar": "Argentina", "za": "South Africa", "ae": "UAE",
+    "be": "Belgium", "ch": "Switzerland", "at": "Austria", "pl": "Poland",
+    "cz": "Czech Republic", "hu": "Hungary", "ro": "Romania", "pt": "Portugal",
+}
+
+# Max companies to include in a single AI Studio prompt (keeps prompt manageable)
+_AI_STUDIO_MAX_COMPANIES = 20
+
+def _translate_xray_to_nl(query: str) -> str:
+    """
+    Parse a boolean Xray search query (Google search syntax) and translate it into
+    natural language that Gemini's grounding can understand and act on.
+
+    Handles: site:, AND, OR groups (titles + companies), quoted phrases, -exclusions.
+    """
+    # --- site domain ---------------------------------------------------------
+    site_m = re.search(r'site:(\S+)', query)
+    site = site_m.group(1) if site_m else "linkedin.com/in"
+    country_m = re.match(r'([a-z]{2,3})\.linkedin\.com', site)
+    country_code = country_m.group(1) if country_m else ""
+    country_name = _COUNTRY_NAMES.get(country_code, country_code.upper() if country_code else "")
+
+    # --- strip operators we don't want in NL ---------------------------------
+    clean = re.sub(r'site:\S+', '', query)
+    # Remove all negative clauses: -intitle:"…", -inurl:…, -"…", -Word
+    clean = re.sub(r'-(?:intitle|inurl):"[^"]*"', '', clean)
+    clean = re.sub(r'-(?:intitle|inurl):\S+', '', clean)
+    clean = re.sub(r'-"[^"]*"', '', clean)
+    clean = re.sub(r'-\b\w+\b', '', clean)
+    clean = re.sub(r'\bAND\b', ' ', clean, flags=re.I)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+
+    # --- extract OR groups ---------------------------------------------------
+    or_groups: list[list[str]] = []
+    for m in re.finditer(r'\(([^)]+)\)', clean):
+        group_text = m.group(1)
+        if re.search(r'\bOR\b', group_text, re.I):
+            items = [x.strip().strip('"') for x in re.split(r'\bOR\b', group_text, flags=re.I)]
+            items = [x for x in items if x]
+            or_groups.append(items)
+
+    # Standalone quoted phrases outside any parens
+    clean_no_parens = re.sub(r'\([^)]*\)', '', clean)
+    standalone_phrases = re.findall(r'"([^"]+)"', clean_no_parens)
+
+    # --- classify titles vs companies ----------------------------------------
+    # Heuristic: a group is a "title group" when it has ≤10 items AND
+    # average item length ≤ 40 chars (job titles are short).
+    # Larger groups / longer names → company list.
+    titles: list[str] = list(standalone_phrases)
+    companies: list[str] = []
+    for group in or_groups:
+        avg_len = sum(len(x) for x in group) / len(group) if group else 0
+        if len(group) <= 10 and avg_len <= 40:
+            titles.extend(group)
+        else:
+            companies.extend(group)
+
+    # If nothing was classified as a title, promote the first OR group
+    if not titles and or_groups:
+        titles = or_groups[0]
+        companies = [x for g in or_groups[1:] for x in g]
+
+    # --- build natural language prompt ---------------------------------------
+    location_part = f"on {site}"
+    if country_name:
+        location_part += f" ({country_name} LinkedIn)"
+
+    if titles:
+        roles_str = " or ".join(f'"{t}"' for t in titles)
+    else:
+        roles_str = "relevant professionals"
+
+    lines = [
+        f"Search Google for LinkedIn profile pages {location_part}.",
+        f"I am looking for professionals with the role or title: {roles_str}.",
+    ]
+    if companies:
+        sample = companies[:_AI_STUDIO_MAX_COMPANIES]
+        more = len(companies) - len(sample)
+        co_str = ", ".join(sample)
+        if more > 0:
+            co_str += f", and similar companies"
+        lines.append(f"They should currently work at companies such as: {co_str}.")
+    lines += [
+        "List every LinkedIn profile page URL you find (URLs containing '/in/' in the path).",
+        "Output one result per line in this format:  URL | Person Name - Job Title at Company",
+        "Do NOT include LinkedIn job listings, company pages, or directory pages.",
+    ]
+    return "\n".join(lines)
+
+
 def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
     """
     Perform a grounded web search via Google AI Studio (Gemini with Google Search grounding).
@@ -710,6 +810,9 @@ def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
     Tool selection:
       - Gemini 2.0+ models use the "google_search" tool.
       - Gemini 1.5 models use "google_search_retrieval" with dynamic_threshold=0 to force grounding.
+
+    The raw boolean Xray query is translated to natural language before sending to Gemini,
+    because Gemini's grounding interprets prompts as NL, not as Google search operator syntax.
     """
     engine, count = _ai_studio_increment()
     if engine != "ai_studio":
@@ -733,19 +836,22 @@ def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
             }
         }}]
 
-    # Tell Gemini to run the xray query verbatim and list every LinkedIn profile URL it finds
-    prompt = (
-        f"Perform a Google web search using exactly this query:\n\n{query}\n\n"
-        "From the search results, extract and list every LinkedIn profile URL "
-        "(pages whose path starts with /in/) that appears. "
-        "For each profile URL found, output one line in this format:\n"
-        "URL | Person Name - Job Title at Company\n\n"
-        "If you cannot find a name or title, leave it blank after the pipe. "
-        "Do not include job listings, company pages, or non-profile LinkedIn pages."
-    )
+    # Translate the boolean Xray query to natural language that Gemini can act on
+    nl_prompt = _translate_xray_to_nl(query)
+    logger.debug("[AIStudio] Translated NL prompt:\n%s", nl_prompt)
 
     body = {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "system_instruction": {
+            "parts": [{
+                "text": (
+                    "You are a professional talent sourcing assistant. "
+                    "You MUST always call the google_search tool to find real, live LinkedIn profiles — "
+                    "never answer from memory or training data. "
+                    "Always perform a web search before responding."
+                )
+            }]
+        },
+        "contents": [{"parts": [{"text": nl_prompt}]}],
         "tools": tools,
     }
     try:
