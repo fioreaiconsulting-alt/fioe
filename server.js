@@ -3705,3 +3705,22 @@ const server = http.createServer(app);
 server.listen(port, () => {
   console.log(`Backend running on port ${port}`);
 });
+
+// ── Port-5000 static server for LookerDashboard ──────────────────────────────
+// Serves LookerDashboard.html (and its supporting CSS/JS assets) on
+// localhost:5000 so the dashboard is reachable from a dedicated port.
+// The HTML file location is inherited from LOOKER_DASHBOARD_PATH (same env var
+// used by the main server above); nav-sidebar.css / nav-sidebar.js are served
+// from the same directory.
+const lookerDir = path.dirname(lookerDashboardFile);
+const app5000 = express();
+const _serveLooker = [dashboardRateLimit, (_req, res) => res.sendFile(lookerDashboardFile)];
+app5000.get('/', ..._serveLooker);
+app5000.get('/LookerDashboard.html', ..._serveLooker);
+app5000.get('/LookerDashboard', ..._serveLooker);
+// Serve nav-sidebar.css, nav-sidebar.js and any other co-located static assets
+app5000.use(dashboardRateLimit, express.static(lookerDir, { index: false }));
+const server5000 = http.createServer(app5000);
+server5000.listen(5000, () => {
+  console.log('LookerDashboard static server running on port 5000');
+});
