@@ -1024,6 +1024,33 @@
             color: #fff;
             border-color: transparent;
         }
+        /* Top N controls */
+        .topn-controls {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 2px 6px;
+        }
+        .topn-btn {
+            background: none !important;
+            border: none !important;
+            color: var(--primary, #3b82f6) !important;
+            font-size: 12px;
+            padding: 2px 4px !important;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .topn-btn:hover { background: var(--hover) !important; border-radius: 4px; }
+        .topn-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-main);
+            min-width: 32px;
+            text-align: center;
+        }
 
         .slideshow-content {
             flex: 1;
@@ -3388,14 +3415,11 @@
         tile.appendChild(controls);
     }
 
-    // Resize a card by percentage (100 = full size, 25 = smallest)
+    // Resize a card by percentage (100 = full size, 25 = smallest) — only adjusts height, never grid span
     function resizeCardByPercent(card, pct) {
-        const baseSpan = parseInt(card.dataset.baseSpan || '12', 10);
         const baseHeight = parseInt(card.dataset.baseHeight || '400', 10);
         const ratio = pct / 100;
-        const span = Math.max(1, Math.round(baseSpan * ratio));
         const height = Math.max(80, Math.round(baseHeight * ratio));
-        card.dataset.span = String(span);
         if (
             card.classList.contains('chart-card') ||
             card.classList.contains('map-card') ||
@@ -3930,13 +3954,13 @@
     function buildSlide() {
         const checked = document.querySelectorAll('#dashboardGrid .slide-tile-check:checked');
         if (checked.length === 0) { alert('Select at least one tile first.'); return; }
-        const tileIds = Array.from(checked).map(cb => {
+        // Each checked tile becomes its own slide
+        checked.forEach(cb => {
             const card = cb.closest('.card');
             if (!card.dataset.tileId) card.dataset.tileId = `tile-custom-${++_slideIdCounter}`;
-            return card.dataset.tileId;
-        }).filter(Boolean);
-        const slideName = `Slide ${slides.length + 1}`;
-        slides.push({ name: slideName, tileIds: tileIds.slice() });
+            const slideName = `Slide ${slides.length + 1}`;
+            slides.push({ name: slideName, tileIds: [card.dataset.tileId], topN: null });
+        });
         currentSlideIndex = slides.length - 1;
         // Exit selection mode
         toggleSlidesSelectionMode();
@@ -4018,7 +4042,77 @@
         }
         prevBtn.disabled = currentSlideIndex === 0;
         nextBtn.disabled = currentSlideIndex === slides.length - 1;
+
+        // Update Top N label and apply to visible charts
+        const topNLabel = document.getElementById('topNLabel');
+        if (topNLabel) {
+            topNLabel.textContent = (slide.topN == null) ? 'All' : `Top ${slide.topN}`;
+        }
+        applyTopNToSlide(slide);
+
         renderSlideTabs();
+    }
+
+    // Apply Top N filter to the charts on the current slide
+    function applyTopNToSlide(slide) {
+        if (!slide) return;
+        const grid = document.getElementById('dashboardGrid');
+        slide.tileIds.forEach(tileId => {
+            const card = grid ? grid.querySelector(`[data-tile-id="${tileId}"]`) : null;
+            if (!card) return;
+            const canvas = card.querySelector('canvas');
+            if (!canvas) return;
+            const chart = charts[canvas.id];
+            if (!chart || !chart.data || !chart.data.labels) return;
+            const n = slide.topN;
+            if (n == null) {
+                // Restore all — re-render from source data
+                const dim = canvas.dataset.dimension || card.dataset.chartDimension;
+                const type = card.dataset.chartType || 'bar';
+                if (dim) { try { updateChart(canvas.id, dim, type); } catch(_) {} }
+                return;
+            }
+            // Slice labels + dataset values to top N
+            const origLabels = chart.data.labels;
+            const origData = chart.data.datasets[0] ? chart.data.datasets[0].data : [];
+            if (!origLabels.length) return;
+            const clampedN = Math.min(n, origLabels.length);
+            chart.data.labels = origLabels.slice(0, clampedN);
+            chart.data.datasets.forEach(ds => {
+                ds.data = (ds._origData || origData).slice(0, clampedN);
+            });
+            // Store originals once so subsequent calls can restore
+            chart.data.datasets.forEach(ds => {
+                if (!ds._origData) ds._origData = ds.data.slice();
+            });
+            try { chart.update(); } catch(_) {}
+        });
+    }
+
+    function adjustTopN(delta) {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        // Determine current max data points from visible chart
+        const grid = document.getElementById('dashboardGrid');
+        let maxPoints = 20; // default
+        slide.tileIds.forEach(tileId => {
+            const card = grid ? grid.querySelector(`[data-tile-id="${tileId}"]`) : null;
+            if (!card) return;
+            const canvas = card.querySelector('canvas');
+            const chart = canvas ? charts[canvas.id] : null;
+            if (chart && chart.data && chart.data.labels) {
+                maxPoints = Math.max(maxPoints, chart.data.labels.length);
+            }
+        });
+
+        let current = slide.topN == null ? maxPoints : slide.topN;
+        current = Math.max(1, Math.min(maxPoints, current + delta));
+        // If at max, treat as "All"
+        slide.topN = (current >= maxPoints) ? null : current;
+
+        const topNLabel = document.getElementById('topNLabel');
+        if (topNLabel) topNLabel.textContent = slide.topN == null ? 'All' : `Top ${slide.topN}`;
+        applyTopNToSlide(slide);
     }
 
     // Sync editable title back to slide data — attached via DOMContentLoaded so element exists
@@ -4072,7 +4166,7 @@
         addTileControls(tile);
         enableTileInteractivity(tile);
 
-        slides.push({ name: slideName, tileIds: [tileId] });
+        slides.push({ name: slideName, tileIds: [tileId], topN: null });
         currentSlideIndex = slides.length - 1;
         renderCurrentSlide();
     }
@@ -4299,6 +4393,11 @@
         <div id="slideshowFilterSlot"></div>
         <div class="slideshow-toolbar">
             <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide" aria-label="Slide title">Slide 1</span>
+            <span class="topn-controls" title="Adjust number of data points shown in charts">
+                <button class="topn-btn" onclick="adjustTopN(-1)" title="Show fewer data points (reduce by 1)">▼</button>
+                <span id="topNLabel" class="topn-label">All</span>
+                <button class="topn-btn" onclick="adjustTopN(1)" title="Show more data points (increase by 1)">▲</button>
+            </span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
