@@ -13,6 +13,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <!-- html2pdf.js for PDF Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- html2canvas for PNG export of slides -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <!-- Left Column Navigation -->
     <link rel="stylesheet" href="nav-sidebar.css">
     <script src="nav-sidebar.js" defer></script>
@@ -706,10 +708,15 @@
             bottom: 8px;
             right: 8px;
             display: flex;
+            align-items: center;
             gap: 6px;
             opacity: 0;
             transition: opacity .2s ease;
             z-index: 5;
+            background: var(--bg-body, #fff);
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 8px;
+            padding: 4px 8px;
         }
         .card:hover .tile-controls { opacity: 1; }
         .tile-controls button {
@@ -726,6 +733,117 @@
             border-color: var(--primary);
             color: var(--primary);
             font-weight: 700;
+        }
+        /* Right-edge border drag-to-resize handle */
+        .tile-resize-e {
+            position: absolute;
+            top: 16px;
+            right: 0;
+            width: 8px;
+            bottom: 16px;
+            cursor: e-resize;
+            z-index: 20;
+            opacity: 0;
+            background: linear-gradient(to left, rgba(59,130,246,0.35), transparent);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-e,
+        .tile-resize-e.dragging { opacity: 1; }
+        /* Left-edge border drag-to-resize handle */
+        .tile-resize-w {
+            position: absolute;
+            top: 16px;
+            left: 0;
+            width: 8px;
+            bottom: 16px;
+            cursor: w-resize;
+            z-index: 20;
+            opacity: 0;
+            background: linear-gradient(to right, rgba(59,130,246,0.35), transparent);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-w,
+        .tile-resize-w.dragging { opacity: 1; }
+        /* Top-edge border drag-to-resize handle */
+        .tile-resize-n {
+            position: absolute;
+            top: 0;
+            left: 16px;
+            right: 16px;
+            height: 8px;
+            cursor: n-resize;
+            z-index: 20;
+            opacity: 0;
+            background: linear-gradient(transparent, rgba(59,130,246,0.35));
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-n,
+        .tile-resize-n.dragging { opacity: 1; }
+        /* SE corner handle (width+height simultaneously) */
+        .tile-resize-se {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 16px;
+            height: 16px;
+            cursor: se-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at bottom right, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-se,
+        .tile-resize-se.dragging { opacity: 1; }
+        /* SW corner handle */
+        .tile-resize-sw {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 16px;
+            height: 16px;
+            cursor: sw-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at bottom left, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-sw,
+        .tile-resize-sw.dragging { opacity: 1; }
+        /* NE corner handle */
+        .tile-resize-ne {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 16px;
+            height: 16px;
+            cursor: ne-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at top right, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-ne,
+        .tile-resize-ne.dragging { opacity: 1; }
+        /* NW corner handle */
+        .tile-resize-nw {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 16px;
+            height: 16px;
+            cursor: nw-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at top left, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-nw,
+        .tile-resize-nw.dragging { opacity: 1; }
+        /* Tile drag-to-slide: glow when dragging over a slide tab */
+        .slide-tab.drop-target {
+            box-shadow: 0 0 0 2px var(--primary, #3b82f6);
+            background: var(--primary, #3b82f6) !important;
+            color: #fff !important;
         }
 
         .card.dragging { opacity: .5; }
@@ -768,7 +886,61 @@
             padding: 2px 6px;
             border-radius: 4px;
             border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
         }
+        .tag-remove-btn {
+            background: none;
+            border: none;
+            color: var(--text-sub);
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 1;
+            padding: 0 1px;
+            opacity: 0.6;
+        }
+        .tag-remove-btn:hover {
+            color: #ef4444;
+            opacity: 1;
+        }
+        /* Bottom border drag-to-resize handle */
+        .tile-resize-s {
+            position: absolute;
+            bottom: 0;
+            left: 16px;
+            right: 16px;
+            height: 8px;
+            cursor: s-resize;
+            z-index: 20;
+            opacity: 0;
+            background: linear-gradient(transparent, rgba(59,130,246,0.35));
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-s,
+        .tile-resize-s.dragging { opacity: 1; }
+        /* Text tile */
+        .text-tile {
+            min-height: 80px;
+            padding: 16px;
+            font-size: 14px;
+            color: var(--text-main);
+        }
+        .text-tile-editor {
+            width: 100%;
+            flex: 1;
+            min-height: 80px;
+            resize: none;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 14px;
+            color: var(--text-main);
+            background: var(--bg-body);
+            outline: none;
+            font-family: inherit;
+        }
+        .text-tile-editor:focus { border-color: var(--primary); }
         
         /* Updated Legend Style for Cyberpunk */
         .skill-legend {
@@ -897,6 +1069,263 @@
             height: 100%;
             object-fit: contain; /* Changed from cover to contain so the full image shows */
             object-position: center;
+        }
+
+        /* ============ Create Slides feature ============ */
+        /* Checkbox overlay on tiles when in selection mode */
+        .slide-check-overlay {
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            background: rgba(0,0,0,0.55);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .slide-check-overlay input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+        /* Highlight selected tiles */
+        .card.slide-selected {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* ---- Slideshow overlay ---- */
+        #slideshowViewer {
+            position: fixed;
+            inset: 0;
+            z-index: 900;
+            background: var(--bg-body, #f8f9fa);
+            display: none;
+            flex-direction: column;
+        }
+        #slideshowViewer.active { display: flex; }
+
+        /* Minimize mode: hide all controls, keep only title bar and navigation */
+        #slideshowViewer.minimize-mode .tile-controls { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar .add-tile-btn { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar .topn-controls { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar .slide-tabs { display: none !important; }
+        #slideshowViewer.minimize-mode #exportSlidePngBtn,
+        #slideshowViewer.minimize-mode #saveSlidesBtn,
+        #slideshowViewer.minimize-mode #deleteProjectBtn { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar label:not(.minimize-mode-label) { display: none !important; }
+        #slideshowViewer.minimize-mode .chart-type-select { display: none !important; }
+        #slideshowViewer.minimize-mode .active-tags { display: none !important; }
+
+        .slideshow-header {
+            flex-shrink: 0;
+            background: var(--bg-card, #fff);
+            border-bottom: 1px solid var(--border, #e2e8f0);
+            padding: 0 16px 8px;
+        }
+        .slideshow-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0 4px;
+            flex-wrap: wrap;
+        }
+        .slideshow-toolbar .slide-title {
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--text-main);
+            flex: 1;
+        }
+        .slideshow-toolbar button {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .slideshow-toolbar button:hover { background: var(--hover); }
+        .slideshow-toolbar button.close-btn {
+            background: #fee2e2;
+            color: #dc2626;
+            border-color: #fca5a5;
+        }
+        .slideshow-toolbar button.add-tile-btn {
+            background: var(--primary, #3b82f6);
+            color: #fff;
+            border-color: transparent;
+        }
+        /* Top N controls */
+        .topn-controls {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 2px 6px;
+        }
+        .topn-btn {
+            background: none !important;
+            border: none !important;
+            color: var(--primary, #3b82f6) !important;
+            font-size: 12px;
+            padding: 2px 4px !important;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .topn-btn:hover { background: var(--hover) !important; border-radius: 4px; }
+        .topn-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-main);
+            min-width: 32px;
+            text-align: center;
+        }
+        /* Per-tile top-N mini control inside .tile-controls */
+        .tile-topn {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .tile-topn-btn {
+            background: none;
+            border: none;
+            color: var(--primary, #3b82f6);
+            font-size: 10px;
+            padding: 1px 3px;
+            cursor: pointer;
+            line-height: 1;
+            min-width: unset !important;
+        }
+        .tile-topn-btn:hover { background: var(--hover) !important; border-radius: 3px; }
+        .tile-topn-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-main);
+            min-width: 28px;
+            text-align: center;
+        }
+
+        .slideshow-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+            position: relative;
+        }
+        /* grid inside slideshow still uses its normal styles */
+        .slideshow-content #dashboardGrid {
+            padding: 16px;
+        }
+
+        .slideshow-nav {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            padding: 10px 16px;
+            background: var(--bg-card, #fff);
+            border-top: 1px solid var(--border, #e2e8f0);
+        }
+        .slideshow-nav button {
+            padding: 7px 18px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 14px;
+            cursor: pointer;
+            min-width: 100px;
+        }
+        .slideshow-nav button:hover:not(:disabled) { background: var(--hover); }
+        .slideshow-nav button:disabled { opacity: 0.35; cursor: default; }
+        #slideshowCounter {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-main);
+            min-width: 100px;
+            text-align: center;
+        }
+
+        /* Drop zone for blank slides */
+        #slideDropZone {
+            margin: 40px auto;
+            max-width: 600px;
+            min-height: 200px;
+            border: 2px dashed var(--border, #e2e8f0);
+            border-radius: 12px;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            color: var(--text-sub);
+            font-size: 14px;
+            padding: 40px 24px;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        #slideDropZone.drag-over {
+            border-color: var(--primary, #3b82f6);
+            background: rgba(59,130,246,0.06);
+            color: var(--primary, #3b82f6);
+        }
+        #slideDropZone .drop-icon {
+            font-size: 36px;
+            opacity: 0.5;
+        }
+
+        /* Slide tabs row */
+        .slide-tabs {
+            display: flex;
+            gap: 6px;
+            padding: 6px 0 0;
+            flex-wrap: wrap;
+            overflow-x: auto;
+        }
+        .slide-tab {
+            padding: 4px 10px 4px 14px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            background: var(--hover);
+            color: var(--text-sub);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .slide-tab.active-tab {
+            background: var(--primary, #3b82f6);
+            color: #fff;
+            border-color: transparent;
+        }
+        .slide-tab-delete {
+            font-size: 11px;
+            line-height: 1;
+            opacity: 0.6;
+            padding: 0 2px;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .slide-tab-delete:hover { opacity: 1; }
+
+        /* Editable slide title in toolbar */
+        .slide-title[contenteditable="true"] {
+            outline: none;
+            border-bottom: 1px dashed var(--primary, #3b82f6);
+            cursor: text;
+            min-width: 60px;
         }
     </style>
     <!-- Nav-sidebar base styles (embedded for self-contained rendering) -->
@@ -1154,6 +1583,7 @@
     <div class="nav-tabs-container">
         <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
         <button class="tab-btn" onclick="switchTab('templates')">Report Template</button>
+        <button class="tab-btn" id="slidesTabBtn" style="display:none;" onclick="openSlideshowViewer()" title="View your saved slides">Slides</button>
     </div>
     
     <!-- DASHBOARD TAB CONTENT -->
@@ -1174,6 +1604,9 @@
                 <button class="primary" onclick="exportToPDF()" title="Export Dashboard to PDF">Export PDF</button>
                 <!-- PORT BUTTON: Triggers Google OAuth and Export to Looker Studio -->
                 <button class="primary" onclick="handlePortToLooker()" title="Port data to Looker Studio via Google Sheets">Port</button>
+                <!-- CREATE SLIDES -->
+                <button id="createSlidesBtn" onclick="toggleSlidesSelectionMode()" title="Select tiles to build a slide presentation">Create Slides</button>
+                <button id="buildSlideBtn" onclick="buildSlide()" title="Convert selected tiles into a slide" style="display:none; background:var(--primary); color:#fff; border-color:transparent;">Build Slide ▶</button>
             </div>
         </div>
 
@@ -1746,6 +2179,27 @@
         document.querySelectorAll('.filter-dropdown').forEach(d => d.classList.remove('show'));
     });
 
+    // Helper: extract a plain percentage string from a rating value.
+    // The rating column in Postgres is a JSON object: { total_score: "92%", stars: 5, ... }
+    // but may also be a plain integer, a bare "92%" string, or null.
+    function extractRatingScore(val) {
+        if (val === null || val === undefined || val === '') return '';
+        if (typeof val === 'object') {
+            const ts = val.total_score;
+            if (ts !== undefined && ts !== null) {
+                const m = String(ts).match(/(\d+)%/);
+                if (m) return m[1] + '%';
+                if (!isNaN(ts) && String(ts).trim() !== '') return parseInt(ts) + '%';
+            }
+            return '';
+        }
+        const s = String(val).trim();
+        const m = s.match(/(\d+)%/);
+        if (m) return m[1] + '%';
+        if (!isNaN(s) && s !== '') return parseInt(s) + '%';
+        return '';
+    }
+
     function loadFilterOptions(field) {
         const listContainer = document.getElementById(`options-${field}`);
         const uniqueValues = new Set();
@@ -1753,7 +2207,7 @@
 
         globalData.forEach(row => {
             const val = row[dataKey];
-            if (val) {
+            if (val !== null && val !== undefined && val !== '') {
                 // Updated: use jskillset and strip brackets/quotes
                 if (['skillset', 'product', 'lskillset', 'jskillset'].includes(dataKey)) {
                     // Remove [, ], " before splitting
@@ -1761,6 +2215,9 @@
                         const trimmed = v.trim();
                         if (trimmed) uniqueValues.add(trimmed);
                     });
+                } else if (dataKey === 'rating') {
+                    const score = extractRatingScore(val);
+                    if (score) uniqueValues.add(score);
                 } else {
                     uniqueValues.add(String(val).trim());
                 }
@@ -1784,17 +2241,7 @@
         options.forEach(opt => {
             const div = document.createElement('div');
             div.className = 'filter-option';
-            
-            // Format Rating for Display
-            let displayLabel = opt;
-            if (field === 'rating') {
-                const match = String(opt).match(/(\d+%)/);
-                if (match) {
-                    displayLabel = match[1];
-                }
-            }
-
-            div.textContent = displayLabel;
+            div.textContent = opt;
             div.onclick = () => applyFilter(field, opt);
             listContainer.appendChild(div);
         });
@@ -1817,17 +2264,7 @@
         filtered.forEach(opt => {
             const div = document.createElement('div');
             div.className = 'filter-option';
-            
-            // Format Rating for Display in Search Results
-            let displayLabel = opt;
-            if (field === 'rating') {
-                const match = String(opt).match(/(\d+%)/);
-                if (match) {
-                    displayLabel = match[1];
-                }
-            }
-            
-            div.textContent = displayLabel;
+            div.textContent = opt;
             div.onclick = () => applyFilter(field, opt);
             listContainer.appendChild(div);
         });
@@ -2294,8 +2731,13 @@
         return globalData.filter(row => {
             return Object.entries(activeFilters).every(([field, filterVal]) => {
                 const dataKey = FIELD_MAPPING[field] || field;
-                const rowVal = String(row[dataKey] || '').toLowerCase();
-                return rowVal.includes(filterVal.toLowerCase());
+                let rowVal;
+                if (dataKey === 'rating') {
+                    rowVal = extractRatingScore(row[dataKey]);
+                } else {
+                    rowVal = String(row[dataKey] || '').toLowerCase();
+                }
+                return rowVal.toLowerCase().includes(filterVal.toLowerCase());
             });
         });
     }
@@ -2378,11 +2820,78 @@
         updateChart(canvasId, dimension, newType);
     }
 
+    // Country centroids for tile-level Leaflet map charts (extends the COUNTRY_COORDS defined above)
+    // Render a Leaflet bubble map inside a tile's chart-container for 'map' chart type
+    function renderLeafletMapForTile(canvasId, dimension) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const container = canvas.parentElement;
+        if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+        canvas.style.display = 'none';
+        let mapDiv = container.querySelector(`#tilemap-${canvasId}`);
+        if (mapDiv && mapDiv._leafletMap) { mapDiv._leafletMap.remove(); mapDiv.innerHTML = ''; }
+        if (!mapDiv) {
+            mapDiv = document.createElement('div');
+            mapDiv.id = `tilemap-${canvasId}`;
+            mapDiv.style.cssText = 'width:100%;height:100%;min-height:250px;';
+            container.appendChild(mapDiv);
+        }
+        const agg = aggregateData(dimension);
+        const labels = agg.labels; const values = agg.values;
+        const maxVal = Math.max(...values, 1);
+        const map = L.map(mapDiv, { zoomControl: true });
+        mapDiv._leafletMap = map;
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 18 }).addTo(map);
+        const bounds = [];
+        labels.forEach((label, i) => {
+            const coords = COUNTRY_COORDS[label] || COUNTRY_COORDS[label.split(',')[0].trim()];
+            if (coords) {
+                const radius = 8 + Math.round((values[i] / maxVal) * 28);
+                L.circleMarker(coords, { radius, fillColor: '#1a73e8', color: '#1557b0', weight: 1, fillOpacity: 0.65 })
+                    .addTo(map).bindTooltip(`${label}: ${values[i]}`, { permanent: false });
+                bounds.push(coords);
+            }
+        });
+        if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
+        else map.setView([20, 0], 2);
+        setTimeout(() => map.invalidateSize(), 120);
+    }
+
     function updateChart(canvasId, dimension, type) {
+        // Handle map type with Leaflet
+        if (type === 'map') { renderLeafletMapForTile(canvasId, dimension); return; }
+        const canvasEl = document.getElementById(canvasId);
+        // Handle table type
+        if (type === 'table') {
+            if (canvasEl) {
+                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+                const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
+                if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+                canvasEl.style.display = 'none';
+                const existing = canvasEl.parentElement.querySelector('.chart-data-table');
+                if (existing) existing.remove();
+                const agg = aggregateData(dimension);
+                const tableDiv = document.createElement('div');
+                tableDiv.className = 'chart-data-table table-wrapper';
+                tableDiv.innerHTML = `<table><thead><tr><th>${formatLabel(dimension)}</th><th>Count</th></tr></thead><tbody>${agg.labels.slice(0, 50).map((l, i) => `<tr><td>${l}</td><td>${agg.values[i]}</td></tr>`).join('')}</tbody></table>`;
+                canvasEl.after(tableDiv);
+            }
+            return;
+        }
+        // When switching away from map or table, restore canvas
+        if (canvasEl) {
+            const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
+            if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+            const tableDiv = canvasEl.parentElement.querySelector('.chart-data-table');
+            if (tableDiv) tableDiv.remove();
+            canvasEl.style.display = '';
+        }
+
         const agg = aggregateData(dimension);
         const labels = agg.labels.slice(0, 15);
         const values = agg.values.slice(0, 15);
-        const ctx = document.getElementById(canvasId).getContext('2d');
+        if (!canvasEl) return;
+        const ctx = canvasEl.getContext('2d');
 
         if (charts[canvasId]) charts[canvasId].destroy();
 
@@ -2395,49 +2904,62 @@
         const gridColor = isCyber ? '#334155' : '#e5e7eb';
         const textColor = isCyber ? '#94a3b8' : '#64748b';
 
-        // NEW: Radar and Polar Area Config
-        const isRadial = type === 'radar' || type === 'polarArea' || type === 'pie' || type === 'doughnut';
-        
-        // Use MultiColor logic for diverse visuals
-        const useMultiColor = isRadial || (dimension === 'skillset' && type !== 'line');
-        
+        // Normalise extended types to Chart.js types
+        const chartJsType = (type === 'horizontalBar') ? 'bar'
+                          : (type === 'area') ? 'line'
+                          : (type === 'scatter') ? 'scatter'
+                          : (type === 'bubble') ? 'bubble'
+                          : type;
+
+        const isRadial = chartJsType === 'radar' || chartJsType === 'polarArea' || chartJsType === 'pie' || chartJsType === 'doughnut';
+        const useMultiColor = isRadial || (dimension === 'skillset' && chartJsType !== 'line');
+
+        // Build dataset data for scatter/bubble
+        let datasetData = values;
+        if (chartJsType === 'scatter') {
+            datasetData = values.map((v, i) => ({ x: i + 1, y: v }));
+        } else if (chartJsType === 'bubble') {
+            datasetData = values.map((v, i) => ({ x: i + 1, y: v, r: Math.max(4, Math.round(Math.sqrt(v) * 3)) }));
+        }
+
         const config = {
-            type: type,
+            type: chartJsType,
             data: {
                 labels: labels,
                 datasets: [{
                     label: 'Count',
-                    data: values,
-                    backgroundColor: useMultiColor ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
-                    borderColor: (useMultiColor && type !== 'line') ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
-                    borderWidth: type === 'line' ? 2 : 0,
-                    fill: type === 'line' || type === 'radar' ? true : true, // fill radar
-                    tension: 0.1
+                    data: datasetData,
+                    // Hex colors are all 6-digit so +cc gives valid 8-digit hex alpha (80%)
+                    backgroundColor: useMultiColor ? colors.map(c => c + 'cc') : (isCyber ? '#0ea5e9' : '#1a73e8'),
+                    borderColor: (useMultiColor && chartJsType !== 'line') ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
+                    borderWidth: (chartJsType === 'line') ? 2 : (chartJsType === 'scatter' || chartJsType === 'bubble') ? 1 : 0,
+                    // For area charts (type='area' which becomes chartJsType='line') enable fill
+                    fill: (type === 'area') || (chartJsType === 'radar'),
+                    tension: 0.3,
+                    pointRadius: chartJsType === 'line' ? 3 : undefined,
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                indexAxis: dimension === 'skillset' && type === 'bar' ? 'y' : 'x', 
+                indexAxis: (type === 'horizontalBar' || (dimension === 'skillset' && chartJsType === 'bar')) ? 'y' : 'x',
                 plugins: {
-                    legend: { 
-                        display: isRadial, 
+                    legend: {
+                        display: isRadial || chartJsType === 'bubble',
                         position: 'right',
                         labels: { boxWidth: 12, font: { family: isCyber?'Orbitron':'Inter' }, color: textColor }
                     }
                 },
                 layout: { padding: 10 },
-                scales: {
-                    // Scales not needed for pie/doughnut/polar, but might be for radar
-                }
+                scales: {}
             }
         };
 
         // Adjust scales visibility
-        if(type === 'pie' || type === 'doughnut' || type === 'polarArea') {
+        if(chartJsType === 'pie' || chartJsType === 'doughnut' || chartJsType === 'polarArea') {
             delete config.options.scales;
-            if(type === 'doughnut') config.options.cutout = '50%';
-        } else if (type === 'radar') {
+            if(chartJsType === 'doughnut') config.options.cutout = '50%';
+        } else if (chartJsType === 'radar') {
             config.options.scales = {
                 r: {
                     grid: { color: gridColor },
@@ -2445,14 +2967,21 @@
                     ticks: { display: false }
                 }
             };
-            // Transparency for radar fill
-            config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14, 165, 233, 0.2)' : 'rgba(26, 115, 232, 0.2)';
+            config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14,165,233,0.2)' : 'rgba(26,115,232,0.2)';
+        } else if (chartJsType === 'scatter' || chartJsType === 'bubble') {
+            config.options.scales = {
+                x: { type: 'linear', title: { display: true, text: 'Rank', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } },
+                y: { title: { display: true, text: 'Count', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } }
+            };
         } else {
-            // Bar/Line
             config.options.scales = {
                 x: { ticks: { color: textColor }, grid: { color: gridColor } },
                 y: { ticks: { color: textColor }, grid: { color: gridColor } }
             };
+            if (type === 'area') {
+                // Consistent fill opacity (0.2) with radar and other fills
+                config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14,165,233,0.2)' : 'rgba(26,115,232,0.2)';
+            }
         }
 
         charts[canvasId] = new Chart(ctx, config);
@@ -2490,12 +3019,10 @@
         let totalScore = 0;
         let ratedCount = 0;
         filtered.forEach(r => {
-            if (r.rating) {
-                const match = String(r.rating).match(/(\d+)%/);
-                if (match) {
-                    totalScore += parseInt(match[1]);
-                    ratedCount++;
-                }
+            const score = extractRatingScore(r.rating);
+            if (score) {
+                totalScore += parseInt(score);
+                ratedCount++;
             }
         });
         const avg = ratedCount > 0 ? Math.round(totalScore / ratedCount) : 0;
@@ -2509,11 +3036,7 @@
 
         filtered.slice(0, 50).forEach(row => {
             const tr = document.createElement('tr');
-            let score = '-';
-            if (row.rating) {
-                const m = String(row.rating).match(/(\d+)%/);
-                if(m) score = m[1] + '%';
-            }
+            let score = extractRatingScore(row.rating) || '-';
             const nameHtml = row.linkedinurl 
                 ? `<a href="${row.linkedinurl}" target="_blank" style="text-decoration:none; color:var(--primary); font-weight:600;">${row.name || 'Profile'}</a>`
                 : `<b>${row.name || '-'}</b>`;
@@ -2601,10 +3124,9 @@
             const values = keys.map(key => {
                 let val = row[key];
                 
-                // UPDATED: Extract only percentage for score column
-                if (key === 'rating' && val) {
-                    const match = String(val).match(/(\d+%)/);
-                    if (match) val = match[1];
+                // UPDATED: Extract only percentage for score column (from rating JSON object's total_score)
+                if (key === 'rating') {
+                    val = extractRatingScore(row.rating) || '';
                 }
 
                 let text = val === null || val === undefined ? '' : String(val);
@@ -2924,29 +3446,85 @@
             if (card.classList.contains('custom-metric-tile')) baseHeight = 200;
             card.dataset.baseHeight = String(baseHeight);
 
-            // controls
+            // controls — top-N filter + remove button (slider removed; resize via border handles)
             const controls = document.createElement('div');
             controls.className = 'tile-controls';
-            controls.innerHTML = `
-                <button data-scale="1" title="1x (Original Size)">1x</button>
-                <button data-scale="2" title="2x (Half Size)">2x</button>
-                <button data-scale="4" title="4x (Quarter Size)">4x</button>
-                <button data-scale="8" title="8x (Compact Size)">8x</button>
-                <button onclick="this.closest('.card').remove(); persistOrder(); persistSizes();" style="color:red;" title="Remove Tile">X</button>
-            `;
-
-            controls.querySelectorAll('button[data-scale]').forEach(btn => {
-                btn.addEventListener('click', (e) => {
+            controls.addEventListener('mousedown', (e) => e.stopPropagation());
+            controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+            // Per-tile Top N controls
+            const topnDiv = document.createElement('span');
+            topnDiv.className = 'tile-topn';
+            const isTextTile = card.dataset.tileType === 'text';
+            topnDiv.title = isTextTile ? 'Adjust text font size' : 'Filter: adjust number of data points shown';
+            const topnDown = document.createElement('button');
+            topnDown.className = 'tile-topn-btn';
+            topnDown.textContent = '▼';
+            topnDown.title = isTextTile ? 'Decrease font size' : 'Show fewer data points';
+            topnDown.setAttribute('aria-label', isTextTile ? 'Decrease font size' : 'Decrease data points');
+            const topnLabel = document.createElement('span');
+            topnLabel.className = 'tile-topn-label';
+            topnLabel.textContent = isTextTile ? '14px' : 'All';
+            const topnUp = document.createElement('button');
+            topnUp.className = 'tile-topn-btn';
+            topnUp.textContent = '▲';
+            topnUp.title = isTextTile ? 'Increase font size' : 'Show more data points';
+            topnUp.setAttribute('aria-label', isTextTile ? 'Increase font size' : 'Increase data points');
+            if (isTextTile) {
+                const _ed0 = card.querySelector('.text-tile-editor');
+                let _textFontSize = _ed0 ? (parseFloat(_ed0.style.fontSize) || 14) : 14;
+                topnLabel.textContent = _textFontSize + 'px';
+                topnDown.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const scale = parseFloat(btn.dataset.scale);
-                    resizeCard(card, scale);
-                    persistSizes();
-                    // mark active
-                    controls.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
+                    _textFontSize = Math.max(8, _textFontSize - 1);
+                    const ed = card.querySelector('.text-tile-editor');
+                    if (ed) ed.style.fontSize = _textFontSize + 'px';
+                    topnLabel.textContent = _textFontSize + 'px';
                 });
-            });
+                topnUp.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _textFontSize = Math.min(72, _textFontSize + 1);
+                    const ed = card.querySelector('.text-tile-editor');
+                    if (ed) ed.style.fontSize = _textFontSize + 'px';
+                    topnLabel.textContent = _textFontSize + 'px';
+                });
+            } else {
+                topnDown.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, -1); });
+                topnUp.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, 1); });
+            }
+            topnDiv.appendChild(topnDown);
+            topnDiv.appendChild(topnLabel);
+            topnDiv.appendChild(topnUp);
+            // Text alignment buttons (only for text tiles)
+            if (isTextTile) {
+                const alignDiv = document.createElement('span');
+                alignDiv.className = 'tile-align-btns';
+                alignDiv.style.cssText = 'display:inline-flex;gap:2px;margin-left:4px;';
+                [['⬅','left','Align left'],['≡','center','Align center'],['➡','right','Align right']].forEach(([icon, align, title]) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'tile-topn-btn';
+                    btn.textContent = icon;
+                    btn.title = title;
+                    btn.style.fontSize = '10px';
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const ed = card.querySelector('.text-tile-editor');
+                        if (ed) ed.style.textAlign = align;
+                    });
+                    alignDiv.appendChild(btn);
+                });
+                controls.appendChild(topnDiv);
+                controls.appendChild(alignDiv);
+            } else {
+                controls.appendChild(topnDiv);
+            }
+            const removeBtn = document.createElement('button');
+            removeBtn.style.color = 'red';
+            removeBtn.title = 'Remove Tile';
+            removeBtn.textContent = 'X';
+            removeBtn.addEventListener('click', (e) => { e.stopPropagation(); card.remove(); persistOrder(); persistSizes(); });
+            controls.appendChild(removeBtn);
             card.appendChild(controls);
+            addResizeHandle(card);
 
             // draggable
             makeDraggable(card);
@@ -3017,6 +3595,180 @@
         });
     }
 
+    // Attach drag-to-resize handles (bottom, right, and SE corner) to a tile card
+    const MIN_TILE_HEIGHT = 80;
+    const MIN_TILE_WIDTH  = 120;
+
+    // Convert the card's current rendered width to the nearest CSS-grid column span (1-12)
+    // so that releasing a width-resize handle snaps the tile into the grid and lets other
+    // tiles fill the freed space (jigsaw layout).
+    // COLS and GAP must match the .dashboard-container CSS (repeat(12,1fr), gap: 24px).
+    function widthToGridSpan(card) {
+        const grid = document.getElementById('dashboardGrid');
+        const gridWidth = grid ? grid.offsetWidth : 1200;
+        const COLS = 12, GAP = 24; // must match grid-template-columns / gap in CSS
+        // Width occupied by one column (including its trailing gap)
+        const colUnit = (gridWidth + GAP) / COLS;
+        const rawSpan = (card.offsetWidth + GAP) / colUnit;
+        return Math.max(1, Math.min(COLS, Math.round(rawSpan)));
+    }
+
+    function addResizeHandle(card) {
+        // Remove existing handles if present (avoid duplicates after re-render)
+        card.querySelectorAll('.tile-resize-s, .tile-resize-n, .tile-resize-e, .tile-resize-w, .tile-resize-se, .tile-resize-sw, .tile-resize-ne, .tile-resize-nw').forEach(h => h.remove());
+
+        // Helper: create a drag handle that updates height and/or width
+        function makeHandle(className, title, onMoveCallback, onUpCallback) {
+            const handle = document.createElement('div');
+            handle.className = className;
+            handle.title = title;
+            handle.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handle.classList.add('dragging');
+                handle.setPointerCapture(e.pointerId);
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const startW = card.offsetWidth;
+                const startH = card.offsetHeight;
+                const rect = card.getBoundingClientRect();
+                function onMove(em) {
+                    onMoveCallback(em, startX, startY, startW, startH, rect);
+                    const canvas = card.querySelector('canvas');
+                    if (canvas && charts[canvas.id]) {
+                        try { charts[canvas.id].resize(); } catch(_) {}
+                    }
+                }
+                function onUp() {
+                    handle.classList.remove('dragging');
+                    if (onUpCallback) onUpCallback();
+                    persistSizes();
+                    handle.removeEventListener('pointermove', onMove);
+                    handle.removeEventListener('pointerup', onUp);
+                    handle.removeEventListener('pointercancel', onUp);
+                }
+                handle.addEventListener('pointermove', onMove);
+                handle.addEventListener('pointerup', onUp);
+                handle.addEventListener('pointercancel', onUp);
+            });
+            return handle;
+        }
+
+        // South handle — height only (drag bottom edge down/up)
+        card.appendChild(makeHandle('tile-resize-s', 'Drag to resize tile height', (em, sx, sy, sw, sh) => {
+            const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // North handle — resize from top edge (moves top, preserves bottom)
+        card.appendChild(makeHandle('tile-resize-n', 'Drag to resize tile height from top', (em, sx, sy, sw, sh, rect) => {
+            const dy = em.clientY - sy;
+            const newH = Math.max(MIN_TILE_HEIGHT, sh - dy);
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // Shared onUp callback for width-changing handles: snap to nearest grid column span
+        // so the freed space can be filled by dragging other tiles (jigsaw layout).
+        function snapWidthToSpan() {
+            const span = widthToGridSpan(card);
+            card.dataset.span = String(span);
+            card.style.width = '';
+        }
+
+        // East handle — width only (drag right edge)
+        card.appendChild(makeHandle('tile-resize-e', 'Drag to resize tile width', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            card.style.width = newW + 'px';
+        }, snapWidthToSpan));
+
+        // West handle — resize from left edge
+        card.appendChild(makeHandle('tile-resize-w', 'Drag to resize tile width from left', (em, sx, sy, sw, sh) => {
+            const dx = em.clientX - sx;
+            const newW = Math.max(MIN_TILE_WIDTH, sw - dx);
+            card.style.width = newW + 'px';
+        }, snapWidthToSpan));
+
+        // SE corner handle — both width and height
+        card.appendChild(makeHandle('tile-resize-se', 'Drag to resize tile', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }, snapWidthToSpan));
+
+        // SW corner handle — width from left, height from bottom
+        card.appendChild(makeHandle('tile-resize-sw', 'Drag to resize tile (SW)', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw - (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }, snapWidthToSpan));
+
+        // NE corner handle — width from right, height from top
+        card.appendChild(makeHandle('tile-resize-ne', 'Drag to resize tile (NE)', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh - (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }, snapWidthToSpan));
+
+        // NW corner handle — width from left, height from top
+        card.appendChild(makeHandle('tile-resize-nw', 'Drag to resize tile (NW)', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw - (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh - (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }, snapWidthToSpan));
+    }
+
+    // Remove a single tag from a tile, re-rendering as needed
+    window.removeTagFromTile = function(tile, fieldToRemove) {
+        let fields = [];
+        try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
+        fields = fields.filter(f => f !== fieldToRemove);
+        tile.dataset.fields = JSON.stringify(fields);
+        if (fields.length === 0) {
+            // Remove existing chart/map instances
+            const canvases = tile.querySelectorAll('canvas');
+            canvases.forEach(c => { if (charts[c.id]) { try { charts[c.id].destroy(); } catch(_) {} delete charts[c.id]; } });
+            const mapEl = tile.querySelector('.leaflet-container');
+            if (mapEl && mapEl._leaflet_id) { try { mapEl._leaflet_map && mapEl._leaflet_map.remove(); } catch(_) {} }
+            // Revert to empty tile
+            tile.className = Array.from(tile.classList)
+                .filter(c => !['metric-card','chart-card','custom-metric-tile'].includes(c))
+                .join(' ');
+            tile.classList.add('empty-tile');
+            delete tile.dataset.chartType;
+            tile.innerHTML = `<h3>Empty Tile</h3><div class="empty-tile-content">Free Space</div>`;
+            setupDropZone(tile);
+            addResizeHandle(tile);
+            persistOrder();
+        } else if (fields.length === 1 && tile.classList.contains('chart-card')) {
+            transformToMetricTile(tile, fields[0]);
+        } else {
+            const chartType = tile.dataset.chartType || 'bar';
+            transformToChartTile(tile, fields, chartType);
+        }
+    };
+
+    // Event delegation for tag-remove buttons (avoids inline onclick XSS risk)
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.tag-remove-btn');
+        if (!btn) return;
+        const fieldToRemove = btn.dataset.removeField;
+        const tile = btn.closest('.card');
+        if (fieldToRemove && tile) {
+            e.stopPropagation();
+            window.removeTagFromTile(tile, fieldToRemove);
+        }
+    }, true);
+
     function transformToMetricTile(tile, field, restoredTitle=null, restoredValue=null, restoredLabel=null) {
         const agg = aggregateData(field);
         const uniqueCount = agg.labels.length;
@@ -3038,7 +3790,7 @@
             <h3 contenteditable="true" spellcheck="false">${title}</h3>
             <div class="metric-value" contenteditable="true" spellcheck="false">${value}</div>
             <div class="metric-label" contenteditable="true" spellcheck="false">${label}</div>
-            <div class="active-tags"><span class="active-tag">${field}</span></div>
+            <div class="active-tags"><span class="active-tag">${field}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${field}">×</button></span></div>
         `;
         
         addTileControls(tile);
@@ -3067,18 +3819,24 @@
                 <h3>${formatLabel(dimension)} Analysis</h3>
                 <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${dimension}', this.value, this.closest('.card'))">
                     <option value="bar" ${chartType=='bar'?'selected':''}>Bar</option>
+                    <option value="horizontalBar" ${chartType=='horizontalBar'?'selected':''}>Horizontal Bar</option>
                     <option value="pie" ${chartType=='pie'?'selected':''}>Pie</option>
                     <option value="line" ${chartType=='line'?'selected':''}>Line</option>
+                    <option value="area" ${chartType=='area'?'selected':''}>Area</option>
                     <option value="doughnut" ${chartType=='doughnut'?'selected':''}>Doughnut</option>
                     <option value="polarArea" ${chartType=='polarArea'?'selected':''}>Polar Area</option>
                     <option value="radar" ${chartType=='radar'?'selected':''}>Radar</option>
+                    <option value="scatter" ${chartType=='scatter'?'selected':''}>Scatter</option>
+                    <option value="bubble" ${chartType=='bubble'?'selected':''}>Bubble</option>
+                    <option value="map" ${chartType=='map'?'selected':''}>Map</option>
+                    <option value="table" ${chartType=='table'?'selected':''}>Table</option>
                 </select>
             </div>
             <div class="chart-container">
                 <canvas id="${canvasId}"></canvas>
             </div>
             <div class="active-tags">
-                ${fields.map(f => `<span class="active-tag">${f}</span>`).join('')}
+                ${fields.map(f => `<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}
             </div>
         `;
         
@@ -3100,21 +3858,111 @@
     function addTileControls(tile) {
         const controls = document.createElement('div');
         controls.className = 'tile-controls';
-        controls.innerHTML = `
-            <button data-scale="1" title="1x">1x</button>
-            <button data-scale="2" title="2x">2x</button>
-            <button data-scale="4" title="4x">4x</button>
-            <button data-scale="8" title="8x">8x</button>
-            <button onclick="this.closest('.card').remove(); persistOrder(); persistSizes();" style="color:red;" title="Remove">X</button>
-        `;
-        controls.querySelectorAll('button[data-scale]').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
+        controls.addEventListener('mousedown', (e) => e.stopPropagation());
+        controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+        // Per-tile Top N controls (or font-size controls for text tiles)
+        const topnDiv = document.createElement('span');
+        topnDiv.className = 'tile-topn';
+        const isTextTile = tile.dataset.tileType === 'text';
+        topnDiv.title = isTextTile ? 'Adjust text font size' : 'Filter: adjust number of data points shown';
+        const topnDown = document.createElement('button');
+        topnDown.className = 'tile-topn-btn';
+        topnDown.textContent = '▼';
+        topnDown.title = isTextTile ? 'Decrease font size' : 'Show fewer data points';
+        topnDown.setAttribute('aria-label', isTextTile ? 'Decrease font size' : 'Decrease data points');
+        const topnLabel = document.createElement('span');
+        topnLabel.className = 'tile-topn-label';
+        topnLabel.textContent = isTextTile ? '14px' : 'All';
+        const topnUp = document.createElement('button');
+        topnUp.className = 'tile-topn-btn';
+        topnUp.textContent = '▲';
+        topnUp.title = isTextTile ? 'Increase font size' : 'Show more data points';
+        topnUp.setAttribute('aria-label', isTextTile ? 'Increase font size' : 'Increase data points');
+        if (isTextTile) {
+            const _ed02 = tile.querySelector('.text-tile-editor');
+            let _textFontSize2 = _ed02 ? (parseFloat(_ed02.style.fontSize) || 14) : 14;
+            topnLabel.textContent = _textFontSize2 + 'px';
+            topnDown.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                resizeCard(tile, parseFloat(btn.dataset.scale));
-                persistSizes();
+                _textFontSize2 = Math.max(8, _textFontSize2 - 1);
+                const ed = tile.querySelector('.text-tile-editor');
+                if (ed) ed.style.fontSize = _textFontSize2 + 'px';
+                topnLabel.textContent = _textFontSize2 + 'px';
             });
+            topnUp.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _textFontSize2 = Math.min(72, _textFontSize2 + 1);
+                const ed = tile.querySelector('.text-tile-editor');
+                if (ed) ed.style.fontSize = _textFontSize2 + 'px';
+                topnLabel.textContent = _textFontSize2 + 'px';
+            });
+        } else {
+            topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
+            topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
+        }
+        topnDiv.appendChild(topnDown);
+        topnDiv.appendChild(topnLabel);
+        topnDiv.appendChild(topnUp);
+        // Text alignment buttons (only for text tiles)
+        if (isTextTile) {
+            const alignDiv = document.createElement('span');
+            alignDiv.className = 'tile-align-btns';
+            alignDiv.style.cssText = 'display:inline-flex;gap:2px;margin-left:4px;';
+            [['⬅','left','Align left'],['≡','center','Align center'],['➡','right','Align right']].forEach(([icon, align, title]) => {
+                const btn = document.createElement('button');
+                btn.className = 'tile-topn-btn';
+                btn.textContent = icon;
+                btn.title = title;
+                btn.style.fontSize = '10px';
+                btn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const ed = tile.querySelector('.text-tile-editor');
+                    if (ed) ed.style.textAlign = align;
+                });
+                alignDiv.appendChild(btn);
+            });
+            controls.appendChild(topnDiv);
+            controls.appendChild(alignDiv);
+        } else {
+            controls.appendChild(topnDiv);
+        }
+        const removeBtn = document.createElement('button');
+        removeBtn.style.color = 'red';
+        removeBtn.title = 'Remove';
+        removeBtn.textContent = 'X';
+        removeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const tileId = tile.dataset.tileId;
+            if (tileId) {
+                slides.forEach(s => { s.tileIds = s.tileIds.filter(id => id !== tileId); });
+            }
+            tile.remove();
+            renderCurrentSlide();
         });
+        controls.appendChild(removeBtn);
         tile.appendChild(controls);
+        addResizeHandle(tile);
+    }
+    function resizeCardByPercent(card, pct) {
+        const baseHeight = parseInt(card.dataset.baseHeight || '400', 10);
+        const ratio = pct / 100;
+        const height = Math.max(80, Math.round(baseHeight * ratio));
+        if (
+            card.classList.contains('chart-card') ||
+            card.classList.contains('map-card') ||
+            card.classList.contains('org-chart-card') ||
+            card.classList.contains('empty-tile') ||
+            (card.classList.contains('custom-metric-tile') && card.classList.contains('chart-card'))
+        ) {
+            card.style.height = height + 'px';
+            const canvas = card.querySelector('canvas');
+            if (canvas && charts[canvas.id]) {
+                try { charts[canvas.id].resize(); } catch(err) { console.warn('Chart resize failed:', err); }
+            }
+        }
+        if (card.classList.contains('metric-card') && !card.classList.contains('chart-card')) {
+            card.style.minHeight = height + 'px';
+        }
     }
 
     function resizeCard(card, scaleFactor) {
@@ -3188,6 +4036,8 @@
     function makeDraggable(card) {
         const grid = document.getElementById('dashboardGrid');
         let placeholder = null;
+        let _origPrev = null;   // element before card when drag started
+        let _origParent = null;
         card.setAttribute('draggable', 'true');
 
         card.addEventListener('dragstart', (e) => {
@@ -3209,6 +4059,10 @@
                 return;
             }
 
+            // Track original position so we can insert empty tile on move
+            _origPrev = card.previousElementSibling;
+            _origParent = card.parentNode;
+
             card.classList.add('dragging');
             placeholder = document.createElement('div');
             placeholder.className = 'card card-placeholder';
@@ -3217,13 +4071,53 @@
             placeholder.style.height = card.offsetHeight + 'px';
             card.after(placeholder);
             e.dataTransfer.effectAllowed = 'move';
+            // Also broadcast the tileId so slide tabs can accept this tile as a move target
+            if (card.dataset.tileId) {
+                e.dataTransfer.setData('application/x-slide-tile-id', card.dataset.tileId);
+            }
         });
 
         card.addEventListener('dragend', () => {
             card.classList.remove('dragging');
             if (placeholder) {
+                if (_tileDroppedOnTab) {
+                    // Tile was moved to another slide via tab drop — just remove the placeholder
+                    placeholder.remove();
+                    placeholder = null;
+                    _tileDroppedOnTab = false;
+                    _origPrev = null;
+                    _origParent = null;
+                    persistOrder();
+                    return;
+                }
                 placeholder.replaceWith(card);
                 placeholder = null;
+
+                // After replaceWith, check if card ended up in its original position
+                // (card.previousElementSibling === _origPrev means same slot as before)
+                const hasMoved = _origPrev
+                    ? (card.previousElementSibling !== _origPrev)
+                    : (_origParent && card !== _origParent.firstElementChild);
+
+                // If card moved, insert an empty tile at the original position
+                if (hasMoved && _origParent && _origParent.id === 'dashboardGrid') {
+                    const emptyTileId = `tile-empty-${Date.now()}`;
+                    const emptyEl = document.createElement('div');
+                    emptyEl.className = 'card empty-tile';
+                    emptyEl.dataset.tileId = emptyTileId;
+                    emptyEl.dataset.span = card.dataset.span || card.dataset.baseSpan || '12';
+                    emptyEl.style.gridColumn = `span ${emptyEl.dataset.span}`;
+                    emptyEl.innerHTML = `<div class="empty-tile-content">Drop tags here to build a chart</div>`;
+                    if (_origPrev && _origPrev.parentNode === _origParent) {
+                        _origPrev.after(emptyEl);
+                    } else {
+                        _origParent.prepend(emptyEl);
+                    }
+                    setupDropZone(emptyEl);
+                    enableTileInteractivity(emptyEl);
+                }
+                _origPrev = null;
+                _origParent = null;
             }
             persistOrder();
         });
@@ -3363,7 +4257,7 @@
                     <div class="metric-value" contenteditable="true" spellcheck="false">${data.value || '0'}</div>
                     <div class="metric-label" contenteditable="true" spellcheck="false">${data.label || '-'}</div>
                     <div class="active-tags">
-                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}</span>`).join('')}
+                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}
                     </div>
                 `;
                 addTileControls(tile);
@@ -3387,18 +4281,24 @@
                         <h3>${formatLabel(dimension)} Analysis</h3>
                         <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${dimension}', this.value, this.closest('.card'))">
                             <option value="bar" ${data.chartType=='bar'?'selected':''}>Bar</option>
+                            <option value="horizontalBar" ${data.chartType=='horizontalBar'?'selected':''}>Horizontal Bar</option>
                             <option value="pie" ${data.chartType=='pie'?'selected':''}>Pie</option>
                             <option value="line" ${data.chartType=='line'?'selected':''}>Line</option>
+                            <option value="area" ${data.chartType=='area'?'selected':''}>Area</option>
                             <option value="doughnut" ${data.chartType=='doughnut'?'selected':''}>Doughnut</option>
                             <option value="polarArea" ${data.chartType=='polarArea'?'selected':''}>Polar Area</option>
                             <option value="radar" ${data.chartType=='radar'?'selected':''}>Radar</option>
+                            <option value="scatter" ${data.chartType=='scatter'?'selected':''}>Scatter</option>
+                            <option value="bubble" ${data.chartType=='bubble'?'selected':''}>Bubble</option>
+                            <option value="map" ${data.chartType=='map'?'selected':''}>Map</option>
+                            <option value="table" ${data.chartType=='table'?'selected':''}>Table</option>
                         </select>
                     </div>
                     <div class="chart-container">
                         <canvas id="${canvasId}"></canvas>
                     </div>
                     <div class="active-tags">
-                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}</span>`).join('')}
+                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}
                     </div>
                 `;
                 
@@ -3430,6 +4330,7 @@
                 sizes[el.dataset.tileId] = {
                     span: el.dataset.span,
                     height: el.style.height || '',
+                    width: el.style.width || '',
                     minHeight: el.style.minHeight || '',
                     scale: el.dataset.scale || '1'
                 };
@@ -3450,6 +4351,7 @@
             if (!s) return;
             if (s.span) el.dataset.span = s.span;
             if (s.height) el.style.height = s.height;
+            if (s.width) el.style.width = s.width;
             if (s.minHeight) el.style.minHeight = s.minHeight;
             if (s.scale) {
                 el.dataset.scale = s.scale;
@@ -3586,7 +4488,710 @@
         };
         window.requestAnimationFrame(step);
     }
+
+    // ================= CREATE SLIDES / SLIDESHOW =================
+    let slideshowSelecting = false;
+    let slides = [];          // [{name, tileIds: []}]
+    let currentSlideIndex = 0;
+    let _gridOriginalParent = null;
+    let _filterOriginalParent = null;
+    let _filterOriginalNextSibling = null;
+    let _slideIdCounter = 0;                  // monotonic counter for unique tile IDs
+    const _slideCharts = new Map();           // tileId → Chart instance
+    let _tileDroppedOnTab = false;            // set by slide-tab drop handler, cleared in makeDraggable dragend
+
+    function toggleSlidesSelectionMode() {
+        slideshowSelecting = !slideshowSelecting;
+        const btn = document.getElementById('createSlidesBtn');
+        const buildBtn = document.getElementById('buildSlideBtn');
+        const grid = document.getElementById('dashboardGrid');
+
+        if (slideshowSelecting) {
+            btn.textContent = 'Cancel';
+            buildBtn.style.display = '';
+            // Add checkbox overlays to each tile
+            grid.querySelectorAll('.card').forEach(card => {
+                if (card.querySelector('.slide-check-overlay')) return;
+                const overlay = document.createElement('label');
+                overlay.className = 'slide-check-overlay';
+                overlay.innerHTML = '<input type="checkbox" class="slide-tile-check"> Add to Slide';
+                overlay.querySelector('input').addEventListener('change', function() {
+                    card.classList.toggle('slide-selected', this.checked);
+                });
+                card.appendChild(overlay);
+            });
+        } else {
+            btn.textContent = 'Create Slides';
+            buildBtn.style.display = 'none';
+            // Remove overlays and highlights
+            grid.querySelectorAll('.slide-check-overlay').forEach(el => el.remove());
+            grid.querySelectorAll('.slide-selected').forEach(el => el.classList.remove('slide-selected'));
+        }
+    }
+
+    function buildSlide() {
+        const checked = document.querySelectorAll('#dashboardGrid .slide-tile-check:checked');
+        if (checked.length === 0) { alert('Select at least one tile first.'); return; }
+        // Each checked tile becomes its own slide
+        checked.forEach(cb => {
+            const card = cb.closest('.card');
+            if (!card.dataset.tileId) card.dataset.tileId = `tile-custom-${++_slideIdCounter}`;
+            const slideName = `Slide ${slides.length + 1}`;
+            slides.push({ name: slideName, tileIds: [card.dataset.tileId], topN: null });
+        });
+        currentSlideIndex = slides.length - 1;
+        // Exit selection mode
+        toggleSlidesSelectionMode();
+        updateSlidesTabVisibility();
+        openSlideshowViewer();
+    }
+
+    function openSlideshowViewer() {
+        if (slides.length === 0) { alert('No slides yet. Click "Create Slides", select tiles, then "Build Slide ▶".'); return; }
+        const viewer = document.getElementById('slideshowViewer');
+        const grid = document.getElementById('dashboardGrid');
+        const filterWrapper = document.getElementById('filterBarWrapper');
+        const filterSlot = document.getElementById('slideshowFilterSlot');
+        const content = document.getElementById('slideshowContent');
+        const dropZone = document.getElementById('slideDropZone');
+
+        // Remember original parents so we can restore on close
+        _gridOriginalParent = grid.parentElement;
+        _filterOriginalParent = filterWrapper.parentElement;
+        _filterOriginalNextSibling = filterWrapper.nextSibling;
+
+        // Move filter bar and grid into the slideshow overlay
+        filterSlot.appendChild(filterWrapper);
+        content.insertBefore(grid, dropZone);
+
+        viewer.classList.add('active');
+        renderSlideTabs();
+        renderCurrentSlide();
+    }
+
+    function closeSlideshowViewer() {
+        const viewer = document.getElementById('slideshowViewer');
+        const grid = document.getElementById('dashboardGrid');
+        const filterWrapper = document.getElementById('filterBarWrapper');
+
+        // Restore original positions
+        if (_gridOriginalParent) _gridOriginalParent.appendChild(grid);
+        if (_filterOriginalParent) {
+            if (_filterOriginalNextSibling) {
+                _filterOriginalParent.insertBefore(filterWrapper, _filterOriginalNextSibling);
+            } else {
+                _filterOriginalParent.appendChild(filterWrapper);
+            }
+        }
+
+        // Show all tiles again
+        grid.querySelectorAll('.card').forEach(c => { c.style.display = ''; });
+        document.getElementById('slideDropZone').style.display = 'none';
+        viewer.classList.remove('active');
+    }
+
+    function renderCurrentSlide() {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        const grid = document.getElementById('dashboardGrid');
+        const dropZone = document.getElementById('slideDropZone');
+
+        if (slide.tileIds.length === 0) {
+            // Blank slide: show full empty tile + drop zone hint
+            grid.style.display = '';
+            dropZone.style.display = 'flex';
+            grid.querySelectorAll('.card').forEach(card => { card.style.display = 'none'; });
+        } else {
+            grid.style.display = '';
+            dropZone.style.display = 'none';
+            grid.querySelectorAll('.card').forEach(card => {
+                card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+            });
+        }
+
+        const counter = document.getElementById('slideshowCounter');
+        const titleEl = document.getElementById('slideshowTitle');
+        const prevBtn = document.getElementById('slidePrevBtn');
+        const nextBtn = document.getElementById('slideNextBtn');
+
+        counter.textContent = `Slide ${currentSlideIndex + 1} of ${slides.length}`;
+        // Update editable title — only update text content when not focused to avoid cursor reset
+        if (document.activeElement !== titleEl) {
+            titleEl.textContent = slide.name;
+        }
+        prevBtn.disabled = currentSlideIndex === 0;
+        nextBtn.disabled = currentSlideIndex === slides.length - 1;
+
+        // Update Top N label and apply to visible charts
+        const topNLabel = document.getElementById('topNLabel');
+        if (topNLabel) {
+            topNLabel.textContent = (slide.topN == null) ? 'All' : `Top ${slide.topN}`;
+        }
+        applyTopNToSlide(slide);
+
+        renderSlideTabs();
+    }
+
+    // Apply Top N filter to the charts on the current slide
+    function applyTopNToSlide(slide) {
+        if (!slide) return;
+        const grid = document.getElementById('dashboardGrid');
+        slide.tileIds.forEach(tileId => {
+            const card = grid ? grid.querySelector(`[data-tile-id="${tileId}"]`) : null;
+            if (!card) return;
+            const canvas = card.querySelector('canvas');
+            if (!canvas) return;
+            const chart = charts[canvas.id];
+            if (!chart || !chart.data || !chart.data.labels) return;
+            const n = slide.topN;
+            if (n == null) {
+                // Restore all — re-render from source data
+                const dim = canvas.dataset.dimension || card.dataset.chartDimension;
+                const type = card.dataset.chartType || 'bar';
+                if (dim) { try { updateChart(canvas.id, dim, type); } catch(err) { console.warn('Chart restore failed:', err); } }
+                return;
+            }
+            // Back up original data on first apply so subsequent calls can slice from originals
+            if (!chart.data._origLabels) {
+                chart.data._origLabels = chart.data.labels.slice();
+            }
+            chart.data.datasets.forEach(ds => {
+                if (!ds._origData) ds._origData = ds.data.slice();
+            });
+            // Slice labels + all dataset values to top N
+            const clampedN = Math.min(n, chart.data._origLabels.length);
+            chart.data.labels = chart.data._origLabels.slice(0, clampedN);
+            chart.data.datasets.forEach(ds => {
+                ds.data = ds._origData.slice(0, clampedN);
+            });
+            try { chart.update(); } catch(err) { console.warn('Chart update failed:', err); }
+        });
+    }
+
+    function adjustTopN(delta) {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        // Determine current max data points from visible chart
+        const grid = document.getElementById('dashboardGrid');
+        let maxPoints = 20; // default
+        slide.tileIds.forEach(tileId => {
+            const card = grid ? grid.querySelector(`[data-tile-id="${tileId}"]`) : null;
+            if (!card) return;
+            const canvas = card.querySelector('canvas');
+            const chart = canvas ? charts[canvas.id] : null;
+            if (chart && chart.data && chart.data.labels) {
+                maxPoints = Math.max(maxPoints, chart.data.labels.length);
+            }
+        });
+
+        let current = slide.topN == null ? maxPoints : slide.topN;
+        current = Math.max(1, Math.min(maxPoints, current + delta));
+        // If at max, treat as "All"
+        slide.topN = (current >= maxPoints) ? null : current;
+
+        const topNLabel = document.getElementById('topNLabel');
+        if (topNLabel) topNLabel.textContent = slide.topN == null ? 'All' : `Top ${slide.topN}`;
+        applyTopNToSlide(slide);
+    }
+
+    // Per-tile Top N: adjust the number of data points shown in a specific tile's chart
+    function adjustTileTopN(card, labelEl, delta) {
+        const canvas = card.querySelector('canvas');
+        if (!canvas) return;
+        const chart = charts[canvas.id];
+        if (!chart || !chart.data || !chart.data.labels) return;
+        // Ensure originals are backed up
+        if (!chart.data._origLabels) {
+            chart.data._origLabels = chart.data.labels.slice();
+        }
+        chart.data.datasets.forEach(ds => {
+            if (!ds._origData) ds._origData = ds.data.slice();
+        });
+        const maxPoints = chart.data._origLabels.length;
+        const currentN = card.dataset.tileTopN ? parseInt(card.dataset.tileTopN, 10) : maxPoints;
+        let newN = Math.max(1, Math.min(maxPoints, currentN + delta));
+        if (newN >= maxPoints) {
+            // Restore full dataset
+            card.dataset.tileTopN = '';
+            chart.data.labels = chart.data._origLabels.slice();
+            chart.data.datasets.forEach(ds => { ds.data = ds._origData.slice(); });
+            labelEl.textContent = 'All';
+        } else {
+            card.dataset.tileTopN = String(newN);
+            chart.data.labels = chart.data._origLabels.slice(0, newN);
+            chart.data.datasets.forEach(ds => { ds.data = ds._origData.slice(0, newN); });
+            labelEl.textContent = `T${newN}`;
+        }
+        try { chart.update(); } catch(err) { console.warn('Chart update failed:', err); }
+    }
+
+    // Save configured slides to localStorage
+    function updateSlideTitleFontSize(value) {
+        const titleEl = document.getElementById('slideshowTitle');
+        const labelEl = document.getElementById('slideTitleFontSizeLabel');
+        if (titleEl) titleEl.style.fontSize = value + 'px';
+        if (labelEl) labelEl.textContent = value + 'px';
+    }
+
+    // Autofit: reset all tiles in the current view to their base span and natural height.
+    // This is a one-time visual helper — does NOT persist sizes so users can freely
+    // resize/reposition tiles manually afterward.
+    function autofitTiles() {
+        const grid = document.getElementById('dashboardGrid');
+        if (!grid) return;
+        grid.querySelectorAll('.card').forEach(card => {
+            const baseSpan = card.dataset.baseSpan || '12';
+            card.dataset.span = baseSpan;
+            card.style.gridColumn = `span ${baseSpan}`;
+            card.style.width = '';
+            card.style.height = '';
+            card.style.minHeight = '';
+            const canvas = card.querySelector('canvas');
+            if (canvas && charts[canvas.id]) {
+                try { charts[canvas.id].resize(); } catch(_) {}
+            }
+        });
+        // Intentionally NOT calling persistSizes() so the reset is temporary and
+        // manual resizing afterward is not affected.
+    }
+
+    // Toggle minimize mode: hide controls, keeping only slide header
+    function toggleMinimizeMode(checked) {
+        const viewer = document.getElementById('slideshowViewer');
+        if (!viewer) return;
+        viewer.classList.toggle('minimize-mode', checked);
+    }
+
+    function saveSlides() {
+        if (slides.length === 0) { alert('No slides to save.'); return; }
+        try {
+            const payload = slides.map(s => ({
+                name: s.name,
+                tileIds: s.tileIds.slice(),
+                topN: s.topN
+            }));
+            localStorage.setItem('dashboard:slides', JSON.stringify(payload));
+            // Visual feedback
+            const btn = document.getElementById('saveSlidesBtn');
+            if (btn) {
+                const orig = btn.textContent;
+                btn.textContent = '✓ Saved';
+                btn.style.background = '#22c55e';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 1500);
+            }
+        } catch(err) {
+            console.warn('Failed to save slides:', err);
+            alert('Could not save slides: ' + err.message);
+        }
+    }
+
+    // Show/hide the Slides tab depending on whether any slides exist
+    function updateSlidesTabVisibility() {
+        const btn = document.getElementById('slidesTabBtn');
+        if (btn) btn.style.display = slides.length > 0 ? '' : 'none';
+    }
+
+    // Delete the entire slide project — clears all slides and returns to dashboard
+    window.clearSlideProject = function() {
+        if (!confirm('Delete the entire slide project? This will remove all slides and cannot be undone.')) return;
+        // Destroy all Chart.js instances in slide tiles
+        document.querySelectorAll('#dashboardGrid .card[data-tile-id^="tile-slide-"]').forEach(card => {
+            card.querySelectorAll('canvas').forEach(cv => {
+                if (charts[cv.id]) { charts[cv.id].destroy(); delete charts[cv.id]; }
+            });
+            card.querySelectorAll('[id^="tilemap-"]').forEach(md => {
+                if (md._leafletMap) { md._leafletMap.remove(); }
+            });
+            card.remove();
+        });
+        slides = [];
+        currentSlideIndex = 0;
+        _slideIdCounter = 0;
+        localStorage.removeItem('dashboard:slides');
+        closeSlideshowViewer();
+        updateSlidesTabVisibility();
+    };
+
+    // Export the current slide content as a PNG image download
+    function exportSlideAsPNG() {
+        const content = document.getElementById('slideshowContent');
+        if (!content) return;
+        if (typeof html2canvas === 'undefined') {
+            alert('html2canvas not loaded — please check your internet connection.');
+            return;
+        }
+        const slide = slides[currentSlideIndex];
+        const slideName = (slide && slide.name) ? slide.name : `Slide ${currentSlideIndex + 1}`;
+        const exportBtn = document.getElementById('exportSlidePngBtn');
+        if (exportBtn) { exportBtn.disabled = true; exportBtn.textContent = '⏳ Exporting…'; }
+        html2canvas(content, { scale: 2, useCORS: true, backgroundColor: '#ffffff' }).then(canvas => {
+            const link = document.createElement('a');
+            link.download = slideName.replace(/[^a-z0-9]/gi, '_') + '.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }).catch(err => {
+            console.warn('PNG export failed:', err);
+            alert('PNG export failed: ' + err.message);
+        }).finally(() => {
+            if (exportBtn) { exportBtn.disabled = false; exportBtn.textContent = '📷 Export PNG'; }
+        });
+    }
+
+    // Sync editable title back to slide data — attached via DOMContentLoaded so element exists
+    document.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.getElementById('slideshowTitle');
+        if (!titleEl) return;
+        let _editingSlideIdx = -1;
+        titleEl.addEventListener('focus', function() {
+            // Capture the slide index when editing starts so blur uses the correct slide
+            _editingSlideIdx = currentSlideIndex;
+        });
+        titleEl.addEventListener('blur', function() {
+            const idx = _editingSlideIdx >= 0 ? _editingSlideIdx : currentSlideIndex;
+            const fallback = `Slide ${idx + 1}`;
+            const name = this.textContent.trim() || fallback;
+            this.textContent = name;
+            if (slides[idx]) {
+                slides[idx].name = name;
+                renderSlideTabs();
+            }
+            _editingSlideIdx = -1;
+        });
+        titleEl.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
+        });
+    });
+
+    function navigateSlide(dir) {
+        currentSlideIndex = Math.max(0, Math.min(slides.length - 1, currentSlideIndex + dir));
+        renderCurrentSlide();
+    }
+
+    function addBlankSlide() {
+        // Create a blank slide — a full empty tile is created in the grid and assigned to it
+        const slideIdx = slides.length;
+        const slideName = `Slide ${slideIdx + 1}`;
+        const tileId = `tile-slide-empty-${++_slideIdCounter}`;
+
+        // Create the empty tile that belongs to this slide
+        const grid = document.getElementById('dashboardGrid');
+        const tile = document.createElement('div');
+        tile.className = 'card empty-tile';
+        tile.dataset.tileId = tileId;
+        tile.innerHTML = `
+            <h3>Slide Tile</h3>
+            <div class="empty-tile-content">Drag filter tags here to build a chart</div>
+        `;
+        grid.appendChild(tile);
+        // Setup drag-drop and controls
+        _setupSlideTileDrop(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+
+        slides.push({ name: slideName, tileIds: [tileId], topN: null });
+        currentSlideIndex = slides.length - 1;
+        updateSlidesTabVisibility();
+        renderCurrentSlide();
+    }
+
+    // Add a new empty tile to the CURRENT (existing) slide — does not create a new slide
+    function addTileToCurrentSlide() {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        const tileId = `tile-slide-empty-${++_slideIdCounter}`;
+        const grid = document.getElementById('dashboardGrid');
+        const tile = document.createElement('div');
+        tile.className = 'card empty-tile';
+        tile.dataset.tileId = tileId;
+        tile.innerHTML = `
+            <h3>New Tile</h3>
+            <div class="empty-tile-content">Drag filter tags here to build a chart</div>
+        `;
+        grid.appendChild(tile);
+        _setupSlideTileDrop(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+        // Ensure baseSpan/baseHeight set for resize slider
+        if (!tile.dataset.baseSpan) tile.dataset.baseSpan = '12';
+        if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
+        slide.tileIds.push(tileId);
+        // Hide tiles not in this slide, show the new one
+        document.getElementById('slideDropZone').style.display = 'none';
+        grid.style.display = '';
+        grid.querySelectorAll('.card').forEach(card => {
+            card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+        });
+        renderSlideTabs();
+    }
+
+    function addTextTileToCurrentSlide() {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        const tileId = `tile-slide-text-${++_slideIdCounter}`;
+        const grid = document.getElementById('dashboardGrid');
+        const tile = document.createElement('div');
+        tile.className = 'card text-tile';
+        tile.dataset.tileId = tileId;
+        tile.dataset.tileType = 'text';
+        tile.innerHTML = `
+            <textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false"></textarea>
+        `;
+        grid.appendChild(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+        if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
+        slide.tileIds.push(tileId);
+        document.getElementById('slideDropZone').style.display = 'none';
+        grid.style.display = '';
+        grid.querySelectorAll('.card').forEach(card => {
+            card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+        });
+        renderSlideTabs();
+    }
+
+    // Set up drop-zone behavior on a slide tile (supports multiple tags → transformToChartTile)
+    function _setupSlideTileDrop(tile) {
+        tile.addEventListener('dragover', e => {
+            if (e.dataTransfer.types.includes('application/x-filter-field')) {
+                e.preventDefault();
+                tile.classList.add('drag-over');
+            }
+        });
+        tile.addEventListener('dragleave', () => tile.classList.remove('drag-over'));
+        tile.addEventListener('drop', e => {
+            e.preventDefault();
+            tile.classList.remove('drag-over');
+            const field = e.dataTransfer.getData('application/x-filter-field');
+            if (!field) return;
+            // Accumulate fields on the tile (same logic as existing empty tile drop zone)
+            let fields = [];
+            try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
+            if (!fields.includes(field)) fields.push(field);
+            const slide = slides[currentSlideIndex];
+            // Replace the empty tile content with a chart (reuse transformToChartTile)
+            transformToChartTile(tile, fields);
+            // Ensure tile is in the current slide
+            if (slide && !slide.tileIds.includes(tile.dataset.tileId)) {
+                slide.tileIds.push(tile.dataset.tileId);
+            }
+            document.getElementById('slideDropZone').style.display = 'none';
+        });
+    }
+
+    function renderSlideTabs() {
+        const tabsEl = document.getElementById('slideTabs');
+        tabsEl.innerHTML = '';
+        slides.forEach((slide, idx) => {
+            const tab = document.createElement('span');
+            tab.className = 'slide-tab' + (idx === currentSlideIndex ? ' active-tab' : '');
+
+            // Name part
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = slide.name;
+            nameSpan.style.pointerEvents = 'none';
+            tab.appendChild(nameSpan);
+
+            // Delete button
+            const del = document.createElement('span');
+            del.className = 'slide-tab-delete';
+            del.textContent = '✕';
+            del.title = 'Delete slide';
+            del.setAttribute('aria-label', 'Delete slide');
+            del.setAttribute('role', 'button');
+            del.addEventListener('click', e => {
+                e.stopPropagation();
+                deleteSlide(idx);
+            });
+            tab.appendChild(del);
+
+            tab.addEventListener('click', () => { currentSlideIndex = idx; renderCurrentSlide(); });
+
+            // Drop target: accept tile-move drags to move a tile into this slide
+            tab.addEventListener('dragover', e => {
+                if (e.dataTransfer.types.includes('application/x-slide-tile-id')) {
+                    e.preventDefault();
+                    tab.classList.add('drop-target');
+                }
+            });
+            tab.addEventListener('dragleave', () => tab.classList.remove('drop-target'));
+            tab.addEventListener('drop', e => {
+                e.preventDefault();
+                tab.classList.remove('drop-target');
+                const tileId = e.dataTransfer.getData('application/x-slide-tile-id');
+                if (!tileId) return;
+                _tileDroppedOnTab = true;  // tell makeDraggable dragend not to restore card position
+                moveTileToSlide(tileId, idx);
+            });
+
+            tabsEl.appendChild(tab);
+        });
+    }
+
+    // Move a tile from whichever slide owns it to target slide index
+    function moveTileToSlide(tileId, targetIdx) {
+        // Remove from source slide
+        slides.forEach((s, i) => {
+            if (i !== targetIdx) {
+                s.tileIds = s.tileIds.filter(id => id !== tileId);
+            }
+        });
+        // Add to target slide (avoid duplicates)
+        if (!slides[targetIdx].tileIds.includes(tileId)) {
+            slides[targetIdx].tileIds.push(tileId);
+        }
+        // If we moved away from current slide, re-render it
+        renderCurrentSlide();
+    }
+
+    function deleteSlide(idx) {
+        if (slides.length <= 1) {
+            // Last slide — just clear it rather than leaving no slides
+            slides[0] = { name: 'Slide 1', tileIds: [] };
+            currentSlideIndex = 0;
+        } else {
+            // Remove tiles belonging only to this slide from the grid
+            const removing = slides[idx].tileIds;
+            const otherIds = slides.flatMap((s, i) => i !== idx ? s.tileIds : []);
+            const grid = document.getElementById('dashboardGrid');
+            removing.forEach(tid => {
+                if (!otherIds.includes(tid)) {
+                    const el = grid.querySelector(`[data-tile-id="${tid}"]`);
+                    if (el) { el.remove(); }
+                    const chart = _slideCharts.get(tid);
+                    if (chart) { chart.destroy(); _slideCharts.delete(tid); }
+                }
+            });
+            slides.splice(idx, 1);
+            currentSlideIndex = Math.min(currentSlideIndex, slides.length - 1);
+        }
+        updateSlidesTabVisibility();
+        renderCurrentSlide();
+    }
+
+    // Drop zone: drag filter tag → generate chart tile in blank slide
+    (function initSlideDropZone() {
+        document.addEventListener('DOMContentLoaded', () => {
+            const dropZone = document.getElementById('slideDropZone');
+            if (!dropZone) return;
+            dropZone.addEventListener('dragover', e => {
+                if (e.dataTransfer.types.includes('application/x-filter-field')) {
+                    e.preventDefault();
+                    dropZone.classList.add('drag-over');
+                }
+            });
+            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+            dropZone.addEventListener('drop', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const field = e.dataTransfer.getData('application/x-filter-field');
+                if (field && slides[currentSlideIndex]) createSlideChartTile(field);
+            });
+        });
+    })();
+
+    function createSlideChartTile(field) {
+        const slide = slides[currentSlideIndex];
+        const grid = document.getElementById('dashboardGrid');
+        const dropZone = document.getElementById('slideDropZone');
+        const tileId = `tile-slide-${field}-${++_slideIdCounter}`;
+        const canvasId = `slideChart-${field}-${_slideIdCounter}`;
+
+        const tile = document.createElement('div');
+        tile.className = 'card chart-card';
+        tile.dataset.tileId = tileId;
+        tile.dataset.fields = JSON.stringify([field]);
+        tile.innerHTML = `
+            <div class="card-header">
+                <h3>${formatLabel(field)} Analysis</h3>
+                <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${field}', this.value, this.closest('.card'))">
+                    <option value="bar">Bar</option>
+                    <option value="horizontalBar">Horizontal Bar</option>
+                    <option value="pie">Pie</option>
+                    <option value="line">Line</option>
+                    <option value="area">Area</option>
+                    <option value="doughnut">Doughnut</option>
+                    <option value="polarArea">Polar Area</option>
+                    <option value="radar">Radar</option>
+                    <option value="scatter">Scatter</option>
+                    <option value="bubble">Bubble</option>
+                    <option value="map">Map</option>
+                    <option value="table">Table</option>
+                </select>
+            </div>
+            <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
+            <div class="active-tags"><span class="active-tag">${field}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${field}">×</button></span></div>
+        `;
+        grid.appendChild(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+        _setupSlideTileDrop(tile);
+
+        slide.tileIds.push(tileId);
+
+        // Draw initial bar chart
+        // Defer one tick so the canvas element is in the DOM before Chart.js tries to render into it
+        setTimeout(() => { updateChart(canvasId, field, 'bar'); }, 0);
+
+        // Switch from drop zone to grid view
+        dropZone.style.display = 'none';
+        grid.style.display = '';
+        grid.querySelectorAll('.card').forEach(card => {
+            card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+        });
+        renderSlideTabs();
+    }
 </script>
+
+<!-- ====== SLIDESHOW VIEWER OVERLAY ====== -->
+<div id="slideshowViewer">
+    <div class="slideshow-header">
+        <!-- Slot: the real filter-bar-wrapper is moved here when slideshow opens -->
+        <div id="slideshowFilterSlot"></div>
+        <div class="slideshow-toolbar">
+            <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide" aria-label="Slide title">Slide 1</span>
+            <label class="minimize-mode-label" title="Hide controls and show only slide headers" style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-sub);cursor:pointer;user-select:none;">
+                <input type="checkbox" id="minimizeModeChk" onchange="toggleMinimizeMode(this.checked)" style="cursor:pointer;">
+                <span>Minimize</span>
+            </label>
+            <label title="Adjust slide title font size" style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-sub);">
+                <span>T</span>
+                <input type="range" id="slideTitleFontSize" min="12" max="48" value="14" step="1"
+                    style="width:70px;accent-color:var(--primary,#3b82f6);"
+                    oninput="updateSlideTitleFontSize(this.value)"
+                    title="Slide title font size">
+                <span id="slideTitleFontSizeLabel" style="min-width:28px;">14px</span>
+            </label>
+            <span class="topn-controls" title="Adjust number of data points shown in charts">
+                <button class="topn-btn" onclick="adjustTopN(-1)" title="Show fewer data points (reduce by 1)" aria-label="Decrease data points">▼</button>
+                <span id="topNLabel" class="topn-label">All</span>
+                <button class="topn-btn" onclick="adjustTopN(1)" title="Show more data points (increase by 1)" aria-label="Increase data points">▲</button>
+            </span>
+            <!-- Slide tabs -->
+            <div class="slide-tabs" id="slideTabs"></div>
+            <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
+            <button class="add-tile-btn" onclick="addTextTileToCurrentSlide()" title="Add a text tile for notes or descriptions">+ Add Text</button>
+            <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
+            <button class="add-tile-btn" onclick="autofitTiles()" title="Reset all tiles to their default size for a clean, balanced layout" style="background:#6366f1;">⊞ Autofit</button>
+            <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
+            <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
+            <button class="add-tile-btn" id="deleteProjectBtn" onclick="clearSlideProject()" title="Delete the entire slide project and all slides" style="background:#dc2626;">🗑 Delete Project</button>
+            <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
+        </div>
+    </div>
+    <div class="slideshow-content" id="slideshowContent">
+        <!-- dashboardGrid is moved here dynamically -->
+        <div id="slideDropZone">
+            <div class="drop-icon">⬇</div>
+            <strong>Empty Slide</strong>
+            <span>Drag one or more filter tags from the Column Filters bar into this zone to generate a chart tile. Combine multiple tags for multi-dimension analysis.</span>
+        </div>
+    </div>
+    <div class="slideshow-nav">
+        <button onclick="navigateSlide(-1)" id="slidePrevBtn" disabled>◀ Prev</button>
+        <span id="slideshowCounter">Slide 1 of 1</span>
+        <button onclick="navigateSlide(1)" id="slideNextBtn" disabled>Next ▶</button>
+    </div>
+</div>
 
 </div><!-- /.page-main -->
 </div><!-- /.page-shell -->
