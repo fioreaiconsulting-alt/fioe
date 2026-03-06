@@ -1112,6 +1112,18 @@
         }
         #slideshowViewer.active { display: flex; }
 
+        /* Minimize mode: hide all controls, keep only title bar and navigation */
+        #slideshowViewer.minimize-mode .tile-controls { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar .add-tile-btn { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar .topn-controls { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar .slide-tabs { display: none !important; }
+        #slideshowViewer.minimize-mode #exportSlidePngBtn,
+        #slideshowViewer.minimize-mode #saveSlidesBtn,
+        #slideshowViewer.minimize-mode #deleteProjectBtn { display: none !important; }
+        #slideshowViewer.minimize-mode .slideshow-toolbar label:not(.minimize-mode-label) { display: none !important; }
+        #slideshowViewer.minimize-mode .chart-type-select { display: none !important; }
+        #slideshowViewer.minimize-mode .active-tags { display: none !important; }
+
         .slideshow-header {
             flex-shrink: 0;
             background: var(--bg-card, #fff);
@@ -2848,11 +2860,30 @@
     function updateChart(canvasId, dimension, type) {
         // Handle map type with Leaflet
         if (type === 'map') { renderLeafletMapForTile(canvasId, dimension); return; }
-        // When switching away from map, restore canvas and remove map div
         const canvasEl = document.getElementById(canvasId);
+        // Handle table type
+        if (type === 'table') {
+            if (canvasEl) {
+                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+                const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
+                if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+                canvasEl.style.display = 'none';
+                const existing = canvasEl.parentElement.querySelector('.chart-data-table');
+                if (existing) existing.remove();
+                const agg = aggregateData(dimension);
+                const tableDiv = document.createElement('div');
+                tableDiv.className = 'chart-data-table table-wrapper';
+                tableDiv.innerHTML = `<table><thead><tr><th>${formatLabel(dimension)}</th><th>Count</th></tr></thead><tbody>${agg.labels.slice(0, 50).map((l, i) => `<tr><td>${l}</td><td>${agg.values[i]}</td></tr>`).join('')}</tbody></table>`;
+                canvasEl.after(tableDiv);
+            }
+            return;
+        }
+        // When switching away from map or table, restore canvas
         if (canvasEl) {
             const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
             if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+            const tableDiv = canvasEl.parentElement.querySelector('.chart-data-table');
+            if (tableDiv) tableDiv.remove();
             canvasEl.style.display = '';
         }
 
@@ -3423,22 +3454,43 @@
             // Per-tile Top N controls
             const topnDiv = document.createElement('span');
             topnDiv.className = 'tile-topn';
-            topnDiv.title = 'Filter: adjust number of data points shown';
+            const isTextTile = card.dataset.tileType === 'text';
+            topnDiv.title = isTextTile ? 'Adjust text font size' : 'Filter: adjust number of data points shown';
             const topnDown = document.createElement('button');
             topnDown.className = 'tile-topn-btn';
             topnDown.textContent = '▼';
-            topnDown.title = 'Show fewer data points';
-            topnDown.setAttribute('aria-label', 'Decrease data points');
+            topnDown.title = isTextTile ? 'Decrease font size' : 'Show fewer data points';
+            topnDown.setAttribute('aria-label', isTextTile ? 'Decrease font size' : 'Decrease data points');
             const topnLabel = document.createElement('span');
             topnLabel.className = 'tile-topn-label';
-            topnLabel.textContent = 'All';
+            topnLabel.textContent = isTextTile ? '14px' : 'All';
             const topnUp = document.createElement('button');
             topnUp.className = 'tile-topn-btn';
             topnUp.textContent = '▲';
-            topnUp.title = 'Show more data points';
-            topnUp.setAttribute('aria-label', 'Increase data points');
-            topnDown.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, -1); });
-            topnUp.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, 1); });
+            topnUp.title = isTextTile ? 'Increase font size' : 'Show more data points';
+            topnUp.setAttribute('aria-label', isTextTile ? 'Increase font size' : 'Increase data points');
+            if (isTextTile) {
+                const _ed0 = card.querySelector('.text-tile-editor');
+                let _textFontSize = _ed0 ? (parseFloat(_ed0.style.fontSize) || 14) : 14;
+                topnLabel.textContent = _textFontSize + 'px';
+                topnDown.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _textFontSize = Math.max(8, _textFontSize - 1);
+                    const ed = card.querySelector('.text-tile-editor');
+                    if (ed) ed.style.fontSize = _textFontSize + 'px';
+                    topnLabel.textContent = _textFontSize + 'px';
+                });
+                topnUp.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _textFontSize = Math.min(72, _textFontSize + 1);
+                    const ed = card.querySelector('.text-tile-editor');
+                    if (ed) ed.style.fontSize = _textFontSize + 'px';
+                    topnLabel.textContent = _textFontSize + 'px';
+                });
+            } else {
+                topnDown.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, -1); });
+                topnUp.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, 1); });
+            }
             topnDiv.appendChild(topnDown);
             topnDiv.appendChild(topnLabel);
             topnDiv.appendChild(topnUp);
@@ -3755,6 +3807,7 @@
                     <option value="scatter" ${chartType=='scatter'?'selected':''}>Scatter</option>
                     <option value="bubble" ${chartType=='bubble'?'selected':''}>Bubble</option>
                     <option value="map" ${chartType=='map'?'selected':''}>Map</option>
+                    <option value="table" ${chartType=='table'?'selected':''}>Table</option>
                 </select>
             </div>
             <div class="chart-container">
@@ -3785,25 +3838,46 @@
         controls.className = 'tile-controls';
         controls.addEventListener('mousedown', (e) => e.stopPropagation());
         controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
-        // Per-tile Top N controls
+        // Per-tile Top N controls (or font-size controls for text tiles)
         const topnDiv = document.createElement('span');
         topnDiv.className = 'tile-topn';
-        topnDiv.title = 'Filter: adjust number of data points shown';
+        const isTextTile2 = tile.dataset.tileType === 'text';
+        topnDiv.title = isTextTile2 ? 'Adjust text font size' : 'Filter: adjust number of data points shown';
         const topnDown = document.createElement('button');
         topnDown.className = 'tile-topn-btn';
         topnDown.textContent = '▼';
-        topnDown.title = 'Show fewer data points';
-        topnDown.setAttribute('aria-label', 'Decrease data points');
+        topnDown.title = isTextTile2 ? 'Decrease font size' : 'Show fewer data points';
+        topnDown.setAttribute('aria-label', isTextTile2 ? 'Decrease font size' : 'Decrease data points');
         const topnLabel = document.createElement('span');
         topnLabel.className = 'tile-topn-label';
-        topnLabel.textContent = 'All';
+        topnLabel.textContent = isTextTile2 ? '14px' : 'All';
         const topnUp = document.createElement('button');
         topnUp.className = 'tile-topn-btn';
         topnUp.textContent = '▲';
-        topnUp.title = 'Show more data points';
-        topnUp.setAttribute('aria-label', 'Increase data points');
-        topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
-        topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
+        topnUp.title = isTextTile2 ? 'Increase font size' : 'Show more data points';
+        topnUp.setAttribute('aria-label', isTextTile2 ? 'Increase font size' : 'Increase data points');
+        if (isTextTile2) {
+            const _ed02 = tile.querySelector('.text-tile-editor');
+            let _textFontSize2 = _ed02 ? (parseFloat(_ed02.style.fontSize) || 14) : 14;
+            topnLabel.textContent = _textFontSize2 + 'px';
+            topnDown.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _textFontSize2 = Math.max(8, _textFontSize2 - 1);
+                const ed = tile.querySelector('.text-tile-editor');
+                if (ed) ed.style.fontSize = _textFontSize2 + 'px';
+                topnLabel.textContent = _textFontSize2 + 'px';
+            });
+            topnUp.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _textFontSize2 = Math.min(72, _textFontSize2 + 1);
+                const ed = tile.querySelector('.text-tile-editor');
+                if (ed) ed.style.fontSize = _textFontSize2 + 'px';
+                topnLabel.textContent = _textFontSize2 + 'px';
+            });
+        } else {
+            topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
+            topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
+        }
         topnDiv.appendChild(topnDown);
         topnDiv.appendChild(topnLabel);
         topnDiv.appendChild(topnUp);
@@ -3918,6 +3992,8 @@
     function makeDraggable(card) {
         const grid = document.getElementById('dashboardGrid');
         let placeholder = null;
+        let _origPrev = null;   // element before card when drag started
+        let _origParent = null;
         card.setAttribute('draggable', 'true');
 
         card.addEventListener('dragstart', (e) => {
@@ -3939,6 +4015,10 @@
                 return;
             }
 
+            // Track original position so we can insert empty tile on move
+            _origPrev = card.previousElementSibling;
+            _origParent = card.parentNode;
+
             card.classList.add('dragging');
             placeholder = document.createElement('div');
             placeholder.className = 'card card-placeholder';
@@ -3958,6 +4038,32 @@
             if (placeholder) {
                 placeholder.replaceWith(card);
                 placeholder = null;
+
+                // After replaceWith, check if card ended up in its original position
+                // (card.previousElementSibling === _origPrev means same slot as before)
+                const hasMoved = _origPrev
+                    ? (card.previousElementSibling !== _origPrev)
+                    : (_origParent && card !== _origParent.firstElementChild);
+
+                // If card moved, insert an empty tile at the original position
+                if (hasMoved && _origParent && _origParent.id === 'dashboardGrid') {
+                    const emptyTileId = `tile-empty-${Date.now()}`;
+                    const emptyEl = document.createElement('div');
+                    emptyEl.className = 'card empty-tile';
+                    emptyEl.dataset.tileId = emptyTileId;
+                    emptyEl.dataset.span = card.dataset.span || card.dataset.baseSpan || '12';
+                    emptyEl.style.gridColumn = `span ${emptyEl.dataset.span}`;
+                    emptyEl.innerHTML = `<div class="empty-tile-content">Drop tags here to build a chart</div>`;
+                    if (_origPrev && _origPrev.parentNode === _origParent) {
+                        _origPrev.after(emptyEl);
+                    } else {
+                        _origParent.prepend(emptyEl);
+                    }
+                    setupDropZone(emptyEl);
+                    enableTileInteractivity(emptyEl);
+                }
+                _origPrev = null;
+                _origParent = null;
             }
             persistOrder();
         });
@@ -4131,6 +4237,7 @@
                             <option value="scatter" ${data.chartType=='scatter'?'selected':''}>Scatter</option>
                             <option value="bubble" ${data.chartType=='bubble'?'selected':''}>Bubble</option>
                             <option value="map" ${data.chartType=='map'?'selected':''}>Map</option>
+                            <option value="table" ${data.chartType=='table'?'selected':''}>Table</option>
                         </select>
                     </div>
                     <div class="chart-container">
@@ -4571,6 +4678,32 @@
         if (labelEl) labelEl.textContent = value + 'px';
     }
 
+    // Autofit: reset all tiles in the current view to their base span and natural height
+    function autofitTiles() {
+        const grid = document.getElementById('dashboardGrid');
+        if (!grid) return;
+        grid.querySelectorAll('.card').forEach(card => {
+            const baseSpan = card.dataset.baseSpan || '12';
+            card.dataset.span = baseSpan;
+            card.style.gridColumn = `span ${baseSpan}`;
+            card.style.width = '';
+            card.style.height = '';
+            card.style.minHeight = '';
+            const canvas = card.querySelector('canvas');
+            if (canvas && charts[canvas.id]) {
+                try { charts[canvas.id].resize(); } catch(_) {}
+            }
+        });
+        persistSizes();
+    }
+
+    // Toggle minimize mode: hide controls, keeping only slide header
+    function toggleMinimizeMode(checked) {
+        const viewer = document.getElementById('slideshowViewer');
+        if (!viewer) return;
+        viewer.classList.toggle('minimize-mode', checked);
+    }
+
     function saveSlides() {
         if (slides.length === 0) { alert('No slides to save.'); return; }
         try {
@@ -4923,6 +5056,7 @@
                     <option value="scatter">Scatter</option>
                     <option value="bubble">Bubble</option>
                     <option value="map">Map</option>
+                    <option value="table">Table</option>
                 </select>
             </div>
             <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
@@ -4974,6 +5108,11 @@
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addTextTileToCurrentSlide()" title="Add a text tile for notes or descriptions">+ Add Text</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
+            <button class="add-tile-btn" onclick="autofitTiles()" title="Reset all tiles to their default size for a clean, balanced layout" style="background:#6366f1;">⊞ Autofit</button>
+            <label class="minimize-mode-label" title="Hide controls and show only slide headers" style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-sub);cursor:pointer;user-select:none;">
+                <input type="checkbox" id="minimizeModeChk" onchange="toggleMinimizeMode(this.checked)" style="cursor:pointer;">
+                <span>Minimize</span>
+            </label>
             <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
             <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
             <button class="add-tile-btn" id="deleteProjectBtn" onclick="clearSlideProject()" title="Delete the entire slide project and all slides" style="background:#dc2626;">🗑 Delete Project</button>
