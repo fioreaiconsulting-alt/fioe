@@ -2774,10 +2774,12 @@
                 datasets: [{
                     label: 'Count',
                     data: datasetData,
+                    // Hex colors are all 6-digit so +cc gives valid 8-digit hex alpha (80%)
                     backgroundColor: useMultiColor ? colors.map(c => c + 'cc') : (isCyber ? '#0ea5e9' : '#1a73e8'),
                     borderColor: (useMultiColor && chartJsType !== 'line') ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
                     borderWidth: (chartJsType === 'line') ? 2 : (chartJsType === 'scatter' || chartJsType === 'bubble') ? 1 : 0,
-                    fill: (type === 'area') ? true : (chartJsType === 'radar'),
+                    // For area charts (type='area' which becomes chartJsType='line') enable fill
+                    fill: (type === 'area') || (chartJsType === 'radar'),
                     tension: 0.3,
                     pointRadius: chartJsType === 'line' ? 3 : undefined,
                 }]
@@ -2822,7 +2824,8 @@
                 y: { ticks: { color: textColor }, grid: { color: gridColor } }
             };
             if (type === 'area') {
-                config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14,165,233,0.25)' : 'rgba(26,115,232,0.2)';
+                // Consistent fill opacity (0.2) with radar and other fills
+                config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14,165,233,0.2)' : 'rgba(26,115,232,0.2)';
             }
         }
 
