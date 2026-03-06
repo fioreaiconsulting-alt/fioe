@@ -1675,11 +1675,21 @@
     function toggleFilterBar() {
         const wrapper = document.getElementById('filterBarWrapper');
         const toggle = document.getElementById('filterBarToggle');
+        const bar = document.getElementById('filterContainer');
         const isExpanded = wrapper.classList.toggle('expanded');
         if (isExpanded) {
             toggle.classList.add('expanded');
+            // Let animation run with overflow:hidden, then switch to visible
+            // so absolutely-positioned dropdowns are not clipped.
+            bar.style.overflow = 'hidden';
+            bar.addEventListener('transitionend', function onEnd() {
+                bar.removeEventListener('transitionend', onEnd);
+                bar.style.overflow = 'visible';
+            });
         } else {
             toggle.classList.remove('expanded');
+            // Clip immediately before collapsing so content disappears cleanly.
+            bar.style.overflow = 'hidden';
         }
     }
 
