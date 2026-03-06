@@ -928,7 +928,8 @@
         }
         .text-tile-editor {
             width: 100%;
-            min-height: 100px;
+            flex: 1;
+            min-height: 80px;
             resize: none;
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -3523,12 +3524,27 @@
     // Attach drag-to-resize handles (bottom, right, and SE corner) to a tile card
     const MIN_TILE_HEIGHT = 80;
     const MIN_TILE_WIDTH  = 120;
+
+    // Convert the card's current rendered width to the nearest CSS-grid column span (1-12)
+    // so that releasing a width-resize handle snaps the tile into the grid and lets other
+    // tiles fill the freed space (jigsaw layout).
+    // COLS and GAP must match the .dashboard-container CSS (repeat(12,1fr), gap: 24px).
+    function widthToGridSpan(card) {
+        const grid = document.getElementById('dashboardGrid');
+        const gridWidth = grid ? grid.offsetWidth : 1200;
+        const COLS = 12, GAP = 24; // must match grid-template-columns / gap in CSS
+        // Width occupied by one column (including its trailing gap)
+        const colUnit = (gridWidth + GAP) / COLS;
+        const rawSpan = (card.offsetWidth + GAP) / colUnit;
+        return Math.max(1, Math.min(COLS, Math.round(rawSpan)));
+    }
+
     function addResizeHandle(card) {
         // Remove existing handles if present (avoid duplicates after re-render)
         card.querySelectorAll('.tile-resize-s, .tile-resize-n, .tile-resize-e, .tile-resize-w, .tile-resize-se, .tile-resize-sw, .tile-resize-ne, .tile-resize-nw').forEach(h => h.remove());
 
         // Helper: create a drag handle that updates height and/or width
-        function makeHandle(className, title, onMoveCallback) {
+        function makeHandle(className, title, onMoveCallback, onUpCallback) {
             const handle = document.createElement('div');
             handle.className = className;
             handle.title = title;
@@ -3551,6 +3567,7 @@
                 }
                 function onUp() {
                     handle.classList.remove('dragging');
+                    if (onUpCallback) onUpCallback();
                     persistSizes();
                     handle.removeEventListener('pointermove', onMove);
                     handle.removeEventListener('pointerup', onUp);
@@ -3578,18 +3595,26 @@
             card.dataset.baseHeight = String(newH);
         }));
 
+        // Shared onUp callback for width-changing handles: snap to nearest grid column span
+        // so the freed space can be filled by dragging other tiles (jigsaw layout).
+        function snapWidthToSpan() {
+            const span = widthToGridSpan(card);
+            card.dataset.span = String(span);
+            card.style.width = '';
+        }
+
         // East handle — width only (drag right edge)
         card.appendChild(makeHandle('tile-resize-e', 'Drag to resize tile width', (em, sx, sy, sw, sh) => {
             const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
             card.style.width = newW + 'px';
-        }));
+        }, snapWidthToSpan));
 
         // West handle — resize from left edge
         card.appendChild(makeHandle('tile-resize-w', 'Drag to resize tile width from left', (em, sx, sy, sw, sh) => {
             const dx = em.clientX - sx;
             const newW = Math.max(MIN_TILE_WIDTH, sw - dx);
             card.style.width = newW + 'px';
-        }));
+        }, snapWidthToSpan));
 
         // SE corner handle — both width and height
         card.appendChild(makeHandle('tile-resize-se', 'Drag to resize tile', (em, sx, sy, sw, sh) => {
@@ -3598,7 +3623,7 @@
             card.style.width = newW + 'px';
             card.style.height = newH + 'px';
             card.dataset.baseHeight = String(newH);
-        }));
+        }, snapWidthToSpan));
 
         // SW corner handle — width from left, height from bottom
         card.appendChild(makeHandle('tile-resize-sw', 'Drag to resize tile (SW)', (em, sx, sy, sw, sh) => {
@@ -3607,7 +3632,7 @@
             card.style.width = newW + 'px';
             card.style.height = newH + 'px';
             card.dataset.baseHeight = String(newH);
-        }));
+        }, snapWidthToSpan));
 
         // NE corner handle — width from right, height from top
         card.appendChild(makeHandle('tile-resize-ne', 'Drag to resize tile (NE)', (em, sx, sy, sw, sh) => {
@@ -3616,7 +3641,7 @@
             card.style.width = newW + 'px';
             card.style.height = newH + 'px';
             card.dataset.baseHeight = String(newH);
-        }));
+        }, snapWidthToSpan));
 
         // NW corner handle — width from left, height from top
         card.appendChild(makeHandle('tile-resize-nw', 'Drag to resize tile (NW)', (em, sx, sy, sw, sh) => {
@@ -3625,7 +3650,7 @@
             card.style.width = newW + 'px';
             card.style.height = newH + 'px';
             card.dataset.baseHeight = String(newH);
-        }));
+        }, snapWidthToSpan));
     }
 
     // Remove a single tag from a tile, re-rendering as needed
@@ -4718,8 +4743,7 @@
         tile.dataset.tileId = tileId;
         tile.dataset.tileType = 'text';
         tile.innerHTML = `
-            <h3 contenteditable="true" spellcheck="false">Text</h3>
-            <textarea class="text-tile-editor" placeholder="Type your notes or description here…" spellcheck="false"></textarea>
+            <textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false"></textarea>
         `;
         grid.appendChild(tile);
         addTileControls(tile);
