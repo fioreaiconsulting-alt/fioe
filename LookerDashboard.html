@@ -4069,23 +4069,23 @@
                 // Restore all — re-render from source data
                 const dim = canvas.dataset.dimension || card.dataset.chartDimension;
                 const type = card.dataset.chartType || 'bar';
-                if (dim) { try { updateChart(canvas.id, dim, type); } catch(_) {} }
+                if (dim) { try { updateChart(canvas.id, dim, type); } catch(err) { console.warn('Chart restore failed:', err); } }
                 return;
             }
-            // Slice labels + dataset values to top N
-            const origLabels = chart.data.labels;
-            const origData = chart.data.datasets[0] ? chart.data.datasets[0].data : [];
-            if (!origLabels.length) return;
-            const clampedN = Math.min(n, origLabels.length);
-            chart.data.labels = origLabels.slice(0, clampedN);
-            chart.data.datasets.forEach(ds => {
-                ds.data = (ds._origData || origData).slice(0, clampedN);
-            });
-            // Store originals once so subsequent calls can restore
+            // Back up original data on first apply so subsequent calls can slice from originals
+            if (!chart.data._origLabels) {
+                chart.data._origLabels = chart.data.labels.slice();
+            }
             chart.data.datasets.forEach(ds => {
                 if (!ds._origData) ds._origData = ds.data.slice();
             });
-            try { chart.update(); } catch(_) {}
+            // Slice labels + all dataset values to top N
+            const clampedN = Math.min(n, chart.data._origLabels.length);
+            chart.data.labels = chart.data._origLabels.slice(0, clampedN);
+            chart.data.datasets.forEach(ds => {
+                ds.data = ds._origData.slice(0, clampedN);
+            });
+            try { chart.update(); } catch(err) { console.warn('Chart update failed:', err); }
         });
     }
 
@@ -4394,9 +4394,9 @@
         <div class="slideshow-toolbar">
             <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide" aria-label="Slide title">Slide 1</span>
             <span class="topn-controls" title="Adjust number of data points shown in charts">
-                <button class="topn-btn" onclick="adjustTopN(-1)" title="Show fewer data points (reduce by 1)">▼</button>
+                <button class="topn-btn" onclick="adjustTopN(-1)" title="Show fewer data points (reduce by 1)" aria-label="Decrease data points">▼</button>
                 <span id="topNLabel" class="topn-label">All</span>
-                <button class="topn-btn" onclick="adjustTopN(1)" title="Show more data points (increase by 1)">▲</button>
+                <button class="topn-btn" onclick="adjustTopN(1)" title="Show more data points (increase by 1)" aria-label="Increase data points">▲</button>
             </span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
