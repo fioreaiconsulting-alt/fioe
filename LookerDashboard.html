@@ -706,10 +706,15 @@
             bottom: 8px;
             right: 8px;
             display: flex;
+            align-items: center;
             gap: 6px;
             opacity: 0;
             transition: opacity .2s ease;
             z-index: 5;
+            background: var(--bg-body, #fff);
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: 8px;
+            padding: 4px 8px;
         }
         .card:hover .tile-controls { opacity: 1; }
         .tile-controls button {
@@ -726,6 +731,46 @@
             border-color: var(--primary);
             color: var(--primary);
             font-weight: 700;
+        }
+        /* Size slider inside tile-controls */
+        .tile-size-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 80px;
+            height: 4px;
+            background: var(--border, #e5e7eb);
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+        .tile-size-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--primary, #3b82f6);
+            cursor: pointer;
+        }
+        .tile-size-slider::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--primary, #3b82f6);
+            cursor: pointer;
+            border: none;
+        }
+        .tile-size-label {
+            font-size: 10px;
+            color: var(--text-sub);
+            min-width: 30px;
+            text-align: right;
+        }
+        /* Tile drag-to-slide: glow when dragging over a slide tab */
+        .slide-tab.drop-target {
+            box-shadow: 0 0 0 2px var(--primary, #3b82f6);
+            background: var(--primary, #3b82f6) !important;
+            color: #fff !important;
         }
 
         .card.dragging { opacity: .5; }
@@ -3123,28 +3168,35 @@
             if (card.classList.contains('custom-metric-tile')) baseHeight = 200;
             card.dataset.baseHeight = String(baseHeight);
 
-            // controls
+            // controls — size slider replaces fixed 1x/2x/4x/8x buttons
             const controls = document.createElement('div');
             controls.className = 'tile-controls';
-            controls.innerHTML = `
-                <button data-scale="1" title="1x (Original Size)">1x</button>
-                <button data-scale="2" title="2x (Half Size)">2x</button>
-                <button data-scale="4" title="4x (Quarter Size)">4x</button>
-                <button data-scale="8" title="8x (Compact Size)">8x</button>
-                <button onclick="this.closest('.card').remove(); persistOrder(); persistSizes();" style="color:red;" title="Remove Tile">X</button>
-            `;
-
-            controls.querySelectorAll('button[data-scale]').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const scale = parseFloat(btn.dataset.scale);
-                    resizeCard(card, scale);
-                    persistSizes();
-                    // mark active
-                    controls.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                });
+            const sizeSlider = document.createElement('input');
+            sizeSlider.type = 'range';
+            sizeSlider.min = '25';
+            sizeSlider.max = '100';
+            sizeSlider.value = '100';
+            sizeSlider.step = '5';
+            sizeSlider.className = 'tile-size-slider';
+            sizeSlider.title = 'Resize tile';
+            const sizeLabel = document.createElement('span');
+            sizeLabel.className = 'tile-size-label';
+            sizeLabel.textContent = '100%';
+            sizeSlider.addEventListener('input', (e) => {
+                e.stopPropagation();
+                const pct = parseInt(sizeSlider.value, 10);
+                sizeLabel.textContent = pct + '%';
+                resizeCardByPercent(card, pct);
+                persistSizes();
             });
+            const removeBtn = document.createElement('button');
+            removeBtn.style.color = 'red';
+            removeBtn.title = 'Remove Tile';
+            removeBtn.textContent = 'X';
+            removeBtn.addEventListener('click', (e) => { e.stopPropagation(); card.remove(); persistOrder(); persistSizes(); });
+            controls.appendChild(sizeSlider);
+            controls.appendChild(sizeLabel);
+            controls.appendChild(removeBtn);
             card.appendChild(controls);
 
             // draggable
@@ -3299,21 +3351,58 @@
     function addTileControls(tile) {
         const controls = document.createElement('div');
         controls.className = 'tile-controls';
-        controls.innerHTML = `
-            <button data-scale="1" title="1x">1x</button>
-            <button data-scale="2" title="2x">2x</button>
-            <button data-scale="4" title="4x">4x</button>
-            <button data-scale="8" title="8x">8x</button>
-            <button onclick="this.closest('.card').remove(); persistOrder(); persistSizes();" style="color:red;" title="Remove">X</button>
-        `;
-        controls.querySelectorAll('button[data-scale]').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                resizeCard(tile, parseFloat(btn.dataset.scale));
-                persistSizes();
-            });
+        const sizeSlider = document.createElement('input');
+        sizeSlider.type = 'range';
+        sizeSlider.min = '25';
+        sizeSlider.max = '100';
+        sizeSlider.value = '100';
+        sizeSlider.step = '5';
+        sizeSlider.className = 'tile-size-slider';
+        sizeSlider.title = 'Resize tile';
+        const sizeLabel = document.createElement('span');
+        sizeLabel.className = 'tile-size-label';
+        sizeLabel.textContent = '100%';
+        sizeSlider.addEventListener('input', (ev) => {
+            ev.stopPropagation();
+            const pct = parseInt(sizeSlider.value, 10);
+            sizeLabel.textContent = pct + '%';
+            resizeCardByPercent(tile, pct);
         });
+        const removeBtn = document.createElement('button');
+        removeBtn.style.color = 'red';
+        removeBtn.title = 'Remove';
+        removeBtn.textContent = 'X';
+        removeBtn.addEventListener('click', (ev) => { ev.stopPropagation(); tile.remove(); });
+        controls.appendChild(sizeSlider);
+        controls.appendChild(sizeLabel);
+        controls.appendChild(removeBtn);
         tile.appendChild(controls);
+    }
+
+    // Resize a card by percentage (100 = full size, 25 = smallest)
+    function resizeCardByPercent(card, pct) {
+        const baseSpan = parseInt(card.dataset.baseSpan || '12', 10);
+        const baseHeight = parseInt(card.dataset.baseHeight || '400', 10);
+        const ratio = pct / 100;
+        const span = Math.max(1, Math.round(baseSpan * ratio));
+        const height = Math.max(80, Math.round(baseHeight * ratio));
+        card.dataset.span = String(span);
+        if (
+            card.classList.contains('chart-card') ||
+            card.classList.contains('map-card') ||
+            card.classList.contains('org-chart-card') ||
+            card.classList.contains('empty-tile') ||
+            (card.classList.contains('custom-metric-tile') && card.classList.contains('chart-card'))
+        ) {
+            card.style.height = height + 'px';
+            const canvas = card.querySelector('canvas');
+            if (canvas && charts[canvas.id]) {
+                try { charts[canvas.id].resize(); } catch(_) {}
+            }
+        }
+        if (card.classList.contains('metric-card') && !card.classList.contains('chart-card')) {
+            card.style.minHeight = height + 'px';
+        }
     }
 
     function resizeCard(card, scaleFactor) {
@@ -3416,6 +3505,10 @@
             placeholder.style.height = card.offsetHeight + 'px';
             card.after(placeholder);
             e.dataTransfer.effectAllowed = 'move';
+            // Also broadcast the tileId so slide tabs can accept this tile as a move target
+            if (card.dataset.tileId) {
+                e.dataTransfer.setData('application/x-slide-tile-id', card.dataset.tileId);
+            }
         });
 
         card.addEventListener('dragend', () => {
@@ -3975,6 +4068,36 @@
         renderCurrentSlide();
     }
 
+    // Add a new empty tile to the CURRENT (existing) slide — does not create a new slide
+    function addTileToCurrentSlide() {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        const tileId = `tile-slide-empty-${++_slideIdCounter}`;
+        const grid = document.getElementById('dashboardGrid');
+        const tile = document.createElement('div');
+        tile.className = 'card empty-tile';
+        tile.dataset.tileId = tileId;
+        tile.innerHTML = `
+            <h3>New Tile</h3>
+            <div class="empty-tile-content">Drag filter tags here to build a chart</div>
+        `;
+        grid.appendChild(tile);
+        _setupSlideTileDrop(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+        // Ensure baseSpan/baseHeight set for resize slider
+        if (!tile.dataset.baseSpan) tile.dataset.baseSpan = '12';
+        if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
+        slide.tileIds.push(tileId);
+        // Hide tiles not in this slide, show the new one
+        document.getElementById('slideDropZone').style.display = 'none';
+        grid.style.display = '';
+        grid.querySelectorAll('.card').forEach(card => {
+            card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+        });
+        renderSlideTabs();
+    }
+
     // Set up drop-zone behavior on a slide tile (supports multiple tags → transformToChartTile)
     function _setupSlideTileDrop(tile) {
         tile.addEventListener('dragover', e => {
@@ -4031,8 +4154,41 @@
             tab.appendChild(del);
 
             tab.addEventListener('click', () => { currentSlideIndex = idx; renderCurrentSlide(); });
+
+            // Drop target: accept tile-move drags to move a tile into this slide
+            tab.addEventListener('dragover', e => {
+                if (e.dataTransfer.types.includes('application/x-slide-tile-id')) {
+                    e.preventDefault();
+                    tab.classList.add('drop-target');
+                }
+            });
+            tab.addEventListener('dragleave', () => tab.classList.remove('drop-target'));
+            tab.addEventListener('drop', e => {
+                e.preventDefault();
+                tab.classList.remove('drop-target');
+                const tileId = e.dataTransfer.getData('application/x-slide-tile-id');
+                if (!tileId) return;
+                moveTileToSlide(tileId, idx);
+            });
+
             tabsEl.appendChild(tab);
         });
+    }
+
+    // Move a tile from whichever slide owns it to target slide index
+    function moveTileToSlide(tileId, targetIdx) {
+        // Remove from source slide
+        slides.forEach((s, i) => {
+            if (i !== targetIdx) {
+                s.tileIds = s.tileIds.filter(id => id !== tileId);
+            }
+        });
+        // Add to target slide (avoid duplicates)
+        if (!slides[targetIdx].tileIds.includes(tileId)) {
+            slides[targetIdx].tileIds.push(tileId);
+        }
+        // If we moved away from current slide, re-render it
+        renderCurrentSlide();
     }
 
     function deleteSlide(idx) {
@@ -4136,6 +4292,7 @@
             <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide" aria-label="Slide title">Slide 1</span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
+            <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
             <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
         </div>
