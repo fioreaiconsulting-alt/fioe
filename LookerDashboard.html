@@ -3372,7 +3372,16 @@
         removeBtn.style.color = 'red';
         removeBtn.title = 'Remove';
         removeBtn.textContent = 'X';
-        removeBtn.addEventListener('click', (ev) => { ev.stopPropagation(); tile.remove(); });
+        removeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const tileId = tile.dataset.tileId;
+            // Remove the tileId from whichever slide(s) own it
+            if (tileId) {
+                slides.forEach(s => { s.tileIds = s.tileIds.filter(id => id !== tileId); });
+            }
+            tile.remove();
+            renderCurrentSlide();
+        });
         controls.appendChild(sizeSlider);
         controls.appendChild(sizeLabel);
         controls.appendChild(removeBtn);
@@ -3397,7 +3406,7 @@
             card.style.height = height + 'px';
             const canvas = card.querySelector('canvas');
             if (canvas && charts[canvas.id]) {
-                try { charts[canvas.id].resize(); } catch(_) {}
+                try { charts[canvas.id].resize(); } catch(err) { console.warn('Chart resize failed:', err); }
             }
         }
         if (card.classList.contains('metric-card') && !card.classList.contains('chart-card')) {
