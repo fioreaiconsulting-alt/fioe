@@ -3923,13 +3923,21 @@
     document.addEventListener('DOMContentLoaded', () => {
         const titleEl = document.getElementById('slideshowTitle');
         if (!titleEl) return;
+        let _editingSlideIdx = -1;
+        titleEl.addEventListener('focus', function() {
+            // Capture the slide index when editing starts so blur uses the correct slide
+            _editingSlideIdx = currentSlideIndex;
+        });
         titleEl.addEventListener('blur', function() {
-            const name = this.textContent.trim() || `Slide ${currentSlideIndex + 1}`;
+            const idx = _editingSlideIdx >= 0 ? _editingSlideIdx : currentSlideIndex;
+            const fallback = `Slide ${idx + 1}`;
+            const name = this.textContent.trim() || fallback;
             this.textContent = name;
-            if (slides[currentSlideIndex]) {
-                slides[currentSlideIndex].name = name;
+            if (slides[idx]) {
+                slides[idx].name = name;
                 renderSlideTabs();
             }
+            _editingSlideIdx = -1;
         });
         titleEl.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
@@ -4014,6 +4022,8 @@
             del.className = 'slide-tab-delete';
             del.textContent = '✕';
             del.title = 'Delete slide';
+            del.setAttribute('aria-label', 'Delete slide');
+            del.setAttribute('role', 'button');
             del.addEventListener('click', e => {
                 e.stopPropagation();
                 deleteSlide(idx);
@@ -4104,6 +4114,7 @@
         slide.tileIds.push(tileId);
 
         // Draw initial bar chart
+        // Defer one tick so the canvas element is in the DOM before Chart.js tries to render into it
         setTimeout(() => { updateChart(canvasId, field, 'bar'); }, 0);
 
         // Switch from drop zone to grid view
@@ -4122,7 +4133,7 @@
         <!-- Slot: the real filter-bar-wrapper is moved here when slideshow opens -->
         <div id="slideshowFilterSlot"></div>
         <div class="slideshow-toolbar">
-            <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide">Slide 1</span>
+            <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide" aria-label="Slide title">Slide 1</span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
