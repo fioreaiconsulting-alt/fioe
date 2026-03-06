@@ -898,6 +898,180 @@
             object-fit: contain; /* Changed from cover to contain so the full image shows */
             object-position: center;
         }
+
+        /* ============ Create Slides feature ============ */
+        /* Checkbox overlay on tiles when in selection mode */
+        .slide-check-overlay {
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            background: rgba(0,0,0,0.55);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .slide-check-overlay input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+        /* Highlight selected tiles */
+        .card.slide-selected {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* ---- Slideshow overlay ---- */
+        #slideshowViewer {
+            position: fixed;
+            inset: 0;
+            z-index: 900;
+            background: var(--bg-body, #f8f9fa);
+            display: none;
+            flex-direction: column;
+        }
+        #slideshowViewer.active { display: flex; }
+
+        .slideshow-header {
+            flex-shrink: 0;
+            background: var(--bg-card, #fff);
+            border-bottom: 1px solid var(--border, #e2e8f0);
+            padding: 0 16px 8px;
+        }
+        .slideshow-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0 4px;
+            flex-wrap: wrap;
+        }
+        .slideshow-toolbar .slide-title {
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--text-main);
+            flex: 1;
+        }
+        .slideshow-toolbar button {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .slideshow-toolbar button:hover { background: var(--hover); }
+        .slideshow-toolbar button.close-btn {
+            background: #fee2e2;
+            color: #dc2626;
+            border-color: #fca5a5;
+        }
+        .slideshow-toolbar button.add-tile-btn {
+            background: var(--primary, #3b82f6);
+            color: #fff;
+            border-color: transparent;
+        }
+
+        .slideshow-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+            position: relative;
+        }
+        /* grid inside slideshow still uses its normal styles */
+        .slideshow-content #dashboardGrid {
+            padding: 16px;
+        }
+
+        .slideshow-nav {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            padding: 10px 16px;
+            background: var(--bg-card, #fff);
+            border-top: 1px solid var(--border, #e2e8f0);
+        }
+        .slideshow-nav button {
+            padding: 7px 18px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 14px;
+            cursor: pointer;
+            min-width: 100px;
+        }
+        .slideshow-nav button:hover:not(:disabled) { background: var(--hover); }
+        .slideshow-nav button:disabled { opacity: 0.35; cursor: default; }
+        #slideshowCounter {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-main);
+            min-width: 100px;
+            text-align: center;
+        }
+
+        /* Drop zone for blank slides */
+        #slideDropZone {
+            margin: 40px auto;
+            max-width: 600px;
+            min-height: 200px;
+            border: 2px dashed var(--border, #e2e8f0);
+            border-radius: 12px;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            color: var(--text-sub);
+            font-size: 14px;
+            padding: 40px 24px;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        #slideDropZone.drag-over {
+            border-color: var(--primary, #3b82f6);
+            background: rgba(59,130,246,0.06);
+            color: var(--primary, #3b82f6);
+        }
+        #slideDropZone .drop-icon {
+            font-size: 36px;
+            opacity: 0.5;
+        }
+
+        /* Slide tabs row */
+        .slide-tabs {
+            display: flex;
+            gap: 6px;
+            padding: 6px 0 0;
+            flex-wrap: wrap;
+            overflow-x: auto;
+        }
+        .slide-tab {
+            padding: 4px 14px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            background: var(--hover);
+            color: var(--text-sub);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .slide-tab.active-tab {
+            background: var(--primary, #3b82f6);
+            color: #fff;
+            border-color: transparent;
+        }
     </style>
     <!-- Nav-sidebar base styles (embedded for self-contained rendering) -->
     <style>
@@ -1174,6 +1348,9 @@
                 <button class="primary" onclick="exportToPDF()" title="Export Dashboard to PDF">Export PDF</button>
                 <!-- PORT BUTTON: Triggers Google OAuth and Export to Looker Studio -->
                 <button class="primary" onclick="handlePortToLooker()" title="Port data to Looker Studio via Google Sheets">Port</button>
+                <!-- CREATE SLIDES -->
+                <button id="createSlidesBtn" onclick="toggleSlidesSelectionMode()" title="Select tiles to build a slide presentation">Create Slides</button>
+                <button id="buildSlideBtn" onclick="buildSlide()" title="Convert selected tiles into a slide" style="display:none; background:var(--primary); color:#fff; border-color:transparent;">Build Slide ▶</button>
             </div>
         </div>
 
@@ -3588,7 +3765,254 @@
         };
         window.requestAnimationFrame(step);
     }
+
+    // ================= CREATE SLIDES / SLIDESHOW =================
+    let slideshowSelecting = false;
+    let slides = [];          // [{name, tileIds: []}]
+    let currentSlideIndex = 0;
+    let _gridOriginalParent = null;
+    let _filterOriginalParent = null;
+    let _filterOriginalNextSibling = null;
+
+    function toggleSlidesSelectionMode() {
+        slideshowSelecting = !slideshowSelecting;
+        const btn = document.getElementById('createSlidesBtn');
+        const buildBtn = document.getElementById('buildSlideBtn');
+        const grid = document.getElementById('dashboardGrid');
+
+        if (slideshowSelecting) {
+            btn.textContent = 'Cancel';
+            buildBtn.style.display = '';
+            // Add checkbox overlays to each tile
+            grid.querySelectorAll('.card').forEach(card => {
+                if (card.querySelector('.slide-check-overlay')) return;
+                const overlay = document.createElement('label');
+                overlay.className = 'slide-check-overlay';
+                overlay.innerHTML = '<input type="checkbox" class="slide-tile-check"> Add to Slide';
+                overlay.addEventListener('change', () => {
+                    const checked = overlay.querySelector('input').checked;
+                    card.classList.toggle('slide-selected', checked);
+                });
+                card.appendChild(overlay);
+            });
+        } else {
+            btn.textContent = 'Create Slides';
+            buildBtn.style.display = 'none';
+            // Remove overlays and highlights
+            grid.querySelectorAll('.slide-check-overlay').forEach(el => el.remove());
+            grid.querySelectorAll('.slide-selected').forEach(el => el.classList.remove('slide-selected'));
+        }
+    }
+
+    function buildSlide() {
+        const checked = document.querySelectorAll('#dashboardGrid .slide-tile-check:checked');
+        if (checked.length === 0) { alert('Select at least one tile first.'); return; }
+        const tileIds = Array.from(checked).map(cb => {
+            const card = cb.closest('.card');
+            if (!card.dataset.tileId) card.dataset.tileId = `tile-custom-${Date.now()}-${Math.floor(Math.random()*10000)}`;
+            return card.dataset.tileId;
+        }).filter(Boolean);
+        const slideName = `Slide ${slides.length + 1}`;
+        slides.push({ name: slideName, tileIds: tileIds.slice() });
+        currentSlideIndex = slides.length - 1;
+        // Exit selection mode
+        toggleSlidesSelectionMode();
+        openSlideshowViewer();
+    }
+
+    function openSlideshowViewer() {
+        if (slides.length === 0) { alert('No slides yet. Click "Create Slides", select tiles, then "Build Slide ▶".'); return; }
+        const viewer = document.getElementById('slideshowViewer');
+        const grid = document.getElementById('dashboardGrid');
+        const filterWrapper = document.getElementById('filterBarWrapper');
+        const filterSlot = document.getElementById('slideshowFilterSlot');
+        const content = document.getElementById('slideshowContent');
+        const dropZone = document.getElementById('slideDropZone');
+
+        // Remember original parents so we can restore on close
+        _gridOriginalParent = grid.parentElement;
+        _filterOriginalParent = filterWrapper.parentElement;
+        _filterOriginalNextSibling = filterWrapper.nextSibling;
+
+        // Move filter bar and grid into the slideshow overlay
+        filterSlot.appendChild(filterWrapper);
+        content.insertBefore(grid, dropZone);
+
+        viewer.classList.add('active');
+        renderSlideTabs();
+        renderCurrentSlide();
+    }
+
+    function closeSlideshowViewer() {
+        const viewer = document.getElementById('slideshowViewer');
+        const grid = document.getElementById('dashboardGrid');
+        const filterWrapper = document.getElementById('filterBarWrapper');
+
+        // Restore original positions
+        if (_gridOriginalParent) _gridOriginalParent.appendChild(grid);
+        if (_filterOriginalParent) {
+            if (_filterOriginalNextSibling) {
+                _filterOriginalParent.insertBefore(filterWrapper, _filterOriginalNextSibling);
+            } else {
+                _filterOriginalParent.appendChild(filterWrapper);
+            }
+        }
+
+        // Show all tiles again
+        grid.querySelectorAll('.card').forEach(c => { c.style.display = ''; });
+        document.getElementById('slideDropZone').style.display = 'none';
+        viewer.classList.remove('active');
+    }
+
+    function renderCurrentSlide() {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        const grid = document.getElementById('dashboardGrid');
+        const dropZone = document.getElementById('slideDropZone');
+
+        if (slide.tileIds.length === 0) {
+            // Blank slide: show drop zone, hide grid
+            grid.style.display = 'none';
+            dropZone.style.display = 'flex';
+        } else {
+            grid.style.display = '';
+            dropZone.style.display = 'none';
+            grid.querySelectorAll('.card').forEach(card => {
+                card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+            });
+        }
+
+        const counter = document.getElementById('slideshowCounter');
+        const title = document.getElementById('slideshowTitle');
+        const prevBtn = document.getElementById('slidePrevBtn');
+        const nextBtn = document.getElementById('slideNextBtn');
+
+        counter.textContent = `Slide ${currentSlideIndex + 1} of ${slides.length}`;
+        title.textContent = slide.name;
+        prevBtn.disabled = currentSlideIndex === 0;
+        nextBtn.disabled = currentSlideIndex === slides.length - 1;
+        renderSlideTabs();
+    }
+
+    function navigateSlide(dir) {
+        currentSlideIndex = Math.max(0, Math.min(slides.length - 1, currentSlideIndex + dir));
+        renderCurrentSlide();
+    }
+
+    function addBlankSlide() {
+        slides.push({ name: `Slide ${slides.length + 1}`, tileIds: [] });
+        currentSlideIndex = slides.length - 1;
+        renderCurrentSlide();
+    }
+
+    function renderSlideTabs() {
+        const tabsEl = document.getElementById('slideTabs');
+        tabsEl.innerHTML = '';
+        slides.forEach((slide, idx) => {
+            const tab = document.createElement('span');
+            tab.className = 'slide-tab' + (idx === currentSlideIndex ? ' active-tab' : '');
+            tab.textContent = slide.name;
+            tab.onclick = () => { currentSlideIndex = idx; renderCurrentSlide(); };
+            tabsEl.appendChild(tab);
+        });
+    }
+
+    // Drop zone: drag filter tag → generate chart tile in blank slide
+    (function initSlideDropZone() {
+        document.addEventListener('DOMContentLoaded', () => {
+            const dropZone = document.getElementById('slideDropZone');
+            if (!dropZone) return;
+            dropZone.addEventListener('dragover', e => {
+                if (e.dataTransfer.types.includes('application/x-filter-field')) {
+                    e.preventDefault();
+                    dropZone.classList.add('drag-over');
+                }
+            });
+            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+            dropZone.addEventListener('drop', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const field = e.dataTransfer.getData('application/x-filter-field');
+                if (field && slides[currentSlideIndex]) createSlideChartTile(field);
+            });
+        });
+    })();
+
+    function createSlideChartTile(field) {
+        const slide = slides[currentSlideIndex];
+        const grid = document.getElementById('dashboardGrid');
+        const dropZone = document.getElementById('slideDropZone');
+        const stamp = Date.now();
+        const canvasId = `slideChart-${field}-${stamp}`;
+        const tileId = `tile-slide-${field}-${stamp}`;
+
+        const tile = document.createElement('div');
+        tile.className = 'card chart-card';
+        tile.dataset.tileId = tileId;
+        tile.innerHTML = `<h3 class="card-header">${formatLabel(field)}</h3><canvas id="${canvasId}" height="300"></canvas>`;
+        grid.appendChild(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+
+        slide.tileIds.push(tileId);
+
+        // Draw bar chart for this dimension
+        const agg = aggregateData(field);
+        const labels = Object.keys(agg);
+        const values = Object.values(agg);
+        const ctxEl = document.getElementById(canvasId);
+        if (ctxEl) {
+            new Chart(ctxEl.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: formatLabel(field),
+                        data: values,
+                        backgroundColor: 'rgba(59,130,246,0.72)'
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+        }
+
+        // Switch from drop zone to grid view
+        dropZone.style.display = 'none';
+        grid.style.display = '';
+        grid.querySelectorAll('.card').forEach(card => {
+            card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+        });
+        renderSlideTabs();
+    }
 </script>
+
+<!-- ====== SLIDESHOW VIEWER OVERLAY ====== -->
+<div id="slideshowViewer">
+    <div class="slideshow-header">
+        <!-- Slot: the real filter-bar-wrapper is moved here when slideshow opens -->
+        <div id="slideshowFilterSlot"></div>
+        <div class="slideshow-toolbar">
+            <span id="slideshowTitle" class="slide-title">Slide 1</span>
+            <!-- Slide tabs -->
+            <div class="slide-tabs" id="slideTabs"></div>
+            <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide; drag filter tags into it to generate tiles">+ Add Tiles</button>
+            <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
+        </div>
+    </div>
+    <div class="slideshow-content" id="slideshowContent">
+        <!-- dashboardGrid is moved here dynamically -->
+        <div id="slideDropZone">
+            <div class="drop-icon">⬇</div>
+            <strong>Blank Slide</strong>
+            <span>Drag filter tags from the Column Filters bar above and drop here to add a chart tile.</span>
+        </div>
+    </div>
+    <div class="slideshow-nav">
+        <button onclick="navigateSlide(-1)" id="slidePrevBtn" disabled>◀ Prev</button>
+        <span id="slideshowCounter">Slide 1 of 1</span>
+        <button onclick="navigateSlide(1)" id="slideNextBtn" disabled>Next ▶</button>
+    </div>
+</div>
 
 </div><!-- /.page-main -->
 </div><!-- /.page-shell -->
