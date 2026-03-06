@@ -816,6 +816,41 @@
             padding: 2px 6px;
             border-radius: 4px;
             border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .tag-remove-btn {
+            background: none;
+            border: none;
+            color: var(--text-sub);
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 1;
+            padding: 0 1px;
+            opacity: 0.6;
+        }
+        .tag-remove-btn:hover {
+            color: #ef4444;
+            opacity: 1;
+        }
+        /* Bottom border drag-to-resize handle */
+        .tile-resize-s {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 8px;
+            cursor: s-resize;
+            z-index: 20;
+            border-radius: 0 0 8px 8px;
+            opacity: 0;
+            background: linear-gradient(transparent, rgba(59,130,246,0.35));
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-s,
+        .tile-resize-s.dragging {
+            opacity: 1;
         }
         
         /* Updated Legend Style for Cyberpunk */
@@ -3354,6 +3389,7 @@
             controls.appendChild(topnDiv);
             controls.appendChild(removeBtn);
             card.appendChild(controls);
+            addResizeHandle(card);
 
             // draggable
             makeDraggable(card);
@@ -3424,6 +3460,86 @@
         });
     }
 
+    // Attach a drag-to-resize bottom handle to a tile card
+    function addResizeHandle(card) {
+        // Remove existing handle if present (avoid duplicates after re-render)
+        const existing = card.querySelector('.tile-resize-s');
+        if (existing) existing.remove();
+        const handle = document.createElement('div');
+        handle.className = 'tile-resize-s';
+        handle.title = 'Drag to resize tile height';
+        handle.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handle.classList.add('dragging');
+            handle.setPointerCapture(e.pointerId);
+            const startY = e.clientY;
+            const startH = card.offsetHeight;
+            function onMove(em) {
+                const newH = Math.max(80, startH + (em.clientY - startY));
+                card.style.height = newH + 'px';
+                card.dataset.baseHeight = String(newH);
+                const canvas = card.querySelector('canvas');
+                if (canvas && charts[canvas.id]) {
+                    try { charts[canvas.id].resize(); } catch(_) {}
+                }
+            }
+            function onUp() {
+                handle.classList.remove('dragging');
+                persistSizes();
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
+            }
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+        });
+        card.appendChild(handle);
+    }
+
+    // Remove a single tag from a tile, re-rendering as needed
+    window.removeTagFromTile = function(tile, fieldToRemove) {
+        let fields = [];
+        try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
+        fields = fields.filter(f => f !== fieldToRemove);
+        tile.dataset.fields = JSON.stringify(fields);
+        if (fields.length === 0) {
+            // Remove existing chart/map instances
+            const canvases = tile.querySelectorAll('canvas');
+            canvases.forEach(c => { if (charts[c.id]) { try { charts[c.id].destroy(); } catch(_) {} delete charts[c.id]; } });
+            const mapEl = tile.querySelector('.leaflet-container');
+            if (mapEl && mapEl._leaflet_id) { try { mapEl._leaflet_map && mapEl._leaflet_map.remove(); } catch(_) {} }
+            // Revert to empty tile
+            tile.className = Array.from(tile.classList)
+                .filter(c => !['metric-card','chart-card','custom-metric-tile'].includes(c))
+                .join(' ');
+            tile.classList.add('empty-tile');
+            delete tile.dataset.chartType;
+            tile.innerHTML = `<h3>Empty Tile</h3><div class="empty-tile-content">Free Space</div>`;
+            setupDropZone(tile);
+            addResizeHandle(tile);
+            persistOrder();
+        } else if (fields.length === 1 && tile.classList.contains('chart-card')) {
+            transformToMetricTile(tile, fields[0]);
+        } else {
+            const chartType = tile.dataset.chartType || 'bar';
+            transformToChartTile(tile, fields, chartType);
+        }
+    };
+
+    // Event delegation for tag-remove buttons (avoids inline onclick XSS risk)
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.tag-remove-btn');
+        if (!btn) return;
+        const fieldToRemove = btn.dataset.removeField;
+        const tile = btn.closest('.card');
+        if (fieldToRemove && tile) {
+            e.stopPropagation();
+            window.removeTagFromTile(tile, fieldToRemove);
+        }
+    }, true);
+
     function transformToMetricTile(tile, field, restoredTitle=null, restoredValue=null, restoredLabel=null) {
         const agg = aggregateData(field);
         const uniqueCount = agg.labels.length;
@@ -3445,7 +3561,7 @@
             <h3 contenteditable="true" spellcheck="false">${title}</h3>
             <div class="metric-value" contenteditable="true" spellcheck="false">${value}</div>
             <div class="metric-label" contenteditable="true" spellcheck="false">${label}</div>
-            <div class="active-tags"><span class="active-tag">${field}</span></div>
+            <div class="active-tags"><span class="active-tag">${field}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${field}">×</button></span></div>
         `;
         
         addTileControls(tile);
@@ -3490,7 +3606,7 @@
                 <canvas id="${canvasId}"></canvas>
             </div>
             <div class="active-tags">
-                ${fields.map(f => `<span class="active-tag">${f}</span>`).join('')}
+                ${fields.map(f => `<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}
             </div>
         `;
         
@@ -3579,9 +3695,8 @@
         controls.appendChild(topnDiv);
         controls.appendChild(removeBtn);
         tile.appendChild(controls);
+        addResizeHandle(tile);
     }
-
-    // Resize a card by percentage (25-200%) — only adjusts height, never grid span
     function resizeCardByPercent(card, pct) {
         const baseHeight = parseInt(card.dataset.baseHeight || '400', 10);
         const ratio = pct / 100;
@@ -3854,7 +3969,7 @@
                     <div class="metric-value" contenteditable="true" spellcheck="false">${data.value || '0'}</div>
                     <div class="metric-label" contenteditable="true" spellcheck="false">${data.label || '-'}</div>
                     <div class="active-tags">
-                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}</span>`).join('')}
+                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}
                     </div>
                 `;
                 addTileControls(tile);
@@ -3894,7 +4009,7 @@
                         <canvas id="${canvasId}"></canvas>
                     </div>
                     <div class="active-tags">
-                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}</span>`).join('')}
+                        ${(data.fields||[]).map(f => `<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}
                     </div>
                 `;
                 
@@ -4649,7 +4764,7 @@
                 </select>
             </div>
             <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
-            <div class="active-tags"><span class="active-tag">${field}</span></div>
+            <div class="active-tags"><span class="active-tag">${field}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${field}">×</button></span></div>
         `;
         grid.appendChild(tile);
         addTileControls(tile);
