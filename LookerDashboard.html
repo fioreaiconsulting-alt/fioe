@@ -2490,8 +2490,9 @@
         let totalScore = 0;
         let ratedCount = 0;
         filtered.forEach(r => {
-            if (r.rating) {
-                const match = String(r.rating).match(/(\d+)%/);
+            const scoreRaw = r.total_score || r.rating;
+            if (scoreRaw) {
+                const match = String(scoreRaw).match(/(\d+)%/);
                 if (match) {
                     totalScore += parseInt(match[1]);
                     ratedCount++;
@@ -2510,8 +2511,9 @@
         filtered.slice(0, 50).forEach(row => {
             const tr = document.createElement('tr');
             let score = '-';
-            if (row.rating) {
-                const m = String(row.rating).match(/(\d+)%/);
+            const scoreRaw = row.total_score || row.rating;
+            if (scoreRaw) {
+                const m = String(scoreRaw).match(/(\d+)%/);
                 if(m) score = m[1] + '%';
             }
             const nameHtml = row.linkedinurl 
@@ -2601,10 +2603,13 @@
             const values = keys.map(key => {
                 let val = row[key];
                 
-                // UPDATED: Extract only percentage for score column
-                if (key === 'rating' && val) {
-                    const match = String(val).match(/(\d+%)/);
-                    if (match) val = match[1];
+                // UPDATED: Extract only percentage for score column (prefer total_score over rating)
+                if (key === 'rating') {
+                    val = row.total_score || row.rating;
+                    if (val) {
+                        const match = String(val).match(/(\d+%)/);
+                        if (match) val = match[1];
+                    }
                 }
 
                 let text = val === null || val === undefined ? '' : String(val);
