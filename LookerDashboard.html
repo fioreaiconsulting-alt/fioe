@@ -862,42 +862,58 @@
     </style>
     <!-- Hover-triggered sidebar overrides (LookerDashboard only) -->
     <style>
-      /* The sidebar starts off-screen; sliding in on hover */
+      /* ── Icon-rail collapsed / hover-expand sidebar (LookerDashboard) ── */
+
+      /* Collapsed: narrow 48 px icon rail — matches nav-sidebar.css mobile rail */
       .page-shell--hover-sidebar .nav-sidebar {
         position: fixed;
         top: 0;
         left: 0;
         height: 100vh;
-        transform: translateX(-180px);
-        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+        width: 48px;
+        min-width: 48px;
+        overflow: hidden;
+        z-index: 200;
+        transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
                     box-shadow 0.28s ease;
-        z-index: 300;
         box-shadow: none;
       }
-      .page-shell--hover-sidebar .nav-sidebar.nav-sidebar--open {
-        transform: translateX(0);
+
+      /* Expanded: hover or keyboard-focus widens to full sidebar */
+      .page-shell--hover-sidebar .nav-sidebar:hover,
+      .page-shell--hover-sidebar .nav-sidebar:focus-within {
+        width: 180px;
+        min-width: 180px;
         box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
       }
-      /* Main content fills full width since sidebar is fixed */
-      .page-shell--hover-sidebar .page-main {
-        margin-left: 0 !important;
-        width: 100%;
+
+      /* Collapsed: hide brand, text labels, chevron and submenus */
+      .page-shell--hover-sidebar .nav-sidebar:not(:hover):not(:focus-within) .nav-sidebar__brand,
+      .page-shell--hover-sidebar .nav-sidebar:not(:hover):not(:focus-within) .nav-sidebar__link > span,
+      .page-shell--hover-sidebar .nav-sidebar:not(:hover):not(:focus-within) .nav-sidebar__chevron,
+      .page-shell--hover-sidebar .nav-sidebar:not(:hover):not(:focus-within) .nav-sidebar__submenu {
+        display: none;
       }
-      /* Thin invisible strip on the left edge that triggers the sidebar */
-      #sidebar-edge-trigger {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 10px;
-        height: 100%;
-        z-index: 301;
-        cursor: pointer;
+
+      /* Collapsed: centre icons and enlarge them for easy click targets */
+      .page-shell--hover-sidebar .nav-sidebar:not(:hover):not(:focus-within) .nav-sidebar__link {
+        justify-content: center;
+        padding: 12px 0;
+      }
+      .page-shell--hover-sidebar .nav-sidebar:not(:hover):not(:focus-within) .nav-sidebar__icon {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+      }
+
+      /* Main content: leave exactly 48 px for the fixed icon rail */
+      .page-shell--hover-sidebar .page-main {
+        margin-left: 48px;
+        width: calc(100% - 48px);
       }
     </style>
 </head>
 <body class="theme-default">
-<!-- Hover-trigger strip: mouse over this reveals the sidebar -->
-<div id="sidebar-edge-trigger"></div>
 <!-- ===== Page Shell: sidebar + main ===== -->
 <div class="page-shell page-shell--hover-sidebar">
 
@@ -3413,19 +3429,5 @@
 
 </div><!-- /.page-main -->
 </div><!-- /.page-shell -->
-<script>
-  /* Hover-triggered sidebar for LookerDashboard */
-  (function () {
-    const sidebar = document.querySelector('.nav-sidebar');
-    const trigger = document.getElementById('sidebar-edge-trigger');
-    if (!sidebar || !trigger) return;
-
-    function openSidebar() { sidebar.classList.add('nav-sidebar--open'); }
-    function closeSidebar() { sidebar.classList.remove('nav-sidebar--open'); }
-
-    trigger.addEventListener('mouseenter', openSidebar);
-    sidebar.addEventListener('mouseleave', closeSidebar);
-  })();
-</script>
 </body>
 </html>
