@@ -736,25 +736,26 @@
         .tile-size-slider {
             -webkit-appearance: none;
             appearance: none;
-            width: 80px;
-            height: 4px;
+            width: 120px;
+            height: 8px;
             background: var(--border, #e5e7eb);
-            border-radius: 2px;
+            border-radius: 4px;
             outline: none;
             cursor: pointer;
         }
         .tile-size-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 12px;
-            height: 12px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
             background: var(--primary, #3b82f6);
             cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
         .tile-size-slider::-moz-range-thumb {
-            width: 12px;
-            height: 12px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
             background: var(--primary, #3b82f6);
             cursor: pointer;
@@ -1049,6 +1050,30 @@
             font-weight: 600;
             color: var(--text-main);
             min-width: 32px;
+            text-align: center;
+        }
+        /* Per-tile top-N mini control inside .tile-controls */
+        .tile-topn {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .tile-topn-btn {
+            background: none;
+            border: none;
+            color: var(--primary, #3b82f6);
+            font-size: 10px;
+            padding: 1px 3px;
+            cursor: pointer;
+            line-height: 1;
+            min-width: unset !important;
+        }
+        .tile-topn-btn:hover { background: var(--hover) !important; border-radius: 3px; }
+        .tile-topn-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-main);
+            min-width: 28px;
             text-align: center;
         }
 
@@ -3198,14 +3223,17 @@
             // controls — size slider replaces fixed 1x/2x/4x/8x buttons
             const controls = document.createElement('div');
             controls.className = 'tile-controls';
+            // Prevent slider interaction from triggering card drag
+            controls.addEventListener('mousedown', (e) => e.stopPropagation());
+            controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
             const sizeSlider = document.createElement('input');
             sizeSlider.type = 'range';
             sizeSlider.min = '25';
-            sizeSlider.max = '100';
+            sizeSlider.max = '200';
             sizeSlider.value = '100';
             sizeSlider.step = '5';
             sizeSlider.className = 'tile-size-slider';
-            sizeSlider.title = 'Resize tile';
+            sizeSlider.title = 'Resize tile (25%–200%)';
             const sizeLabel = document.createElement('span');
             sizeLabel.className = 'tile-size-label';
             sizeLabel.textContent = '100%';
@@ -3216,6 +3244,28 @@
                 resizeCardByPercent(card, pct);
                 persistSizes();
             });
+            // Per-tile Top N controls
+            const topnDiv = document.createElement('span');
+            topnDiv.className = 'tile-topn';
+            topnDiv.title = 'Filter: adjust number of data points shown';
+            const topnDown = document.createElement('button');
+            topnDown.className = 'tile-topn-btn';
+            topnDown.textContent = '▼';
+            topnDown.title = 'Show fewer data points';
+            topnDown.setAttribute('aria-label', 'Decrease data points');
+            const topnLabel = document.createElement('span');
+            topnLabel.className = 'tile-topn-label';
+            topnLabel.textContent = 'All';
+            const topnUp = document.createElement('button');
+            topnUp.className = 'tile-topn-btn';
+            topnUp.textContent = '▲';
+            topnUp.title = 'Show more data points';
+            topnUp.setAttribute('aria-label', 'Increase data points');
+            topnDown.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, -1); });
+            topnUp.addEventListener('click', (e) => { e.stopPropagation(); adjustTileTopN(card, topnLabel, 1); });
+            topnDiv.appendChild(topnDown);
+            topnDiv.appendChild(topnLabel);
+            topnDiv.appendChild(topnUp);
             const removeBtn = document.createElement('button');
             removeBtn.style.color = 'red';
             removeBtn.title = 'Remove Tile';
@@ -3223,6 +3273,7 @@
             removeBtn.addEventListener('click', (e) => { e.stopPropagation(); card.remove(); persistOrder(); persistSizes(); });
             controls.appendChild(sizeSlider);
             controls.appendChild(sizeLabel);
+            controls.appendChild(topnDiv);
             controls.appendChild(removeBtn);
             card.appendChild(controls);
 
@@ -3378,14 +3429,17 @@
     function addTileControls(tile) {
         const controls = document.createElement('div');
         controls.className = 'tile-controls';
+        // Prevent slider interaction from triggering card drag
+        controls.addEventListener('mousedown', (e) => e.stopPropagation());
+        controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
         const sizeSlider = document.createElement('input');
         sizeSlider.type = 'range';
         sizeSlider.min = '25';
-        sizeSlider.max = '100';
+        sizeSlider.max = '200';
         sizeSlider.value = '100';
         sizeSlider.step = '5';
         sizeSlider.className = 'tile-size-slider';
-        sizeSlider.title = 'Resize tile';
+        sizeSlider.title = 'Resize tile (25%–200%)';
         const sizeLabel = document.createElement('span');
         sizeLabel.className = 'tile-size-label';
         sizeLabel.textContent = '100%';
@@ -3395,6 +3449,28 @@
             sizeLabel.textContent = pct + '%';
             resizeCardByPercent(tile, pct);
         });
+        // Per-tile Top N controls
+        const topnDiv = document.createElement('span');
+        topnDiv.className = 'tile-topn';
+        topnDiv.title = 'Filter: adjust number of data points shown';
+        const topnDown = document.createElement('button');
+        topnDown.className = 'tile-topn-btn';
+        topnDown.textContent = '▼';
+        topnDown.title = 'Show fewer data points';
+        topnDown.setAttribute('aria-label', 'Decrease data points');
+        const topnLabel = document.createElement('span');
+        topnLabel.className = 'tile-topn-label';
+        topnLabel.textContent = 'All';
+        const topnUp = document.createElement('button');
+        topnUp.className = 'tile-topn-btn';
+        topnUp.textContent = '▲';
+        topnUp.title = 'Show more data points';
+        topnUp.setAttribute('aria-label', 'Increase data points');
+        topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
+        topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
+        topnDiv.appendChild(topnDown);
+        topnDiv.appendChild(topnLabel);
+        topnDiv.appendChild(topnUp);
         const removeBtn = document.createElement('button');
         removeBtn.style.color = 'red';
         removeBtn.title = 'Remove';
@@ -3402,7 +3478,6 @@
         removeBtn.addEventListener('click', (ev) => {
             ev.stopPropagation();
             const tileId = tile.dataset.tileId;
-            // Remove the tileId from whichever slide(s) own it
             if (tileId) {
                 slides.forEach(s => { s.tileIds = s.tileIds.filter(id => id !== tileId); });
             }
@@ -3411,11 +3486,12 @@
         });
         controls.appendChild(sizeSlider);
         controls.appendChild(sizeLabel);
+        controls.appendChild(topnDiv);
         controls.appendChild(removeBtn);
         tile.appendChild(controls);
     }
 
-    // Resize a card by percentage (100 = full size, 25 = smallest) — only adjusts height, never grid span
+    // Resize a card by percentage (25-200%) — only adjusts height, never grid span
     function resizeCardByPercent(card, pct) {
         const baseHeight = parseInt(card.dataset.baseHeight || '400', 10);
         const ratio = pct / 100;
@@ -4115,6 +4191,61 @@
         applyTopNToSlide(slide);
     }
 
+    // Per-tile Top N: adjust the number of data points shown in a specific tile's chart
+    function adjustTileTopN(card, labelEl, delta) {
+        const canvas = card.querySelector('canvas');
+        if (!canvas) return;
+        const chart = charts[canvas.id];
+        if (!chart || !chart.data || !chart.data.labels) return;
+        // Ensure originals are backed up
+        if (!chart.data._origLabels) {
+            chart.data._origLabels = chart.data.labels.slice();
+        }
+        chart.data.datasets.forEach(ds => {
+            if (!ds._origData) ds._origData = ds.data.slice();
+        });
+        const maxPoints = chart.data._origLabels.length;
+        const currentN = card.dataset.tileTopN ? parseInt(card.dataset.tileTopN, 10) : maxPoints;
+        let newN = Math.max(1, Math.min(maxPoints, currentN + delta));
+        if (newN >= maxPoints) {
+            // Restore full dataset
+            card.dataset.tileTopN = '';
+            chart.data.labels = chart.data._origLabels.slice();
+            chart.data.datasets.forEach(ds => { ds.data = ds._origData.slice(); });
+            labelEl.textContent = 'All';
+        } else {
+            card.dataset.tileTopN = String(newN);
+            chart.data.labels = chart.data._origLabels.slice(0, newN);
+            chart.data.datasets.forEach(ds => { ds.data = ds._origData.slice(0, newN); });
+            labelEl.textContent = `T${newN}`;
+        }
+        try { chart.update(); } catch(err) { console.warn('Chart update failed:', err); }
+    }
+
+    // Save configured slides to localStorage
+    function saveSlides() {
+        if (slides.length === 0) { alert('No slides to save.'); return; }
+        try {
+            const payload = slides.map(s => ({
+                name: s.name,
+                tileIds: s.tileIds.slice(),
+                topN: s.topN
+            }));
+            localStorage.setItem('dashboard:slides', JSON.stringify(payload));
+            // Visual feedback
+            const btn = document.getElementById('saveSlidesBtn');
+            if (btn) {
+                const orig = btn.textContent;
+                btn.textContent = '✓ Saved';
+                btn.style.background = '#22c55e';
+                setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 1500);
+            }
+        } catch(err) {
+            console.warn('Failed to save slides:', err);
+            alert('Could not save slides: ' + err.message);
+        }
+    }
+
     // Sync editable title back to slide data — attached via DOMContentLoaded so element exists
     document.addEventListener('DOMContentLoaded', () => {
         const titleEl = document.getElementById('slideshowTitle');
@@ -4402,6 +4533,7 @@
             <div class="slide-tabs" id="slideTabs"></div>
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
+            <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
             <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
         </div>
     </div>
