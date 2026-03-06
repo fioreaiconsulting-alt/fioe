@@ -15,6 +15,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <!-- html2canvas for PNG export of slides -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- PptxGenJS for PPTX export of slides -->
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
     <!-- Left Column Navigation -->
     <link rel="stylesheet" href="nav-sidebar.css">
     <script src="nav-sidebar.js" defer></script>
@@ -928,6 +930,7 @@
         }
         .text-tile-editor {
             width: 100%;
+            box-sizing: border-box;
             flex: 1;
             min-height: 80px;
             resize: none;
@@ -1118,6 +1121,7 @@
         #slideshowViewer.minimize-mode .slideshow-toolbar .topn-controls { display: none !important; }
         #slideshowViewer.minimize-mode .slideshow-toolbar .slide-tabs { display: none !important; }
         #slideshowViewer.minimize-mode #exportSlidePngBtn,
+        #slideshowViewer.minimize-mode #exportPptxBtn,
         #slideshowViewer.minimize-mode #saveSlidesBtn,
         #slideshowViewer.minimize-mode #deleteProjectBtn { display: none !important; }
         #slideshowViewer.minimize-mode .slideshow-toolbar label:not(.minimize-mode-label) { display: none !important; }
@@ -1501,8 +1505,8 @@
         <svg class="nav-sidebar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="11" height="11"><polyline points="9 18 15 12 9 6"/></svg>
       </span>
       <ul class="nav-sidebar__submenu" role="menu">
-        <li><a href="http://localhost:4000/AutoSourcing.html" class="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
-        <li><a href="http://localhost:4000/SourcingVerify.html" class="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
+        <li><a href="http://localhost:8091/AutoSourcing.html" class="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
+        <li><a href="http://localhost:8091/SourcingVerify.html" class="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
         <li><a href="http://localhost:3000/" class="nav-sidebar__submenu-link" role="menuitem">Candidate Management</a></li>
         <li><a href="http://localhost:5000/LookerDashboard.html" class="nav-sidebar__submenu-link active" role="menuitem">Consulting Dashboard</a></li>
       </ul>
@@ -2021,6 +2025,9 @@
         
         // Restore Theme and Charts Config
         loadDashboardState(true); // true = auto load
+
+        // Restore saved slides from localStorage (keeps them in Slides tab, not dashboard)
+        loadSavedSlides();
     }
 
     // ================= THEME LOGIC =================
@@ -4584,8 +4591,11 @@
             }
         }
 
-        // Show all tiles again
-        grid.querySelectorAll('.card').forEach(c => { c.style.display = ''; });
+        // Show only non-slide tiles again (slide tiles live in the Slides tab, not the dashboard)
+        grid.querySelectorAll('.card').forEach(c => {
+            const tid = c.dataset.tileId || '';
+            if (!tid.startsWith('tile-slide-')) c.style.display = '';
+        });
         document.getElementById('slideDropZone').style.display = 'none';
         viewer.classList.remove('active');
     }
@@ -4791,6 +4801,58 @@
         if (btn) btn.style.display = slides.length > 0 ? '' : 'none';
     }
 
+    // Restore saved slides from localStorage on page load.
+    // Creates empty placeholder tiles for each saved tileId so the slide structure is preserved.
+    // Slide tiles are hidden in dashboard view — they live in the Slides tab only.
+    function loadSavedSlides() {
+        try {
+            const raw = localStorage.getItem('dashboard:slides');
+            if (!raw) return;
+            const payload = JSON.parse(raw);
+            if (!Array.isArray(payload) || payload.length === 0) return;
+
+            const grid = document.getElementById('dashboardGrid');
+            if (!grid) return;
+
+            // Clear any stale in-memory slide data
+            slides = [];
+            currentSlideIndex = 0;
+
+            payload.forEach(savedSlide => {
+                const slide = { name: savedSlide.name || 'Slide', tileIds: [], topN: savedSlide.topN || null };
+
+                (savedSlide.tileIds || []).forEach(tileId => {
+                    // Avoid duplicates if tile already exists in DOM
+                    if (!document.querySelector(`[data-tile-id="${tileId}"]`)) {
+                        const tile = document.createElement('div');
+                        tile.className = 'card empty-tile';
+                        tile.dataset.tileId = tileId;
+                        tile.innerHTML = `
+                            <h3>Slide Tile</h3>
+                            <div class="empty-tile-content">Drag filter tags here to build a chart</div>
+                        `;
+                        // Keep slide tiles hidden in dashboard view
+                        tile.style.display = 'none';
+                        grid.appendChild(tile);
+                        _setupSlideTileDrop(tile);
+                        addTileControls(tile);
+                        enableTileInteractivity(tile);
+                    }
+                    slide.tileIds.push(tileId);
+                    // Advance counter past existing IDs to avoid future collisions
+                    const match = tileId.match(/(\d+)$/);
+                    if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10) + 1);
+                });
+
+                slides.push(slide);
+            });
+
+            updateSlidesTabVisibility();
+        } catch (err) {
+            console.warn('Could not load saved slides:', err);
+        }
+    }
+
     // Delete the entire slide project — clears all slides and returns to dashboard
     window.clearSlideProject = function() {
         if (!confirm('Delete the entire slide project? This will remove all slides and cannot be undone.')) return;
@@ -4837,7 +4899,51 @@
         });
     }
 
-    // Sync editable title back to slide data — attached via DOMContentLoaded so element exists
+    // Export all slides as a PPTX file — each slide becomes a 16:9 PPTX slide image
+    async function exportSlidesAsPPTX() {
+        if (slides.length === 0) { alert('No slides to export.'); return; }
+        if (typeof html2canvas === 'undefined') {
+            alert('html2canvas not loaded — please check your internet connection.');
+            return;
+        }
+        if (typeof PptxGenJS === 'undefined') {
+            alert('PptxGenJS not loaded — please check your internet connection.');
+            return;
+        }
+
+        const btn = document.getElementById('exportPptxBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Building…'; }
+
+        const content = document.getElementById('slideshowContent');
+        const savedIndex = currentSlideIndex;
+        const pptx = new PptxGenJS();
+        pptx.layout = 'LAYOUT_WIDE'; // 13.33 × 7.5 in (16:9 widescreen)
+
+        try {
+            for (let i = 0; i < slides.length; i++) {
+                currentSlideIndex = i;
+                renderCurrentSlide();
+                // Brief paint pause so charts redraw
+                await new Promise(resolve => setTimeout(resolve, 200));
+
+                const canvas = await html2canvas(content, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                const imgData = canvas.toDataURL('image/png');
+
+                const pptSlide = pptx.addSlide();
+                pptSlide.addImage({ data: imgData, x: 0, y: 0, w: '100%', h: '100%' });
+            }
+
+            await pptx.writeFile({ fileName: 'Slides.pptx' });
+        } catch (err) {
+            console.warn('PPTX export failed:', err);
+            alert('PPTX export failed: ' + err.message);
+        } finally {
+            // Restore the original slide view
+            currentSlideIndex = savedIndex;
+            renderCurrentSlide();
+            if (btn) { btn.disabled = false; btn.textContent = '📊 Export PPTX'; }
+        }
+    }
     document.addEventListener('DOMContentLoaded', () => {
         const titleEl = document.getElementById('slideshowTitle');
         if (!titleEl) return;
@@ -5174,6 +5280,7 @@
             <button class="add-tile-btn" onclick="autofitTiles()" title="Reset all tiles to their default size for a clean, balanced layout" style="background:#6366f1;">⊞ Autofit</button>
             <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
             <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
+            <button class="add-tile-btn" id="exportPptxBtn" onclick="exportSlidesAsPPTX()" title="Export all slides as a PPTX file">📊 Export PPTX</button>
             <button class="add-tile-btn" id="deleteProjectBtn" onclick="clearSlideProject()" title="Delete the entire slide project and all slides" style="background:#dc2626;">🗑 Delete Project</button>
             <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
         </div>
