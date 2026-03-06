@@ -3773,6 +3773,8 @@
     let _gridOriginalParent = null;
     let _filterOriginalParent = null;
     let _filterOriginalNextSibling = null;
+    let _slideIdCounter = 0;                  // monotonic counter for unique tile IDs
+    const _slideCharts = new Map();           // tileId → Chart instance
 
     function toggleSlidesSelectionMode() {
         slideshowSelecting = !slideshowSelecting;
@@ -3789,9 +3791,8 @@
                 const overlay = document.createElement('label');
                 overlay.className = 'slide-check-overlay';
                 overlay.innerHTML = '<input type="checkbox" class="slide-tile-check"> Add to Slide';
-                overlay.addEventListener('change', () => {
-                    const checked = overlay.querySelector('input').checked;
-                    card.classList.toggle('slide-selected', checked);
+                overlay.querySelector('input').addEventListener('change', function() {
+                    card.classList.toggle('slide-selected', this.checked);
                 });
                 card.appendChild(overlay);
             });
@@ -3809,7 +3810,7 @@
         if (checked.length === 0) { alert('Select at least one tile first.'); return; }
         const tileIds = Array.from(checked).map(cb => {
             const card = cb.closest('.card');
-            if (!card.dataset.tileId) card.dataset.tileId = `tile-custom-${Date.now()}-${Math.floor(Math.random()*10000)}`;
+            if (!card.dataset.tileId) card.dataset.tileId = `tile-custom-${++_slideIdCounter}`;
             return card.dataset.tileId;
         }).filter(Boolean);
         const slideName = `Slide ${slides.length + 1}`;
@@ -3942,9 +3943,8 @@
         const slide = slides[currentSlideIndex];
         const grid = document.getElementById('dashboardGrid');
         const dropZone = document.getElementById('slideDropZone');
-        const stamp = Date.now();
-        const canvasId = `slideChart-${field}-${stamp}`;
-        const tileId = `tile-slide-${field}-${stamp}`;
+        const tileId = `tile-slide-${field}-${++_slideIdCounter}`;
+        const canvasId = `slideChart-${field}-${_slideIdCounter}`;
 
         const tile = document.createElement('div');
         tile.className = 'card chart-card';
@@ -3962,7 +3962,7 @@
         const values = Object.values(agg);
         const ctxEl = document.getElementById(canvasId);
         if (ctxEl) {
-            new Chart(ctxEl.getContext('2d'), {
+            const chart = new Chart(ctxEl.getContext('2d'), {
                 type: 'bar',
                 data: {
                     labels,
@@ -3974,6 +3974,7 @@
                 },
                 options: { responsive: true, plugins: { legend: { display: false } } }
             });
+            _slideCharts.set(tileId, chart);
         }
 
         // Switch from drop zone to grid view
