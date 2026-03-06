@@ -1746,6 +1746,27 @@
         document.querySelectorAll('.filter-dropdown').forEach(d => d.classList.remove('show'));
     });
 
+    // Helper: extract a plain percentage string from a rating value.
+    // The rating column in Postgres is a JSON object: { total_score: "92%", stars: 5, ... }
+    // but may also be a plain integer, a bare "92%" string, or null.
+    function extractRatingScore(val) {
+        if (val === null || val === undefined || val === '') return '';
+        if (typeof val === 'object') {
+            const ts = val.total_score;
+            if (ts !== undefined && ts !== null) {
+                const m = String(ts).match(/(\d+)%/);
+                if (m) return m[1] + '%';
+                if (!isNaN(ts) && String(ts).trim() !== '') return parseInt(ts) + '%';
+            }
+            return '';
+        }
+        const s = String(val).trim();
+        const m = s.match(/(\d+)%/);
+        if (m) return m[1] + '%';
+        if (!isNaN(s) && s !== '') return parseInt(s) + '%';
+        return '';
+    }
+
     function loadFilterOptions(field) {
         const listContainer = document.getElementById(`options-${field}`);
         const uniqueValues = new Set();
@@ -1753,7 +1774,7 @@
 
         globalData.forEach(row => {
             const val = row[dataKey];
-            if (val) {
+            if (val !== null && val !== undefined && val !== '') {
                 // Updated: use jskillset and strip brackets/quotes
                 if (['skillset', 'product', 'lskillset', 'jskillset'].includes(dataKey)) {
                     // Remove [, ], " before splitting
@@ -1761,6 +1782,9 @@
                         const trimmed = v.trim();
                         if (trimmed) uniqueValues.add(trimmed);
                     });
+                } else if (dataKey === 'rating') {
+                    const score = extractRatingScore(val);
+                    if (score) uniqueValues.add(score);
                 } else {
                     uniqueValues.add(String(val).trim());
                 }
@@ -1784,17 +1808,7 @@
         options.forEach(opt => {
             const div = document.createElement('div');
             div.className = 'filter-option';
-            
-            // Format Rating for Display
-            let displayLabel = opt;
-            if (field === 'rating') {
-                const match = String(opt).match(/(\d+%)/);
-                if (match) {
-                    displayLabel = match[1];
-                }
-            }
-
-            div.textContent = displayLabel;
+            div.textContent = opt;
             div.onclick = () => applyFilter(field, opt);
             listContainer.appendChild(div);
         });
@@ -1817,17 +1831,7 @@
         filtered.forEach(opt => {
             const div = document.createElement('div');
             div.className = 'filter-option';
-            
-            // Format Rating for Display in Search Results
-            let displayLabel = opt;
-            if (field === 'rating') {
-                const match = String(opt).match(/(\d+%)/);
-                if (match) {
-                    displayLabel = match[1];
-                }
-            }
-            
-            div.textContent = displayLabel;
+            div.textContent = opt;
             div.onclick = () => applyFilter(field, opt);
             listContainer.appendChild(div);
         });
@@ -2294,8 +2298,13 @@
         return globalData.filter(row => {
             return Object.entries(activeFilters).every(([field, filterVal]) => {
                 const dataKey = FIELD_MAPPING[field] || field;
-                const rowVal = String(row[dataKey] || '').toLowerCase();
-                return rowVal.includes(filterVal.toLowerCase());
+                let rowVal;
+                if (dataKey === 'rating') {
+                    rowVal = extractRatingScore(row[dataKey]);
+                } else {
+                    rowVal = String(row[dataKey] || '').toLowerCase();
+                }
+                return rowVal.toLowerCase().includes(filterVal.toLowerCase());
             });
         });
     }
@@ -2490,13 +2499,10 @@
         let totalScore = 0;
         let ratedCount = 0;
         filtered.forEach(r => {
-            const scoreRaw = r.total_score || r.rating;
-            if (scoreRaw) {
-                const match = String(scoreRaw).match(/(\d+)%/);
-                if (match) {
-                    totalScore += parseInt(match[1]);
-                    ratedCount++;
-                }
+            const score = extractRatingScore(r.rating);
+            if (score) {
+                totalScore += parseInt(score);
+                ratedCount++;
             }
         });
         const avg = ratedCount > 0 ? Math.round(totalScore / ratedCount) : 0;
@@ -2510,12 +2516,7 @@
 
         filtered.slice(0, 50).forEach(row => {
             const tr = document.createElement('tr');
-            let score = '-';
-            const scoreRaw = row.total_score || row.rating;
-            if (scoreRaw) {
-                const m = String(scoreRaw).match(/(\d+)%/);
-                if(m) score = m[1] + '%';
-            }
+            let score = extractRatingScore(row.rating) || '-';
             const nameHtml = row.linkedinurl 
                 ? `<a href="${row.linkedinurl}" target="_blank" style="text-decoration:none; color:var(--primary); font-weight:600;">${row.name || 'Profile'}</a>`
                 : `<b>${row.name || '-'}</b>`;
@@ -2603,13 +2604,9 @@
             const values = keys.map(key => {
                 let val = row[key];
                 
-                // UPDATED: Extract only percentage for score column (prefer total_score over rating)
+                // UPDATED: Extract only percentage for score column (from rating JSON object's total_score)
                 if (key === 'rating') {
-                    val = row.total_score || row.rating;
-                    if (val) {
-                        const match = String(val).match(/(\d+%)/);
-                        if (match) val = match[1];
-                    }
+                    val = extractRatingScore(row.rating) || '';
                 }
 
                 let text = val === null || val === undefined ? '' : String(val);
