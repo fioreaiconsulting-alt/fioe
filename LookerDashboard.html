@@ -737,21 +737,48 @@
         /* Right-edge border drag-to-resize handle */
         .tile-resize-e {
             position: absolute;
-            top: 0;
+            top: 16px;
             right: 0;
             width: 8px;
-            bottom: 16px; /* leave room for 16px SE corner */
+            bottom: 16px;
             cursor: e-resize;
             z-index: 20;
-            border-radius: 0 8px 0 0;
             opacity: 0;
             background: linear-gradient(to left, rgba(59,130,246,0.35), transparent);
             transition: opacity 0.15s;
         }
         .card:hover .tile-resize-e,
-        .tile-resize-e.dragging {
-            opacity: 1;
+        .tile-resize-e.dragging { opacity: 1; }
+        /* Left-edge border drag-to-resize handle */
+        .tile-resize-w {
+            position: absolute;
+            top: 16px;
+            left: 0;
+            width: 8px;
+            bottom: 16px;
+            cursor: w-resize;
+            z-index: 20;
+            opacity: 0;
+            background: linear-gradient(to right, rgba(59,130,246,0.35), transparent);
+            transition: opacity 0.15s;
         }
+        .card:hover .tile-resize-w,
+        .tile-resize-w.dragging { opacity: 1; }
+        /* Top-edge border drag-to-resize handle */
+        .tile-resize-n {
+            position: absolute;
+            top: 0;
+            left: 16px;
+            right: 16px;
+            height: 8px;
+            cursor: n-resize;
+            z-index: 20;
+            opacity: 0;
+            background: linear-gradient(transparent, rgba(59,130,246,0.35));
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-n,
+        .tile-resize-n.dragging { opacity: 1; }
         /* SE corner handle (width+height simultaneously) */
         .tile-resize-se {
             position: absolute;
@@ -761,15 +788,57 @@
             height: 16px;
             cursor: se-resize;
             z-index: 21;
-            border-radius: 0 0 8px 0;
             opacity: 0;
             background: radial-gradient(circle at bottom right, rgba(59,130,246,0.6), transparent 70%);
             transition: opacity 0.15s;
         }
         .card:hover .tile-resize-se,
-        .tile-resize-se.dragging {
-            opacity: 1;
+        .tile-resize-se.dragging { opacity: 1; }
+        /* SW corner handle */
+        .tile-resize-sw {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 16px;
+            height: 16px;
+            cursor: sw-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at bottom left, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
         }
+        .card:hover .tile-resize-sw,
+        .tile-resize-sw.dragging { opacity: 1; }
+        /* NE corner handle */
+        .tile-resize-ne {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 16px;
+            height: 16px;
+            cursor: ne-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at top right, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-ne,
+        .tile-resize-ne.dragging { opacity: 1; }
+        /* NW corner handle */
+        .tile-resize-nw {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 16px;
+            height: 16px;
+            cursor: nw-resize;
+            z-index: 21;
+            opacity: 0;
+            background: radial-gradient(circle at top left, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
+        }
+        .card:hover .tile-resize-nw,
+        .tile-resize-nw.dragging { opacity: 1; }
         /* Tile drag-to-slide: glow when dragging over a slide tab */
         .slide-tab.drop-target {
             box-shadow: 0 0 0 2px var(--primary, #3b82f6);
@@ -839,20 +908,38 @@
         .tile-resize-s {
             position: absolute;
             bottom: 0;
-            left: 0;
-            right: 16px; /* leave room for SE corner */
+            left: 16px;
+            right: 16px;
             height: 8px;
             cursor: s-resize;
             z-index: 20;
-            border-radius: 0 0 0 8px;
             opacity: 0;
             background: linear-gradient(transparent, rgba(59,130,246,0.35));
             transition: opacity 0.15s;
         }
         .card:hover .tile-resize-s,
-        .tile-resize-s.dragging {
-            opacity: 1;
+        .tile-resize-s.dragging { opacity: 1; }
+        /* Text tile */
+        .text-tile {
+            min-height: 80px;
+            padding: 16px;
+            font-size: 14px;
+            color: var(--text-main);
         }
+        .text-tile-editor {
+            width: 100%;
+            min-height: 100px;
+            resize: none;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 14px;
+            color: var(--text-main);
+            background: var(--bg-body);
+            outline: none;
+            font-family: inherit;
+        }
+        .text-tile-editor:focus { border-color: var(--primary); }
         
         /* Updated Legend Style for Cyberpunk */
         .skill-legend {
@@ -3438,7 +3525,7 @@
     const MIN_TILE_WIDTH  = 120;
     function addResizeHandle(card) {
         // Remove existing handles if present (avoid duplicates after re-render)
-        card.querySelectorAll('.tile-resize-s, .tile-resize-e, .tile-resize-se').forEach(h => h.remove());
+        card.querySelectorAll('.tile-resize-s, .tile-resize-n, .tile-resize-e, .tile-resize-w, .tile-resize-se, .tile-resize-sw, .tile-resize-ne, .tile-resize-nw').forEach(h => h.remove());
 
         // Helper: create a drag handle that updates height and/or width
         function makeHandle(className, title, onMoveCallback) {
@@ -3454,8 +3541,9 @@
                 const startY = e.clientY;
                 const startW = card.offsetWidth;
                 const startH = card.offsetHeight;
+                const rect = card.getBoundingClientRect();
                 function onMove(em) {
-                    onMoveCallback(em, startX, startY, startW, startH);
+                    onMoveCallback(em, startX, startY, startW, startH, rect);
                     const canvas = card.querySelector('canvas');
                     if (canvas && charts[canvas.id]) {
                         try { charts[canvas.id].resize(); } catch(_) {}
@@ -3475,16 +3563,31 @@
             return handle;
         }
 
-        // South handle — height only
+        // South handle — height only (drag bottom edge down/up)
         card.appendChild(makeHandle('tile-resize-s', 'Drag to resize tile height', (em, sx, sy, sw, sh) => {
             const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
             card.style.height = newH + 'px';
             card.dataset.baseHeight = String(newH);
         }));
 
-        // East handle — width only
+        // North handle — resize from top edge (moves top, preserves bottom)
+        card.appendChild(makeHandle('tile-resize-n', 'Drag to resize tile height from top', (em, sx, sy, sw, sh, rect) => {
+            const dy = em.clientY - sy;
+            const newH = Math.max(MIN_TILE_HEIGHT, sh - dy);
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // East handle — width only (drag right edge)
         card.appendChild(makeHandle('tile-resize-e', 'Drag to resize tile width', (em, sx, sy, sw, sh) => {
             const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            card.style.width = newW + 'px';
+        }));
+
+        // West handle — resize from left edge
+        card.appendChild(makeHandle('tile-resize-w', 'Drag to resize tile width from left', (em, sx, sy, sw, sh) => {
+            const dx = em.clientX - sx;
+            const newW = Math.max(MIN_TILE_WIDTH, sw - dx);
             card.style.width = newW + 'px';
         }));
 
@@ -3492,6 +3595,33 @@
         card.appendChild(makeHandle('tile-resize-se', 'Drag to resize tile', (em, sx, sy, sw, sh) => {
             const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
             const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // SW corner handle — width from left, height from bottom
+        card.appendChild(makeHandle('tile-resize-sw', 'Drag to resize tile (SW)', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw - (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // NE corner handle — width from right, height from top
+        card.appendChild(makeHandle('tile-resize-ne', 'Drag to resize tile (NE)', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh - (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // NW corner handle — width from left, height from top
+        card.appendChild(makeHandle('tile-resize-nw', 'Drag to resize tile (NW)', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw - (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh - (em.clientY - sy));
             card.style.width = newW + 'px';
             card.style.height = newH + 'px';
             card.dataset.baseHeight = String(newH);
@@ -4409,6 +4539,13 @@
     }
 
     // Save configured slides to localStorage
+    function updateSlideTitleFontSize(value) {
+        const titleEl = document.getElementById('slideshowTitle');
+        const labelEl = document.getElementById('slideTitleFontSizeLabel');
+        if (titleEl) titleEl.style.fontSize = value + 'px';
+        if (labelEl) labelEl.textContent = value + 'px';
+    }
+
     function saveSlides() {
         if (slides.length === 0) { alert('No slides to save.'); return; }
         try {
@@ -4563,6 +4700,32 @@
         if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
         slide.tileIds.push(tileId);
         // Hide tiles not in this slide, show the new one
+        document.getElementById('slideDropZone').style.display = 'none';
+        grid.style.display = '';
+        grid.querySelectorAll('.card').forEach(card => {
+            card.style.display = slide.tileIds.includes(card.dataset.tileId) ? '' : 'none';
+        });
+        renderSlideTabs();
+    }
+
+    function addTextTileToCurrentSlide() {
+        if (slides.length === 0) return;
+        const slide = slides[currentSlideIndex];
+        const tileId = `tile-slide-text-${++_slideIdCounter}`;
+        const grid = document.getElementById('dashboardGrid');
+        const tile = document.createElement('div');
+        tile.className = 'card text-tile';
+        tile.dataset.tileId = tileId;
+        tile.dataset.tileType = 'text';
+        tile.innerHTML = `
+            <h3 contenteditable="true" spellcheck="false">Text</h3>
+            <textarea class="text-tile-editor" placeholder="Type your notes or description here…" spellcheck="false"></textarea>
+        `;
+        grid.appendChild(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+        if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
+        slide.tileIds.push(tileId);
         document.getElementById('slideDropZone').style.display = 'none';
         grid.style.display = '';
         grid.querySelectorAll('.card').forEach(card => {
@@ -4769,6 +4932,14 @@
         <div id="slideshowFilterSlot"></div>
         <div class="slideshow-toolbar">
             <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide" aria-label="Slide title">Slide 1</span>
+            <label title="Adjust slide title font size" style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-sub);">
+                <span>T</span>
+                <input type="range" id="slideTitleFontSize" min="12" max="48" value="14" step="1"
+                    style="width:70px;accent-color:var(--primary,#3b82f6);"
+                    oninput="updateSlideTitleFontSize(this.value)"
+                    title="Slide title font size">
+                <span id="slideTitleFontSizeLabel" style="min-width:28px;">14px</span>
+            </label>
             <span class="topn-controls" title="Adjust number of data points shown in charts">
                 <button class="topn-btn" onclick="adjustTopN(-1)" title="Show fewer data points (reduce by 1)" aria-label="Decrease data points">▼</button>
                 <span id="topNLabel" class="topn-label">All</span>
@@ -4777,6 +4948,7 @@
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
+            <button class="add-tile-btn" onclick="addTextTileToCurrentSlide()" title="Add a text tile for notes or descriptions">+ Add Text</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
             <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
             <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
