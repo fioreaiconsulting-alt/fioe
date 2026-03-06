@@ -2684,11 +2684,59 @@
         updateChart(canvasId, dimension, newType);
     }
 
+    // Country centroids for tile-level Leaflet map charts (extends the COUNTRY_COORDS defined above)
+    // Render a Leaflet bubble map inside a tile's chart-container for 'map' chart type
+    function renderLeafletMapForTile(canvasId, dimension) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const container = canvas.parentElement;
+        if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+        canvas.style.display = 'none';
+        let mapDiv = container.querySelector(`#tilemap-${canvasId}`);
+        if (mapDiv && mapDiv._leafletMap) { mapDiv._leafletMap.remove(); mapDiv.innerHTML = ''; }
+        if (!mapDiv) {
+            mapDiv = document.createElement('div');
+            mapDiv.id = `tilemap-${canvasId}`;
+            mapDiv.style.cssText = 'width:100%;height:100%;min-height:250px;';
+            container.appendChild(mapDiv);
+        }
+        const agg = aggregateData(dimension);
+        const labels = agg.labels; const values = agg.values;
+        const maxVal = Math.max(...values, 1);
+        const map = L.map(mapDiv, { zoomControl: true });
+        mapDiv._leafletMap = map;
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 18 }).addTo(map);
+        const bounds = [];
+        labels.forEach((label, i) => {
+            const coords = COUNTRY_COORDS[label] || COUNTRY_COORDS[label.split(',')[0].trim()];
+            if (coords) {
+                const radius = 8 + Math.round((values[i] / maxVal) * 28);
+                L.circleMarker(coords, { radius, fillColor: '#1a73e8', color: '#1557b0', weight: 1, fillOpacity: 0.65 })
+                    .addTo(map).bindTooltip(`${label}: ${values[i]}`, { permanent: false });
+                bounds.push(coords);
+            }
+        });
+        if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
+        else map.setView([20, 0], 2);
+        setTimeout(() => map.invalidateSize(), 120);
+    }
+
     function updateChart(canvasId, dimension, type) {
+        // Handle map type with Leaflet
+        if (type === 'map') { renderLeafletMapForTile(canvasId, dimension); return; }
+        // When switching away from map, restore canvas and remove map div
+        const canvasEl = document.getElementById(canvasId);
+        if (canvasEl) {
+            const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
+            if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+            canvasEl.style.display = '';
+        }
+
         const agg = aggregateData(dimension);
         const labels = agg.labels.slice(0, 15);
         const values = agg.values.slice(0, 15);
-        const ctx = document.getElementById(canvasId).getContext('2d');
+        if (!canvasEl) return;
+        const ctx = canvasEl.getContext('2d');
 
         if (charts[canvasId]) charts[canvasId].destroy();
 
@@ -2701,49 +2749,60 @@
         const gridColor = isCyber ? '#334155' : '#e5e7eb';
         const textColor = isCyber ? '#94a3b8' : '#64748b';
 
-        // NEW: Radar and Polar Area Config
-        const isRadial = type === 'radar' || type === 'polarArea' || type === 'pie' || type === 'doughnut';
-        
-        // Use MultiColor logic for diverse visuals
-        const useMultiColor = isRadial || (dimension === 'skillset' && type !== 'line');
-        
+        // Normalise extended types to Chart.js types
+        const chartJsType = (type === 'horizontalBar') ? 'bar'
+                          : (type === 'area') ? 'line'
+                          : (type === 'scatter') ? 'scatter'
+                          : (type === 'bubble') ? 'bubble'
+                          : type;
+
+        const isRadial = chartJsType === 'radar' || chartJsType === 'polarArea' || chartJsType === 'pie' || chartJsType === 'doughnut';
+        const useMultiColor = isRadial || (dimension === 'skillset' && chartJsType !== 'line');
+
+        // Build dataset data for scatter/bubble
+        let datasetData = values;
+        if (chartJsType === 'scatter') {
+            datasetData = values.map((v, i) => ({ x: i + 1, y: v }));
+        } else if (chartJsType === 'bubble') {
+            datasetData = values.map((v, i) => ({ x: i + 1, y: v, r: Math.max(4, Math.round(Math.sqrt(v) * 3)) }));
+        }
+
         const config = {
-            type: type,
+            type: chartJsType,
             data: {
                 labels: labels,
                 datasets: [{
                     label: 'Count',
-                    data: values,
-                    backgroundColor: useMultiColor ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
-                    borderColor: (useMultiColor && type !== 'line') ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
-                    borderWidth: type === 'line' ? 2 : 0,
-                    fill: type === 'line' || type === 'radar' ? true : true, // fill radar
-                    tension: 0.1
+                    data: datasetData,
+                    backgroundColor: useMultiColor ? colors.map(c => c + 'cc') : (isCyber ? '#0ea5e9' : '#1a73e8'),
+                    borderColor: (useMultiColor && chartJsType !== 'line') ? colors : (isCyber ? '#0ea5e9' : '#1a73e8'),
+                    borderWidth: (chartJsType === 'line') ? 2 : (chartJsType === 'scatter' || chartJsType === 'bubble') ? 1 : 0,
+                    fill: (type === 'area') ? true : (chartJsType === 'radar'),
+                    tension: 0.3,
+                    pointRadius: chartJsType === 'line' ? 3 : undefined,
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                indexAxis: dimension === 'skillset' && type === 'bar' ? 'y' : 'x', 
+                indexAxis: (type === 'horizontalBar' || (dimension === 'skillset' && chartJsType === 'bar')) ? 'y' : 'x',
                 plugins: {
-                    legend: { 
-                        display: isRadial, 
+                    legend: {
+                        display: isRadial || chartJsType === 'bubble',
                         position: 'right',
                         labels: { boxWidth: 12, font: { family: isCyber?'Orbitron':'Inter' }, color: textColor }
                     }
                 },
                 layout: { padding: 10 },
-                scales: {
-                    // Scales not needed for pie/doughnut/polar, but might be for radar
-                }
+                scales: {}
             }
         };
 
         // Adjust scales visibility
-        if(type === 'pie' || type === 'doughnut' || type === 'polarArea') {
+        if(chartJsType === 'pie' || chartJsType === 'doughnut' || chartJsType === 'polarArea') {
             delete config.options.scales;
-            if(type === 'doughnut') config.options.cutout = '50%';
-        } else if (type === 'radar') {
+            if(chartJsType === 'doughnut') config.options.cutout = '50%';
+        } else if (chartJsType === 'radar') {
             config.options.scales = {
                 r: {
                     grid: { color: gridColor },
@@ -2751,14 +2810,20 @@
                     ticks: { display: false }
                 }
             };
-            // Transparency for radar fill
-            config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14, 165, 233, 0.2)' : 'rgba(26, 115, 232, 0.2)';
+            config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14,165,233,0.2)' : 'rgba(26,115,232,0.2)';
+        } else if (chartJsType === 'scatter' || chartJsType === 'bubble') {
+            config.options.scales = {
+                x: { type: 'linear', title: { display: true, text: 'Rank', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } },
+                y: { title: { display: true, text: 'Count', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } }
+            };
         } else {
-            // Bar/Line
             config.options.scales = {
                 x: { ticks: { color: textColor }, grid: { color: gridColor } },
                 y: { ticks: { color: textColor }, grid: { color: gridColor } }
             };
+            if (type === 'area') {
+                config.data.datasets[0].backgroundColor = isCyber ? 'rgba(14,165,233,0.25)' : 'rgba(26,115,232,0.2)';
+            }
         }
 
         charts[canvasId] = new Chart(ctx, config);
@@ -3406,11 +3471,16 @@
                 <h3>${formatLabel(dimension)} Analysis</h3>
                 <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${dimension}', this.value, this.closest('.card'))">
                     <option value="bar" ${chartType=='bar'?'selected':''}>Bar</option>
+                    <option value="horizontalBar" ${chartType=='horizontalBar'?'selected':''}>Horizontal Bar</option>
                     <option value="pie" ${chartType=='pie'?'selected':''}>Pie</option>
                     <option value="line" ${chartType=='line'?'selected':''}>Line</option>
+                    <option value="area" ${chartType=='area'?'selected':''}>Area</option>
                     <option value="doughnut" ${chartType=='doughnut'?'selected':''}>Doughnut</option>
                     <option value="polarArea" ${chartType=='polarArea'?'selected':''}>Polar Area</option>
                     <option value="radar" ${chartType=='radar'?'selected':''}>Radar</option>
+                    <option value="scatter" ${chartType=='scatter'?'selected':''}>Scatter</option>
+                    <option value="bubble" ${chartType=='bubble'?'selected':''}>Bubble</option>
+                    <option value="map" ${chartType=='map'?'selected':''}>Map</option>
                 </select>
             </div>
             <div class="chart-container">
@@ -3805,11 +3875,16 @@
                         <h3>${formatLabel(dimension)} Analysis</h3>
                         <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${dimension}', this.value, this.closest('.card'))">
                             <option value="bar" ${data.chartType=='bar'?'selected':''}>Bar</option>
+                            <option value="horizontalBar" ${data.chartType=='horizontalBar'?'selected':''}>Horizontal Bar</option>
                             <option value="pie" ${data.chartType=='pie'?'selected':''}>Pie</option>
                             <option value="line" ${data.chartType=='line'?'selected':''}>Line</option>
+                            <option value="area" ${data.chartType=='area'?'selected':''}>Area</option>
                             <option value="doughnut" ${data.chartType=='doughnut'?'selected':''}>Doughnut</option>
                             <option value="polarArea" ${data.chartType=='polarArea'?'selected':''}>Polar Area</option>
                             <option value="radar" ${data.chartType=='radar'?'selected':''}>Radar</option>
+                            <option value="scatter" ${data.chartType=='scatter'?'selected':''}>Scatter</option>
+                            <option value="bubble" ${data.chartType=='bubble'?'selected':''}>Bubble</option>
+                            <option value="map" ${data.chartType=='map'?'selected':''}>Map</option>
                         </select>
                     </div>
                     <div class="chart-container">
@@ -4270,6 +4345,27 @@
         if (btn) btn.style.display = slides.length > 0 ? '' : 'none';
     }
 
+    // Delete the entire slide project — clears all slides and returns to dashboard
+    window.clearSlideProject = function() {
+        if (!confirm('Delete the entire slide project? This will remove all slides and cannot be undone.')) return;
+        // Destroy all Chart.js instances in slide tiles
+        document.querySelectorAll('#dashboardGrid .card[data-tile-id^="tile-slide-"]').forEach(card => {
+            card.querySelectorAll('canvas').forEach(cv => {
+                if (charts[cv.id]) { charts[cv.id].destroy(); delete charts[cv.id]; }
+            });
+            card.querySelectorAll('[id^="tilemap-"]').forEach(md => {
+                if (md._leafletMap) { md._leafletMap.remove(); }
+            });
+            card.remove();
+        });
+        slides = [];
+        currentSlideIndex = 0;
+        _slideIdCounter = 0;
+        localStorage.removeItem('dashboard:slides');
+        closeSlideshowViewer();
+        updateSlidesTabVisibility();
+    };
+
     // Export the current slide content as a PNG image download
     function exportSlideAsPNG() {
         const content = document.getElementById('slideshowContent');
@@ -4537,11 +4633,16 @@
                 <h3>${formatLabel(field)} Analysis</h3>
                 <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${field}', this.value, this.closest('.card'))">
                     <option value="bar">Bar</option>
+                    <option value="horizontalBar">Horizontal Bar</option>
                     <option value="pie">Pie</option>
                     <option value="line">Line</option>
+                    <option value="area">Area</option>
                     <option value="doughnut">Doughnut</option>
                     <option value="polarArea">Polar Area</option>
                     <option value="radar">Radar</option>
+                    <option value="scatter">Scatter</option>
+                    <option value="bubble">Bubble</option>
+                    <option value="map">Map</option>
                 </select>
             </div>
             <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
@@ -4586,6 +4687,7 @@
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
             <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
             <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
+            <button class="add-tile-btn" id="deleteProjectBtn" onclick="clearSlideProject()" title="Delete the entire slide project and all slides" style="background:#dc2626;">🗑 Delete Project</button>
             <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
         </div>
     </div>
