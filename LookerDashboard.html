@@ -734,40 +734,41 @@
             color: var(--primary);
             font-weight: 700;
         }
-        /* Size slider inside tile-controls */
-        .tile-size-slider {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 120px;
-            height: 8px;
-            background: var(--border, #e5e7eb);
-            border-radius: 4px;
-            outline: none;
-            cursor: pointer;
+        /* Right-edge border drag-to-resize handle */
+        .tile-resize-e {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 8px;
+            bottom: 16px; /* leave room for 16px SE corner */
+            cursor: e-resize;
+            z-index: 20;
+            border-radius: 0 8px 0 0;
+            opacity: 0;
+            background: linear-gradient(to left, rgba(59,130,246,0.35), transparent);
+            transition: opacity 0.15s;
         }
-        .tile-size-slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: var(--primary, #3b82f6);
-            cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        .card:hover .tile-resize-e,
+        .tile-resize-e.dragging {
+            opacity: 1;
         }
-        .tile-size-slider::-moz-range-thumb {
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: var(--primary, #3b82f6);
-            cursor: pointer;
-            border: none;
+        /* SE corner handle (width+height simultaneously) */
+        .tile-resize-se {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 16px;
+            height: 16px;
+            cursor: se-resize;
+            z-index: 21;
+            border-radius: 0 0 8px 0;
+            opacity: 0;
+            background: radial-gradient(circle at bottom right, rgba(59,130,246,0.6), transparent 70%);
+            transition: opacity 0.15s;
         }
-        .tile-size-label {
-            font-size: 10px;
-            color: var(--text-sub);
-            min-width: 30px;
-            text-align: right;
+        .card:hover .tile-resize-se,
+        .tile-resize-se.dragging {
+            opacity: 1;
         }
         /* Tile drag-to-slide: glow when dragging over a slide tab */
         .slide-tab.drop-target {
@@ -839,11 +840,11 @@
             position: absolute;
             bottom: 0;
             left: 0;
-            right: 0;
+            right: 16px; /* leave room for SE corner */
             height: 8px;
             cursor: s-resize;
             z-index: 20;
-            border-radius: 0 0 8px 8px;
+            border-radius: 0 0 0 8px;
             opacity: 0;
             background: linear-gradient(transparent, rgba(59,130,246,0.35));
             transition: opacity 0.15s;
@@ -3326,37 +3327,11 @@
             if (card.classList.contains('custom-metric-tile')) baseHeight = 200;
             card.dataset.baseHeight = String(baseHeight);
 
-            // controls — size slider replaces fixed 1x/2x/4x/8x buttons
+            // controls — top-N filter + remove button (slider removed; resize via border handles)
             const controls = document.createElement('div');
             controls.className = 'tile-controls';
-            // Prevent slider interaction from triggering card drag
             controls.addEventListener('mousedown', (e) => e.stopPropagation());
             controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
-            const sizeSlider = document.createElement('input');
-            sizeSlider.type = 'range';
-            sizeSlider.min = '25';
-            sizeSlider.max = '200';
-            sizeSlider.value = '100';
-            sizeSlider.step = '5';
-            sizeSlider.className = 'tile-size-slider';
-            sizeSlider.title = 'Resize tile (25%–200%)';
-            const sizeLabel = document.createElement('span');
-            sizeLabel.className = 'tile-size-label';
-            sizeLabel.textContent = '100%';
-            let _sliderPtrDown = false, _sliderMoved = false;
-            sizeSlider.addEventListener('pointerdown', () => { _sliderPtrDown = true; _sliderMoved = false; });
-            sizeSlider.addEventListener('pointermove', () => { if (_sliderPtrDown) _sliderMoved = true; });
-            sizeSlider.addEventListener('pointerup', () => { _sliderPtrDown = false; _sliderMoved = false; });
-            sizeSlider.addEventListener('pointercancel', () => { _sliderPtrDown = false; _sliderMoved = false; });
-            sizeSlider.addEventListener('input', (e) => {
-                e.stopPropagation();
-                const pct = parseInt(sizeSlider.value, 10);
-                sizeLabel.textContent = pct + '%';
-                if (_sliderMoved) {
-                    resizeCardByPercent(card, pct);
-                    persistSizes();
-                }
-            });
             // Per-tile Top N controls
             const topnDiv = document.createElement('span');
             topnDiv.className = 'tile-topn';
@@ -3384,8 +3359,6 @@
             removeBtn.title = 'Remove Tile';
             removeBtn.textContent = 'X';
             removeBtn.addEventListener('click', (e) => { e.stopPropagation(); card.remove(); persistOrder(); persistSizes(); });
-            controls.appendChild(sizeSlider);
-            controls.appendChild(sizeLabel);
             controls.appendChild(topnDiv);
             controls.appendChild(removeBtn);
             card.appendChild(controls);
@@ -3460,42 +3433,69 @@
         });
     }
 
-    // Attach a drag-to-resize bottom handle to a tile card
+    // Attach drag-to-resize handles (bottom, right, and SE corner) to a tile card
+    const MIN_TILE_HEIGHT = 80;
+    const MIN_TILE_WIDTH  = 120;
     function addResizeHandle(card) {
-        // Remove existing handle if present (avoid duplicates after re-render)
-        const existing = card.querySelector('.tile-resize-s');
-        if (existing) existing.remove();
-        const handle = document.createElement('div');
-        handle.className = 'tile-resize-s';
-        handle.title = 'Drag to resize tile height';
-        handle.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handle.classList.add('dragging');
-            handle.setPointerCapture(e.pointerId);
-            const startY = e.clientY;
-            const startH = card.offsetHeight;
-            function onMove(em) {
-                const newH = Math.max(80, startH + (em.clientY - startY));
-                card.style.height = newH + 'px';
-                card.dataset.baseHeight = String(newH);
-                const canvas = card.querySelector('canvas');
-                if (canvas && charts[canvas.id]) {
-                    try { charts[canvas.id].resize(); } catch(_) {}
+        // Remove existing handles if present (avoid duplicates after re-render)
+        card.querySelectorAll('.tile-resize-s, .tile-resize-e, .tile-resize-se').forEach(h => h.remove());
+
+        // Helper: create a drag handle that updates height and/or width
+        function makeHandle(className, title, onMoveCallback) {
+            const handle = document.createElement('div');
+            handle.className = className;
+            handle.title = title;
+            handle.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handle.classList.add('dragging');
+                handle.setPointerCapture(e.pointerId);
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const startW = card.offsetWidth;
+                const startH = card.offsetHeight;
+                function onMove(em) {
+                    onMoveCallback(em, startX, startY, startW, startH);
+                    const canvas = card.querySelector('canvas');
+                    if (canvas && charts[canvas.id]) {
+                        try { charts[canvas.id].resize(); } catch(_) {}
+                    }
                 }
-            }
-            function onUp() {
-                handle.classList.remove('dragging');
-                persistSizes();
-                handle.removeEventListener('pointermove', onMove);
-                handle.removeEventListener('pointerup', onUp);
-                handle.removeEventListener('pointercancel', onUp);
-            }
-            handle.addEventListener('pointermove', onMove);
-            handle.addEventListener('pointerup', onUp);
-            handle.addEventListener('pointercancel', onUp);
-        });
-        card.appendChild(handle);
+                function onUp() {
+                    handle.classList.remove('dragging');
+                    persistSizes();
+                    handle.removeEventListener('pointermove', onMove);
+                    handle.removeEventListener('pointerup', onUp);
+                    handle.removeEventListener('pointercancel', onUp);
+                }
+                handle.addEventListener('pointermove', onMove);
+                handle.addEventListener('pointerup', onUp);
+                handle.addEventListener('pointercancel', onUp);
+            });
+            return handle;
+        }
+
+        // South handle — height only
+        card.appendChild(makeHandle('tile-resize-s', 'Drag to resize tile height', (em, sx, sy, sw, sh) => {
+            const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
+
+        // East handle — width only
+        card.appendChild(makeHandle('tile-resize-e', 'Drag to resize tile width', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            card.style.width = newW + 'px';
+        }));
+
+        // SE corner handle — both width and height
+        card.appendChild(makeHandle('tile-resize-se', 'Drag to resize tile', (em, sx, sy, sw, sh) => {
+            const newW = Math.max(MIN_TILE_WIDTH, sw + (em.clientX - sx));
+            const newH = Math.max(MIN_TILE_HEIGHT, sh + (em.clientY - sy));
+            card.style.width = newW + 'px';
+            card.style.height = newH + 'px';
+            card.dataset.baseHeight = String(newH);
+        }));
     }
 
     // Remove a single tag from a tile, re-rendering as needed
@@ -3628,33 +3628,8 @@
     function addTileControls(tile) {
         const controls = document.createElement('div');
         controls.className = 'tile-controls';
-        // Prevent slider interaction from triggering card drag
         controls.addEventListener('mousedown', (e) => e.stopPropagation());
         controls.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
-        const sizeSlider = document.createElement('input');
-        sizeSlider.type = 'range';
-        sizeSlider.min = '25';
-        sizeSlider.max = '200';
-        sizeSlider.value = '100';
-        sizeSlider.step = '5';
-        sizeSlider.className = 'tile-size-slider';
-        sizeSlider.title = 'Resize tile (25%–200%)';
-        const sizeLabel = document.createElement('span');
-        sizeLabel.className = 'tile-size-label';
-        sizeLabel.textContent = '100%';
-        let _sTilePtrDown = false, _sTileMoved = false;
-        sizeSlider.addEventListener('pointerdown', () => { _sTilePtrDown = true; _sTileMoved = false; });
-        sizeSlider.addEventListener('pointermove', () => { if (_sTilePtrDown) _sTileMoved = true; });
-        sizeSlider.addEventListener('pointerup', () => { _sTilePtrDown = false; _sTileMoved = false; });
-        sizeSlider.addEventListener('pointercancel', () => { _sTilePtrDown = false; _sTileMoved = false; });
-        sizeSlider.addEventListener('input', (ev) => {
-            ev.stopPropagation();
-            const pct = parseInt(sizeSlider.value, 10);
-            sizeLabel.textContent = pct + '%';
-            if (_sTileMoved) {
-                resizeCardByPercent(tile, pct);
-            }
-        });
         // Per-tile Top N controls
         const topnDiv = document.createElement('span');
         topnDiv.className = 'tile-topn';
@@ -3690,8 +3665,6 @@
             tile.remove();
             renderCurrentSlide();
         });
-        controls.appendChild(sizeSlider);
-        controls.appendChild(sizeLabel);
         controls.appendChild(topnDiv);
         controls.appendChild(removeBtn);
         tile.appendChild(controls);
@@ -4041,6 +4014,7 @@
                 sizes[el.dataset.tileId] = {
                     span: el.dataset.span,
                     height: el.style.height || '',
+                    width: el.style.width || '',
                     minHeight: el.style.minHeight || '',
                     scale: el.dataset.scale || '1'
                 };
@@ -4061,6 +4035,7 @@
             if (!s) return;
             if (s.span) el.dataset.span = s.span;
             if (s.height) el.style.height = s.height;
+            if (s.width) el.style.width = s.width;
             if (s.minHeight) el.style.minHeight = s.minHeight;
             if (s.scale) {
                 el.dataset.scale = s.scale;
