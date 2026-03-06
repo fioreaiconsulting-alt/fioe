@@ -1058,7 +1058,7 @@
             overflow-x: auto;
         }
         .slide-tab {
-            padding: 4px 14px;
+            padding: 4px 10px 4px 14px;
             border-radius: 20px;
             border: 1px solid var(--border);
             background: var(--hover);
@@ -1066,11 +1066,31 @@
             font-size: 12px;
             cursor: pointer;
             transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
         .slide-tab.active-tab {
             background: var(--primary, #3b82f6);
             color: #fff;
             border-color: transparent;
+        }
+        .slide-tab-delete {
+            font-size: 11px;
+            line-height: 1;
+            opacity: 0.6;
+            padding: 0 2px;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .slide-tab-delete:hover { opacity: 1; }
+
+        /* Editable slide title in toolbar */
+        .slide-title[contenteditable="true"] {
+            outline: none;
+            border-bottom: 1px dashed var(--primary, #3b82f6);
+            cursor: text;
+            min-width: 60px;
         }
     </style>
     <!-- Nav-sidebar base styles (embedded for self-contained rendering) -->
@@ -3872,9 +3892,10 @@
         const dropZone = document.getElementById('slideDropZone');
 
         if (slide.tileIds.length === 0) {
-            // Blank slide: show drop zone, hide grid
-            grid.style.display = 'none';
+            // Blank slide: show full empty tile + drop zone hint
+            grid.style.display = '';
             dropZone.style.display = 'flex';
+            grid.querySelectorAll('.card').forEach(card => { card.style.display = 'none'; });
         } else {
             grid.style.display = '';
             dropZone.style.display = 'none';
@@ -3884,16 +3905,36 @@
         }
 
         const counter = document.getElementById('slideshowCounter');
-        const title = document.getElementById('slideshowTitle');
+        const titleEl = document.getElementById('slideshowTitle');
         const prevBtn = document.getElementById('slidePrevBtn');
         const nextBtn = document.getElementById('slideNextBtn');
 
         counter.textContent = `Slide ${currentSlideIndex + 1} of ${slides.length}`;
-        title.textContent = slide.name;
+        // Update editable title — only update text content when not focused to avoid cursor reset
+        if (document.activeElement !== titleEl) {
+            titleEl.textContent = slide.name;
+        }
         prevBtn.disabled = currentSlideIndex === 0;
         nextBtn.disabled = currentSlideIndex === slides.length - 1;
         renderSlideTabs();
     }
+
+    // Sync editable title back to slide data — attached via DOMContentLoaded so element exists
+    document.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.getElementById('slideshowTitle');
+        if (!titleEl) return;
+        titleEl.addEventListener('blur', function() {
+            const name = this.textContent.trim() || `Slide ${currentSlideIndex + 1}`;
+            this.textContent = name;
+            if (slides[currentSlideIndex]) {
+                slides[currentSlideIndex].name = name;
+                renderSlideTabs();
+            }
+        });
+        titleEl.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
+        });
+    });
 
     function navigateSlide(dir) {
         currentSlideIndex = Math.max(0, Math.min(slides.length - 1, currentSlideIndex + dir));
@@ -3901,9 +3942,58 @@
     }
 
     function addBlankSlide() {
-        slides.push({ name: `Slide ${slides.length + 1}`, tileIds: [] });
+        // Create a blank slide — a full empty tile is created in the grid and assigned to it
+        const slideIdx = slides.length;
+        const slideName = `Slide ${slideIdx + 1}`;
+        const tileId = `tile-slide-empty-${++_slideIdCounter}`;
+
+        // Create the empty tile that belongs to this slide
+        const grid = document.getElementById('dashboardGrid');
+        const tile = document.createElement('div');
+        tile.className = 'card empty-tile';
+        tile.dataset.tileId = tileId;
+        tile.innerHTML = `
+            <h3>Slide Tile</h3>
+            <div class="empty-tile-content">Drag filter tags here to build a chart</div>
+        `;
+        grid.appendChild(tile);
+        // Setup drag-drop and controls
+        _setupSlideTileDrop(tile);
+        addTileControls(tile);
+        enableTileInteractivity(tile);
+
+        slides.push({ name: slideName, tileIds: [tileId] });
         currentSlideIndex = slides.length - 1;
         renderCurrentSlide();
+    }
+
+    // Set up drop-zone behavior on a slide tile (supports multiple tags → transformToChartTile)
+    function _setupSlideTileDrop(tile) {
+        tile.addEventListener('dragover', e => {
+            if (e.dataTransfer.types.includes('application/x-filter-field')) {
+                e.preventDefault();
+                tile.classList.add('drag-over');
+            }
+        });
+        tile.addEventListener('dragleave', () => tile.classList.remove('drag-over'));
+        tile.addEventListener('drop', e => {
+            e.preventDefault();
+            tile.classList.remove('drag-over');
+            const field = e.dataTransfer.getData('application/x-filter-field');
+            if (!field) return;
+            // Accumulate fields on the tile (same logic as existing empty tile drop zone)
+            let fields = [];
+            try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
+            if (!fields.includes(field)) fields.push(field);
+            const slide = slides[currentSlideIndex];
+            // Replace the empty tile content with a chart (reuse transformToChartTile)
+            transformToChartTile(tile, fields);
+            // Ensure tile is in the current slide
+            if (slide && !slide.tileIds.includes(tile.dataset.tileId)) {
+                slide.tileIds.push(tile.dataset.tileId);
+            }
+            document.getElementById('slideDropZone').style.display = 'none';
+        });
     }
 
     function renderSlideTabs() {
@@ -3912,10 +4002,51 @@
         slides.forEach((slide, idx) => {
             const tab = document.createElement('span');
             tab.className = 'slide-tab' + (idx === currentSlideIndex ? ' active-tab' : '');
-            tab.textContent = slide.name;
-            tab.onclick = () => { currentSlideIndex = idx; renderCurrentSlide(); };
+
+            // Name part
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = slide.name;
+            nameSpan.style.pointerEvents = 'none';
+            tab.appendChild(nameSpan);
+
+            // Delete button
+            const del = document.createElement('span');
+            del.className = 'slide-tab-delete';
+            del.textContent = '✕';
+            del.title = 'Delete slide';
+            del.addEventListener('click', e => {
+                e.stopPropagation();
+                deleteSlide(idx);
+            });
+            tab.appendChild(del);
+
+            tab.addEventListener('click', () => { currentSlideIndex = idx; renderCurrentSlide(); });
             tabsEl.appendChild(tab);
         });
+    }
+
+    function deleteSlide(idx) {
+        if (slides.length <= 1) {
+            // Last slide — just clear it rather than leaving no slides
+            slides[0] = { name: 'Slide 1', tileIds: [] };
+            currentSlideIndex = 0;
+        } else {
+            // Remove tiles belonging only to this slide from the grid
+            const removing = slides[idx].tileIds;
+            const otherIds = slides.flatMap((s, i) => i !== idx ? s.tileIds : []);
+            const grid = document.getElementById('dashboardGrid');
+            removing.forEach(tid => {
+                if (!otherIds.includes(tid)) {
+                    const el = grid.querySelector(`[data-tile-id="${tid}"]`);
+                    if (el) { el.remove(); }
+                    const chart = _slideCharts.get(tid);
+                    if (chart) { chart.destroy(); _slideCharts.delete(tid); }
+                }
+            });
+            slides.splice(idx, 1);
+            currentSlideIndex = Math.min(currentSlideIndex, slides.length - 1);
+        }
+        renderCurrentSlide();
     }
 
     // Drop zone: drag filter tag → generate chart tile in blank slide
@@ -3949,33 +4080,31 @@
         const tile = document.createElement('div');
         tile.className = 'card chart-card';
         tile.dataset.tileId = tileId;
-        tile.innerHTML = `<h3 class="card-header">${formatLabel(field)}</h3><canvas id="${canvasId}" height="300"></canvas>`;
+        tile.dataset.fields = JSON.stringify([field]);
+        tile.innerHTML = `
+            <div class="card-header">
+                <h3>${formatLabel(field)} Analysis</h3>
+                <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${field}', this.value, this.closest('.card'))">
+                    <option value="bar">Bar</option>
+                    <option value="pie">Pie</option>
+                    <option value="line">Line</option>
+                    <option value="doughnut">Doughnut</option>
+                    <option value="polarArea">Polar Area</option>
+                    <option value="radar">Radar</option>
+                </select>
+            </div>
+            <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
+            <div class="active-tags"><span class="active-tag">${field}</span></div>
+        `;
         grid.appendChild(tile);
         addTileControls(tile);
         enableTileInteractivity(tile);
+        _setupSlideTileDrop(tile);
 
         slide.tileIds.push(tileId);
 
-        // Draw bar chart for this dimension
-        const agg = aggregateData(field);
-        const labels = Object.keys(agg);
-        const values = Object.values(agg);
-        const ctxEl = document.getElementById(canvasId);
-        if (ctxEl) {
-            const chart = new Chart(ctxEl.getContext('2d'), {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [{
-                        label: formatLabel(field),
-                        data: values,
-                        backgroundColor: 'rgba(59,130,246,0.72)'
-                    }]
-                },
-                options: { responsive: true, plugins: { legend: { display: false } } }
-            });
-            _slideCharts.set(tileId, chart);
-        }
+        // Draw initial bar chart
+        setTimeout(() => { updateChart(canvasId, field, 'bar'); }, 0);
 
         // Switch from drop zone to grid view
         dropZone.style.display = 'none';
@@ -3993,10 +4122,10 @@
         <!-- Slot: the real filter-bar-wrapper is moved here when slideshow opens -->
         <div id="slideshowFilterSlot"></div>
         <div class="slideshow-toolbar">
-            <span id="slideshowTitle" class="slide-title">Slide 1</span>
+            <span id="slideshowTitle" class="slide-title" contenteditable="true" spellcheck="false" title="Click to rename slide">Slide 1</span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
-            <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide; drag filter tags into it to generate tiles">+ Add Tiles</button>
+            <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
             <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
         </div>
     </div>
@@ -4004,8 +4133,8 @@
         <!-- dashboardGrid is moved here dynamically -->
         <div id="slideDropZone">
             <div class="drop-icon">⬇</div>
-            <strong>Blank Slide</strong>
-            <span>Drag filter tags from the Column Filters bar above and drop here to add a chart tile.</span>
+            <strong>Empty Slide</strong>
+            <span>Drag one or more filter tags from the Column Filters bar into this zone to generate a chart tile. Combine multiple tags for multi-dimension analysis.</span>
         </div>
     </div>
     <div class="slideshow-nav">
