@@ -13,6 +13,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <!-- html2pdf.js for PDF Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- html2canvas for PNG export of slides -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <!-- Left Column Navigation -->
     <link rel="stylesheet" href="nav-sidebar.css">
     <script src="nav-sidebar.js" defer></script>
@@ -1445,6 +1447,7 @@
     <div class="nav-tabs-container">
         <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
         <button class="tab-btn" onclick="switchTab('templates')">Report Template</button>
+        <button class="tab-btn" id="slidesTabBtn" style="display:none;" onclick="openSlideshowViewer()" title="View your saved slides">Slides</button>
     </div>
     
     <!-- DASHBOARD TAB CONTENT -->
@@ -3237,12 +3240,19 @@
             const sizeLabel = document.createElement('span');
             sizeLabel.className = 'tile-size-label';
             sizeLabel.textContent = '100%';
+            let _sliderPtrDown = false, _sliderMoved = false;
+            sizeSlider.addEventListener('pointerdown', () => { _sliderPtrDown = true; _sliderMoved = false; });
+            sizeSlider.addEventListener('pointermove', () => { if (_sliderPtrDown) _sliderMoved = true; });
+            sizeSlider.addEventListener('pointerup', () => { _sliderPtrDown = false; _sliderMoved = false; });
+            sizeSlider.addEventListener('pointercancel', () => { _sliderPtrDown = false; _sliderMoved = false; });
             sizeSlider.addEventListener('input', (e) => {
                 e.stopPropagation();
                 const pct = parseInt(sizeSlider.value, 10);
                 sizeLabel.textContent = pct + '%';
-                resizeCardByPercent(card, pct);
-                persistSizes();
+                if (_sliderMoved) {
+                    resizeCardByPercent(card, pct);
+                    persistSizes();
+                }
             });
             // Per-tile Top N controls
             const topnDiv = document.createElement('span');
@@ -3443,11 +3453,18 @@
         const sizeLabel = document.createElement('span');
         sizeLabel.className = 'tile-size-label';
         sizeLabel.textContent = '100%';
+        let _sTilePtrDown = false, _sTileMoved = false;
+        sizeSlider.addEventListener('pointerdown', () => { _sTilePtrDown = true; _sTileMoved = false; });
+        sizeSlider.addEventListener('pointermove', () => { if (_sTilePtrDown) _sTileMoved = true; });
+        sizeSlider.addEventListener('pointerup', () => { _sTilePtrDown = false; _sTileMoved = false; });
+        sizeSlider.addEventListener('pointercancel', () => { _sTilePtrDown = false; _sTileMoved = false; });
         sizeSlider.addEventListener('input', (ev) => {
             ev.stopPropagation();
             const pct = parseInt(sizeSlider.value, 10);
             sizeLabel.textContent = pct + '%';
-            resizeCardByPercent(tile, pct);
+            if (_sTileMoved) {
+                resizeCardByPercent(tile, pct);
+            }
         });
         // Per-tile Top N controls
         const topnDiv = document.createElement('span');
@@ -4040,6 +4057,7 @@
         currentSlideIndex = slides.length - 1;
         // Exit selection mode
         toggleSlidesSelectionMode();
+        updateSlidesTabVisibility();
         openSlideshowViewer();
     }
 
@@ -4246,6 +4264,37 @@
         }
     }
 
+    // Show/hide the Slides tab depending on whether any slides exist
+    function updateSlidesTabVisibility() {
+        const btn = document.getElementById('slidesTabBtn');
+        if (btn) btn.style.display = slides.length > 0 ? '' : 'none';
+    }
+
+    // Export the current slide content as a PNG image download
+    function exportSlideAsPNG() {
+        const content = document.getElementById('slideshowContent');
+        if (!content) return;
+        if (typeof html2canvas === 'undefined') {
+            alert('html2canvas not loaded — please check your internet connection.');
+            return;
+        }
+        const slide = slides[currentSlideIndex];
+        const slideName = (slide && slide.name) ? slide.name : `Slide ${currentSlideIndex + 1}`;
+        const exportBtn = document.getElementById('exportSlidePngBtn');
+        if (exportBtn) { exportBtn.disabled = true; exportBtn.textContent = '⏳ Exporting…'; }
+        html2canvas(content, { scale: 2, useCORS: true, backgroundColor: '#ffffff' }).then(canvas => {
+            const link = document.createElement('a');
+            link.download = slideName.replace(/[^a-z0-9]/gi, '_') + '.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }).catch(err => {
+            console.warn('PNG export failed:', err);
+            alert('PNG export failed: ' + err.message);
+        }).finally(() => {
+            if (exportBtn) { exportBtn.disabled = false; exportBtn.textContent = '📷 Export PNG'; }
+        });
+    }
+
     // Sync editable title back to slide data — attached via DOMContentLoaded so element exists
     document.addEventListener('DOMContentLoaded', () => {
         const titleEl = document.getElementById('slideshowTitle');
@@ -4299,6 +4348,7 @@
 
         slides.push({ name: slideName, tileIds: [tileId], topN: null });
         currentSlideIndex = slides.length - 1;
+        updateSlidesTabVisibility();
         renderCurrentSlide();
     }
 
@@ -4446,6 +4496,7 @@
             slides.splice(idx, 1);
             currentSlideIndex = Math.min(currentSlideIndex, slides.length - 1);
         }
+        updateSlidesTabVisibility();
         renderCurrentSlide();
     }
 
@@ -4534,6 +4585,7 @@
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
             <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
+            <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
             <button class="close-btn" onclick="closeSlideshowViewer()">✕ Close</button>
         </div>
     </div>
