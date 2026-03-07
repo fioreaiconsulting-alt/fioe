@@ -5019,14 +5019,27 @@
         // Apply autofit if enabled
         if (_autofitEnabled) setTimeout(autofitTiles, 0);
 
-        // Invalidate any Leaflet maps that are now visible so they re-render with correct dimensions
+        // Re-render Leaflet maps now that tiles are visible (they were hidden when first created,
+        // so L.map() had 0×0 dimensions and fitBounds/markers were never placed).
+        // Map-type chart tiles get a full re-render; all other tiles just get invalidateSize.
         setTimeout(() => {
             slide.tileIds.forEach(tileId => {
                 const card = slideGrid && slideGrid.querySelector(`[data-tile-id="${tileId}"]`);
                 if (!card || card.style.display === 'none') return;
-                card.querySelectorAll('[id^="tilemap-"]').forEach(md => {
-                    if (md._leafletMap) md._leafletMap.invalidateSize();
-                });
+                if (card.dataset.chartType === 'map') {
+                    // Full re-render so markers are placed in the now-visible container
+                    let fields = [];
+                    try { fields = JSON.parse(card.dataset.fields || '[]'); } catch (_) {}
+                    const dimension = fields[fields.length - 1];
+                    const canvas = card.querySelector('canvas[id]');
+                    if (canvas && canvas.id && dimension) {
+                        renderLeafletMapForTile(canvas.id, dimension, card.dataset.tileMetric || 'count');
+                    }
+                } else {
+                    card.querySelectorAll('[id^="tilemap-"]').forEach(md => {
+                        if (md._leafletMap) md._leafletMap.invalidateSize();
+                    });
+                }
             });
         }, 200);
 
