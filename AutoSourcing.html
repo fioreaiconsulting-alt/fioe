@@ -794,6 +794,8 @@ pre {
               
               <div style="flex-grow:1;"></div>
               
+              <span id="xrayEngineBadge" title="Active Xray search engine" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:12px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;cursor:default;"></span>
+
               <span class="helper" style="border-left:1px solid var(--metric-border); padding-left:12px;"><strong>Target Limit:</strong></span>
               <input type="number" id="userTargetInput" min="10" max="200" step="10" value="50" style="width:70px; padding:6px;">
             </div>
@@ -2925,6 +2927,41 @@ function renderExternalSuggestions(jobs, comps){
       });
     }
   } catch(_){}
+})();
+
+/* ── Xray Search Engine Status Badge ──────────────────────────────────────── */
+(function initXrayEngineBadge(){
+  var badge = document.getElementById('xrayEngineBadge');
+  if (!badge) return;
+  function updateBadge(status){
+    if (!status) { badge.textContent = ''; return; }
+    var isAI = status.engine === 'ai_studio';
+    var label = isAI
+      ? '✦ AI Studio (' + status.query_count + '/' + status.daily_limit + ')'
+      : '⚙ CSE fallback (' + status.query_count + '/' + status.daily_limit + ')';
+    badge.textContent = label;
+    badge.title = isAI
+      ? 'Google AI Studio with Native Grounding — ' + status.query_count + ' queries used today (limit ' + status.daily_limit + '). Resets at 4 PM SGT.'
+      : 'Switched to Google CSE fallback — daily AI Studio limit of ' + status.daily_limit + ' reached. AI Studio re-enables at 4 PM SGT.';
+    if (isAI) {
+      badge.style.background = '#eef2ff'; badge.style.color = '#4f46e5'; badge.style.borderColor = '#c7d2fe';
+    } else {
+      badge.style.background = '#fff7ed'; badge.style.color = '#c2410c'; badge.style.borderColor = '#fed7aa';
+    }
+  }
+  async function fetchStatus(){
+    try {
+      var r = await fetch('/xray_search_status', { credentials: 'same-origin' });
+      if (r.ok) updateBadge(await r.json());
+    } catch(_) {}
+  }
+  fetchStatus();
+  var _xrayStatusInterval = setInterval(function(){
+    if (!document.hidden) fetchStatus();
+  }, 60000); // refresh every minute when page is visible
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) fetchStatus();
+  });
 })();
 </script>
 </div><!-- /.page-main -->

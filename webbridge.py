@@ -626,6 +626,314 @@ except Exception as e:
     genai = None
     logger.warning(f"Gemini init failed: {e}")
 
+# ── AI Studio Xray Search with Native Grounding ───────────────────────────────
+# Primary search engine for Autosourcing Xray search.  Falls back to Google CSE
+# once the daily query limit is reached.  Resets to AI Studio at 4 PM SGT daily.
+AI_STUDIO_API_KEY = os.getenv("AI_STUDIO_API_KEY", "AIzaSyByx7NR-GKWseaJK0xy56yijGVwzSHEXTA")
+AI_STUDIO_GROUNDING_MODEL = os.getenv("AI_STUDIO_GROUNDING_MODEL", "gemini-2.0-flash")
+AI_STUDIO_DAILY_LIMIT = int(os.getenv("AI_STUDIO_DAILY_LIMIT", "1400"))
+_AI_STUDIO_RESET_HOUR_SGT = 16  # 4 PM Singapore time (UTC+8)
+
+_ai_studio_lock = threading.Lock()
+_ai_studio_state: dict = {
+    "date_sgt": None,         # current SGT date as "YYYY-MM-DD"
+    "query_count": 0,         # queries issued today
+    "reset_done_today": False, # True once the 4 PM reset has fired today
+    "engine": "ai_studio",    # "ai_studio" | "cse"
+}
+
+def _sgt_now():
+    """Return current datetime in Singapore Time (UTC+8)."""
+    from datetime import timezone, timedelta
+    return datetime.now(tz=timezone(timedelta(hours=8)))
+
+def _ai_studio_check_and_reset():
+    """Check if the 4 PM SGT reset should fire; must be called with _ai_studio_lock held."""
+    now_sgt = _sgt_now()
+    today_str = now_sgt.strftime("%Y-%m-%d")
+    if _ai_studio_state["date_sgt"] != today_str:
+        _ai_studio_state["date_sgt"] = today_str
+        _ai_studio_state["query_count"] = 0
+        _ai_studio_state["reset_done_today"] = False
+        _ai_studio_state["engine"] = "ai_studio"
+        logger.info("[XraySearch] New SGT day %s — counter reset, engine=ai_studio", today_str)
+    if now_sgt.hour >= _AI_STUDIO_RESET_HOUR_SGT and not _ai_studio_state["reset_done_today"]:
+        prev_engine = _ai_studio_state["engine"]
+        prev_count = _ai_studio_state["query_count"]
+        _ai_studio_state["reset_done_today"] = True
+        _ai_studio_state["engine"] = "ai_studio"
+        logger.info(
+            "[XraySearch] 4 PM SGT reset — engine restored to ai_studio "
+            "(was=%s, count_before_reset=%d)", prev_engine, prev_count
+        )
+
+def _ai_studio_active() -> bool:
+    """Return True if Google AI Studio grounding is the active search engine."""
+    with _ai_studio_lock:
+        _ai_studio_check_and_reset()
+        return _ai_studio_state["engine"] == "ai_studio"
+
+def _ai_studio_increment() -> tuple:
+    """Increment daily query count; switch to CSE if limit reached. Returns (engine, count)."""
+    with _ai_studio_lock:
+        _ai_studio_check_and_reset()
+        _ai_studio_state["query_count"] += 1
+        count = _ai_studio_state["query_count"]
+        if count >= AI_STUDIO_DAILY_LIMIT and _ai_studio_state["engine"] == "ai_studio":
+            _ai_studio_state["engine"] = "cse"
+            logger.warning(
+                "[XraySearch] Daily limit of %d reached (count=%d) — switching to CSE",
+                AI_STUDIO_DAILY_LIMIT, count
+            )
+        return _ai_studio_state["engine"], count
+
+def _ai_studio_get_status() -> dict:
+    """Return a read-only snapshot of the current AI Studio / CSE state."""
+    with _ai_studio_lock:
+        _ai_studio_check_and_reset()
+        return {
+            "engine": _ai_studio_state["engine"],
+            "query_count": _ai_studio_state["query_count"],
+            "daily_limit": AI_STUDIO_DAILY_LIMIT,
+            "date_sgt": _ai_studio_state["date_sgt"],
+            "reset_done_today": _ai_studio_state["reset_done_today"],
+            "reset_hour_sgt": _AI_STUDIO_RESET_HOUR_SGT,
+        }
+
+_COUNTRY_NAMES = {
+    "cn": "China", "jp": "Japan", "kr": "South Korea", "sg": "Singapore",
+    "au": "Australia", "in": "India", "gb": "United Kingdom", "de": "Germany",
+    "fr": "France", "us": "United States", "ca": "Canada", "hk": "Hong Kong",
+    "tw": "Taiwan", "my": "Malaysia", "id": "Indonesia", "th": "Thailand",
+    "vn": "Vietnam", "ph": "Philippines", "nz": "New Zealand",
+    "nl": "Netherlands", "se": "Sweden", "no": "Norway", "dk": "Denmark",
+    "fi": "Finland", "it": "Italy", "es": "Spain", "br": "Brazil",
+    "mx": "Mexico", "ar": "Argentina", "za": "South Africa", "ae": "UAE",
+    "be": "Belgium", "ch": "Switzerland", "at": "Austria", "pl": "Poland",
+    "cz": "Czech Republic", "hu": "Hungary", "ro": "Romania", "pt": "Portugal",
+}
+
+# Max companies to include in a single AI Studio prompt (keeps prompt manageable)
+_AI_STUDIO_MAX_COMPANIES = 20
+
+def _translate_xray_to_nl(query: str) -> str:
+    """
+    Parse a boolean Xray search query (Google search syntax) and translate it into
+    natural language that Gemini's grounding can understand and act on.
+
+    Handles: site:, AND, OR groups (titles + companies), quoted phrases, -exclusions.
+    """
+    # --- site domain ---------------------------------------------------------
+    site_m = re.search(r'site:(\S+)', query)
+    site = site_m.group(1) if site_m else "linkedin.com/in"
+    country_m = re.match(r'([a-z]{2,3})\.linkedin\.com', site)
+    country_code = country_m.group(1) if country_m else ""
+    country_name = _COUNTRY_NAMES.get(country_code, country_code.upper() if country_code else "")
+
+    # --- strip operators we don't want in NL ---------------------------------
+    clean = re.sub(r'site:\S+', '', query)
+    # Remove all negative clauses: -intitle:"…", -inurl:…, -"…", -Word
+    clean = re.sub(r'-(?:intitle|inurl):"[^"]*"', '', clean)
+    clean = re.sub(r'-(?:intitle|inurl):\S+', '', clean)
+    clean = re.sub(r'-"[^"]*"', '', clean)
+    clean = re.sub(r'-\b\w+\b', '', clean)
+    clean = re.sub(r'\bAND\b', ' ', clean, flags=re.I)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+
+    # --- extract OR groups ---------------------------------------------------
+    or_groups: list[list[str]] = []
+    for m in re.finditer(r'\(([^)]+)\)', clean):
+        group_text = m.group(1)
+        if re.search(r'\bOR\b', group_text, re.I):
+            items = [x.strip().strip('"') for x in re.split(r'\bOR\b', group_text, flags=re.I)]
+            items = [x for x in items if x]
+            or_groups.append(items)
+
+    # Standalone quoted phrases outside any parens
+    clean_no_parens = re.sub(r'\([^)]*\)', '', clean)
+    standalone_phrases = re.findall(r'"([^"]+)"', clean_no_parens)
+
+    # --- classify titles vs companies ----------------------------------------
+    # Heuristic: a group is a "title group" when it has ≤10 items AND
+    # average item length ≤ 40 chars (job titles are short).
+    # Larger groups / longer names → company list.
+    titles: list[str] = list(standalone_phrases)
+    companies: list[str] = []
+    for group in or_groups:
+        avg_len = sum(len(x) for x in group) / len(group) if group else 0
+        if len(group) <= 10 and avg_len <= 40:
+            titles.extend(group)
+        else:
+            companies.extend(group)
+
+    # If nothing was classified as a title, promote the first OR group
+    if not titles and or_groups:
+        titles = or_groups[0]
+        companies = [x for g in or_groups[1:] for x in g]
+
+    # --- build natural language prompt ---------------------------------------
+    location_part = f"on {site}"
+    if country_name:
+        location_part += f" ({country_name} LinkedIn)"
+
+    if titles:
+        roles_str = " or ".join(f'"{t}"' for t in titles)
+    else:
+        roles_str = "relevant professionals"
+
+    lines = [
+        f"Search Google for LinkedIn profile pages {location_part}.",
+        f"I am looking for professionals with the role or title: {roles_str}.",
+    ]
+    if companies:
+        sample = companies[:_AI_STUDIO_MAX_COMPANIES]
+        more = len(companies) - len(sample)
+        co_str = ", ".join(sample)
+        if more > 0:
+            co_str += f", and similar companies"
+        lines.append(f"They should currently work at companies such as: {co_str}.")
+    lines += [
+        "List every LinkedIn profile page URL you find (URLs containing '/in/' in the path).",
+        "Output one result per line in this format:  URL | Person Name - Job Title at Company",
+        "Do NOT include LinkedIn job listings, company pages, or directory pages.",
+    ]
+    return "\n".join(lines)
+
+
+def _ai_studio_grounding_search(query: str, max_results: int = 10) -> list:
+    """
+    Perform a grounded web search via Google AI Studio (Gemini with Google Search grounding).
+    Increments the daily counter and may switch engine to CSE on limit hit.
+    Returns a list of {"link": ..., "title": ..., "snippet": ...} dicts (same format as CSE).
+    Returns [] if the daily limit has already been reached or the request fails.
+
+    Tool selection:
+      - Gemini 2.0+ models use the "google_search" tool.
+      - Gemini 1.5 models use "google_search_retrieval" with dynamic_threshold=0 to force grounding.
+
+    The raw boolean Xray query is translated to natural language before sending to Gemini,
+    because Gemini's grounding interprets prompts as NL, not as Google search operator syntax.
+    """
+    engine, count = _ai_studio_increment()
+    if engine != "ai_studio":
+        return []
+
+    model = AI_STUDIO_GROUNDING_MODEL
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent?key={AI_STUDIO_API_KEY}"
+    )
+
+    # Choose the correct grounding tool based on model generation
+    _is_v2_plus = bool(re.search(r'gemini[-_]2', model, re.I))
+    if _is_v2_plus:
+        tools = [{"google_search": {}}]
+    else:
+        tools = [{"google_search_retrieval": {
+            "dynamic_retrieval_config": {
+                "mode": "MODE_DYNAMIC",
+                "dynamic_threshold": 0  # always use grounding
+            }
+        }}]
+
+    # Translate the boolean Xray query to natural language that Gemini can act on
+    nl_prompt = _translate_xray_to_nl(query)
+    logger.debug("[AIStudio] Translated NL prompt:\n%s", nl_prompt)
+
+    body = {
+        "system_instruction": {
+            "parts": [{
+                "text": (
+                    "You are a professional talent sourcing assistant. "
+                    "You MUST always call the google_search tool to find real, live LinkedIn profiles — "
+                    "never answer from memory or training data. "
+                    "Always perform a web search before responding."
+                )
+            }]
+        },
+        "contents": [{"parts": [{"text": nl_prompt}]}],
+        "tools": tools,
+    }
+    try:
+        resp = requests.post(endpoint, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning("[AIStudio] Grounding request failed: %s", e)
+        return []
+
+    results = []
+    seen_uris: set = set()
+
+    def _add(uri, title="", snippet=""):
+        uri = uri.rstrip("/")
+        if uri and uri not in seen_uris:
+            seen_uris.add(uri)
+            results.append({"link": uri, "title": title, "snippet": snippet})
+
+    # 1. Parse grounding chunks (structured metadata from the search tool)
+    for candidate in data.get("candidates") or []:
+        gm = candidate.get("groundingMetadata") or {}
+        for chunk in gm.get("groundingChunks") or []:
+            web = chunk.get("web") or {}
+            uri = (web.get("uri") or "").strip()
+            title = (web.get("title") or "").strip()
+            if uri:
+                _add(uri, title)
+
+        # 2. Also scan Gemini's generated text response for LinkedIn profile URLs.
+        #    The model often embeds the grounded URLs inline even when groundingChunks
+        #    is empty or incomplete.
+        for part in (candidate.get("content") or {}).get("parts") or []:
+            text = part.get("text") or ""
+            if not text:
+                continue
+            # Extract all LinkedIn /in/ profile URLs from the response text
+            for m in re.finditer(
+                r'https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[A-Za-z0-9\-_%]+/?',
+                text
+            ):
+                raw_url = m.group(0)
+                # Try to find a title on the same line: "URL | Name - Role"
+                line = text[max(0, m.start() - 5):m.end() + 120]
+                pipe_m = re.search(r'\|\s*(.+)', line)
+                title_hint = pipe_m.group(1).strip() if pipe_m else ""
+                _add(raw_url, title_hint)
+
+    if not results:
+        logger.warning(
+            "[AIStudio] Grounding search count=%d returned 0 results for model=%s query=%s",
+            count, model, query[:120]
+        )
+    else:
+        logger.info(
+            "[AIStudio] Grounding search count=%d returned %d result(s) for: %s",
+            count, len(results), query[:100]
+        )
+    return results[:max_results]
+
+def _perform_ai_studio_queries(job_id, queries, target_limit, country):
+    """
+    Xray search using Google AI Studio with Native Grounding.
+    Mirrors the interface of _perform_cse_queries.
+    Stops issuing new grounding queries once the daily limit is hit.
+    """
+    results = []
+    total_queries = max(1, len(queries))
+    per_query_target = max(1, target_limit // total_queries)
+    for q in queries:
+        if not _ai_studio_active():
+            add_message(job_id, f"[XraySearch] AI Studio daily limit reached — remaining queries will use CSE.")
+            break
+        add_message(job_id, f"[XraySearch] AI Studio grounding: {q[:100]} target={per_query_target}")
+        page = _ai_studio_grounding_search(q, max_results=per_query_target)
+        if not page:
+            add_message(job_id, "  AI Studio returned no results for this query.")
+        else:
+            results.extend(page)
+            add_message(job_id, f"  AI Studio collected {len(page)} result(s).")
+    return _dedupe_links(results)
+
 TRANSLATION_ENABLED = os.getenv("TRANSLATION_ENABLED", "1") != "0"
 TRANSLATION_PROVIDER = (os.getenv("TRANSLATION_PROVIDER", "auto") or "auto").lower()
 TRANSLATOR_BASE = (os.getenv("TRANSLATOR_BASE", "") or "").rstrip("/")
@@ -5367,6 +5675,11 @@ def index():
 
 @app.get("/AutoSourcing.html")
 def autosourcing_explicit(): return send_from_directory(BASE_DIR, "AutoSourcing.html")
+
+@app.get("/xray_search_status")
+def xray_search_status():
+    """Return current Xray search engine status (AI Studio vs CSE) for monitoring."""
+    return jsonify(_ai_studio_get_status())
 
 @app.get('/favicon.ico')
 def favicon():

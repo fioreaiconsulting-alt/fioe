@@ -60,6 +60,7 @@ from webbridge import (
     _sync_login_jskillset_to_process,
     _clean_list, _enforce_company_limit, _heuristic_job_suggestions,
     _infer_primary_job_title, _infer_seniority_from_titles, _perform_cse_queries,
+    _ai_studio_active, _perform_ai_studio_queries,
     is_linkedin_profile, parse_linkedin_title,
     get_linkedin_profile_picture, fetch_image_bytes_from_url,
     add_message, persist_job,
@@ -76,11 +77,32 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
     try:
         executed_primary=False
         if (search_results_only or auto_expand):
-            if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
-                add_message(job_id, "ERROR: GOOGLE_CSE_API_KEY/CX not set. Cannot run search.")
-            else:
+            # ── Primary engine: Google AI Studio with Native Grounding ──────────
+            # Falls back to CSE when the daily limit is reached or AI Studio is unavailable.
+            search_queries = queries or ["site:linkedin.com/in"]
+            cse_results = []
+            if _ai_studio_active():
+                add_message(job_id, "[XraySearch] Engine: Google AI Studio (native grounding)")
+                cse_results = _perform_ai_studio_queries(job_id, search_queries, target_limit, country)
+                executed_primary = True
+                # If AI Studio returned nothing OR limit was hit mid-run, top-up with CSE
+                if not cse_results or not _ai_studio_active():
+                    if GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX:
+                        add_message(job_id, "[XraySearch] Topping up with CSE fallback...")
+                        cse_top = _perform_cse_queries(job_id, search_queries, target_limit, country)
+                        # Merge, keeping AI Studio results first
+                        seen_links = {r["link"] for r in cse_results if r.get("link")}
+                        for r in cse_top:
+                            if r.get("link") and r["link"] not in seen_links:
+                                cse_results.append(r)
+                                seen_links.add(r["link"])
+            elif GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX:
+                add_message(job_id, "[XraySearch] Engine: Google CSE (AI Studio daily limit reached)")
                 executed_primary=True
-                cse_results=_perform_cse_queries(job_id, queries or ["site:linkedin.com/in"], target_limit, country)
+                cse_results=_perform_cse_queries(job_id, search_queries, target_limit, country)
+            else:
+                add_message(job_id, "ERROR: No search engine available (AI Studio inactive, GOOGLE_CSE_API_KEY/CX not set).")
+            if executed_primary:
                 urls=[r["link"] for r in cse_results]
                 with JOBS_LOCK:
                     JOBS[job_id]['urls']=urls
@@ -101,7 +123,14 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
                     if processed % 15 == 0: persist_job(job_id)
         if executed_primary and len(rows)==0 and fallback_queries:
             add_message(job_id,"Primary produced zero rows. Executing fallback queries...")
-            cse_results=_perform_cse_queries(job_id, fallback_queries, target_limit, country)
+            if _ai_studio_active():
+                cse_results=_perform_ai_studio_queries(job_id, fallback_queries, target_limit, country)
+                if not cse_results and GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX:
+                    cse_results=_perform_cse_queries(job_id, fallback_queries, target_limit, country)
+            elif GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX:
+                cse_results=_perform_cse_queries(job_id, fallback_queries, target_limit, country)
+            else:
+                cse_results=[]
             new_urls=[r["link"] for r in cse_results]
             with JOBS_LOCK:
                 JOBS[job_id]['urls']=list(dict.fromkeys(JOBS[job_id]['urls']+new_urls))
