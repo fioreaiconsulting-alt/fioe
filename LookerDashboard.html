@@ -866,6 +866,9 @@
         /* Prevent horizontal scrollbar on metric/chart tiles when resized small */
         #slideGrid .metric-card,
         #slideGrid .chart-card { overflow: hidden; }
+        /* Header in metric tiles should sit directly above the value with minimal gap */
+        #slideGrid .metric-card h3 { margin-bottom: 2px; }
+        #slideGrid .metric-card .metric-value { margin-top: 0; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -3042,6 +3045,7 @@
         if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
         canvas.style.display = 'none';
         let mapDiv = container.querySelector(`#tilemap-${canvasId}`);
+        if (mapDiv && mapDiv._leafletRO) { mapDiv._leafletRO.disconnect(); delete mapDiv._leafletRO; }
         if (mapDiv && mapDiv._leafletMap) { mapDiv._leafletMap.remove(); mapDiv.innerHTML = ''; }
         if (mapDiv) delete mapDiv._leaflet_id; // Always clear so Leaflet can re-init cleanly
         if (!mapDiv) {
@@ -3083,6 +3087,14 @@
         if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
         else map.setView([20, 0], 2);
         setTimeout(() => map.invalidateSize(), 120);
+        // ResizeObserver: keep map valid when the tile is resized or the viewer opens/closes
+        if (window.ResizeObserver) {
+            const ro = new ResizeObserver(() => {
+                if (mapDiv._leafletMap) mapDiv._leafletMap.invalidateSize();
+            });
+            ro.observe(mapDiv);
+            mapDiv._leafletRO = ro;
+        }
     }
 
     // Returns a human-readable label for the selected metric key
@@ -3148,7 +3160,7 @@
                 const displayVal = metric === 'distinct' ? aggM.labels.length : Math.round(total * 10) / 10;
                 const metricDiv = document.createElement('div');
                 metricDiv.className = 'slide-metric-display';
-                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:20px;text-align:center;';
+                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:flex-start;flex:1;padding:16px 20px 20px;text-align:center;';
                 const valEl = document.createElement('div');
                 valEl.className = 'metric-value';
                 valEl.style.fontSize = '2.5em';
@@ -3166,6 +3178,8 @@
                 }
                 if (savedCard && savedCard.dataset.metricDisplayAlign) {
                     const align = savedCard.dataset.metricDisplayAlign;
+                    const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
+                    metricDiv.style.alignItems = flexAlign;
                     metricDiv.style.textAlign = align;
                     valEl.style.textAlign = align;
                     lblEl.style.textAlign = align;
@@ -4190,6 +4204,8 @@
     }
 
     function addTileControls(tile) {
+        // Track the last-clicked tile for Delete-key deletion
+        tile.addEventListener('mousedown', () => { _activeSlideTile = tile; }, { capture: true });
         const controls = document.createElement('div');
         controls.className = 'tile-controls';
         controls.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -4301,11 +4317,14 @@
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     if (isMetricTile) {
-                        // Apply alignment to all text elements in the metric tile
+                        // Apply alignment to all text elements and the flex container
+                        const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
                         tile.style.textAlign = align;
+                        tile.style.alignItems = flexAlign;
                         tile.querySelectorAll('h3, .metric-value, .metric-label').forEach(el => {
                             el.style.textAlign = align;
                         });
+                        tile.dataset.metricAlign = align;
                     } else {
                         const ed = tile.querySelector('.text-tile-editor');
                         if (ed) ed.style.textAlign = align;
@@ -4370,6 +4389,8 @@
                         ev.stopPropagation();
                         const metricDisp = tile.querySelector('.slide-metric-display');
                         if (metricDisp) {
+                            const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
+                            metricDisp.style.alignItems = flexAlign;
                             metricDisp.style.textAlign = align;
                             metricDisp.querySelectorAll('.metric-value, .metric-label').forEach(el => {
                                 el.style.textAlign = align;
@@ -4389,13 +4410,14 @@
         removeBtn.addEventListener('click', (ev) => {
             ev.stopPropagation();
             const tileId = tile.dataset.tileId;
+            const inSlideViewer = !!tile.closest('#slideshowViewer');
+            if (inSlideViewer) _pushSlideUndo();
             // If this tile is in a slide, remove from slide tileIds array
             if (tileId) {
                 slides.forEach(s => { s.tileIds = s.tileIds.filter(id => id !== tileId); });
             }
             tile.remove();
             // Decide whether to update slide view or dashboard persistence
-            const inSlideViewer = !!tile.closest('#slideshowViewer');
             if (inSlideViewer) {
                 renderCurrentSlide();
             } else {
@@ -5021,6 +5043,9 @@
     let _filterOriginalNextSibling = null;
     let _slideIdCounter = 0;                  // monotonic counter for unique tile IDs
     const _slideCharts = new Map();           // tileId → Chart instance
+    // Undo history: stores JSON snapshots of the slides array (max 20 entries)
+    const _slideUndoHistory = [];
+    let _activeSlideTile = null;             // tracks the last-clicked tile in the slide viewer
     let _tileDroppedOnTab = false;            // set by slide-tab drop handler, cleared in makeDraggable dragend
     let _autofitEnabled = false;              // when true, renderCurrentSlide auto-fits all tiles
     let _preFitSizes = null;                  // tile sizes saved just before autofit is applied; restored when autofit is turned OFF
@@ -5816,52 +5841,79 @@
         }
     };
 
+    // Push a snapshot of the current slides state for undo.
+    function _pushSlideUndo() {
+        if (slides.length === 0) return;
+        try {
+            _slideUndoHistory.push(JSON.stringify(_buildSlidesPayload()));
+        } catch(e) { return; }
+        if (_slideUndoHistory.length > 20) _slideUndoHistory.shift();
+        const btn = document.getElementById('undoSlideBtn');
+        if (btn) btn.disabled = false;
+    }
+    // Restore the previous state from the undo history.
+    window.undoSlide = function() {
+        if (!_slideUndoHistory.length) return;
+        const prevJson = _slideUndoHistory.pop();
+        const btn = document.getElementById('undoSlideBtn');
+        if (btn) btn.disabled = _slideUndoHistory.length === 0;
+        // Write the snapshot to localStorage so loadSavedSlides can restore it
+        localStorage.setItem('dashboard:slides', prevJson);
+        loadSavedSlides();
+        renderSlideTabs();
+        renderCurrentSlide();
+    };
+    // Delete the active (last-clicked) slide tile.
+    window.deleteActiveSlideTile = function() {
+        if (!_activeSlideTile || !_activeSlideTile.isConnected) return;
+        const removeBtn = _activeSlideTile.querySelector('.tile-controls button[title="Remove"]');
+        if (removeBtn) removeBtn.click();
+    };
+
+    // Build the slides serialization payload (same format as saveSlides) for use in undo snapshots.
+    function _buildSlidesPayload() {
+        const slideGrid = getSlideGrid();
+        return slides.map(s => {
+            const tiles = s.tileIds.map(tileId => {
+                const el = slideGrid ? slideGrid.querySelector(`[data-tile-id="${tileId}"]`) : null;
+                if (!el) return { tileId };
+                const tileType = el.dataset.tileType || '';
+                return {
+                    tileId,
+                    title:       el.querySelector('h3')?.textContent || '',
+                    fields:      JSON.parse(el.dataset.fields || '[]'),
+                    chartType:   el.dataset.chartType || 'bar',
+                    tileMetric:  el.dataset.tileMetric || 'count',
+                    tileType,
+                    text:        el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
+                    textFontSize: tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.fontSize || '') : null,
+                    textAlign:    tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.textAlign || '') : null,
+                    metricValue:    tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
+                    metricLabel:    tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
+                    metricFontSize: tileType === 'metric' ? (el.querySelector('.metric-value')?.style.fontSize || '') : null,
+                    metricAlign:    tileType === 'metric' ? (el.querySelector('.metric-value')?.style.textAlign || el.style.textAlign || '') : null,
+                    metricDisplayFontSize: (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.fontSize || '') : null,
+                    metricDisplayAlign:    (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.textAlign || '') : null,
+                    orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
+                    orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
+                    tableHtml:    tileType === 'table' ? (el.querySelector('.table-wrapper')?.innerHTML || '') : null,
+                    height:      el.style.height || '',
+                    width:       el.style.width  || '',
+                    span:        el.dataset.span  || '',
+                    freeformLeft: el.dataset.freeformLeft || el.style.left  || '',
+                    freeformTop:  el.dataset.freeformTop  || el.style.top   || '',
+                    freeformW:    el.dataset.freeformW    || '',
+                    freeformH:    el.dataset.freeformH    || ''
+                };
+            });
+            return { name: s.name, tileIds: s.tileIds.slice(), topN: s.topN, layout: s.layout || 'auto', theme: s.theme || 'match', tiles };
+        });
+    }
+
     function saveSlides() {
         if (slides.length === 0) { alert('No slides to save.'); return; }
         try {
-            const slideGrid = getSlideGrid();
-            const payload = slides.map(s => {
-                // Serialize each tile's config so they can be fully recreated on reload
-                const tiles = s.tileIds.map(tileId => {
-                    const el = slideGrid ? slideGrid.querySelector(`[data-tile-id="${tileId}"]`) : null;
-                    if (!el) return { tileId };
-                    const tileType = el.dataset.tileType || '';
-                    return {
-                        tileId,
-                        title:       el.querySelector('h3')?.textContent || '',
-                        fields:      JSON.parse(el.dataset.fields || '[]'),
-                        chartType:   el.dataset.chartType || 'bar',
-                        tileMetric:  el.dataset.tileMetric || 'count',
-                        tileType,
-                        text:        el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
-                        // Text tile: persist font size and alignment for reload
-                        textFontSize: tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.fontSize || '') : null,
-                        textAlign:    tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.textAlign || '') : null,
-                        // Metric tile: persist displayed value + label, font size and alignment for reload
-                        metricValue:    tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
-                        metricLabel:    tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
-                        metricFontSize: tileType === 'metric' ? (el.querySelector('.metric-value')?.style.fontSize || '') : null,
-                        metricAlign:    tileType === 'metric' ? (el.querySelector('.metric-value')?.style.textAlign || el.style.textAlign || '') : null,
-                        // Chart tile in Metric/KPI mode: persist font size and alignment of the slide-metric-display
-                        metricDisplayFontSize: (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.fontSize || '') : null,
-                        metricDisplayAlign:    (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.textAlign || '') : null,
-                        // Org-chart tile: persist static HTML snapshot + selected company filter for reload
-                        orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
-                        orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
-                        // Table tile: persist the cloned table HTML for reload
-                        tableHtml:    tileType === 'table' ? (el.querySelector('.table-wrapper')?.innerHTML || '') : null,
-                        height:      el.style.height || '',
-                        width:       el.style.width  || '',
-                        span:        el.dataset.span  || '',
-                        // Freeform layout positions: prefer dataset (saved on exit) or live inline style
-                        freeformLeft: el.dataset.freeformLeft || el.style.left  || '',
-                        freeformTop:  el.dataset.freeformTop  || el.style.top   || '',
-                        freeformW:    el.dataset.freeformW    || '',
-                        freeformH:    el.dataset.freeformH    || ''
-                    };
-                });
-                return { name: s.name, tileIds: s.tileIds.slice(), topN: s.topN, layout: s.layout || 'auto', theme: s.theme || 'match', tiles };
-            });
+            const payload = _buildSlidesPayload();
             localStorage.setItem('dashboard:slides', JSON.stringify(payload));
             // Visual feedback
             const btn = document.getElementById('saveSlidesBtn');
@@ -5969,7 +6021,9 @@
                         // Restore font size and alignment if persisted
                         if (cfg.metricFontSize) mVal.style.fontSize = cfg.metricFontSize;
                         if (cfg.metricAlign) {
+                            const flexAlign = cfg.metricAlign === 'left' ? 'flex-start' : cfg.metricAlign === 'right' ? 'flex-end' : 'center';
                             tile.style.textAlign = cfg.metricAlign;
+                            tile.style.alignItems = flexAlign;
                             [mH3, mVal, mLbl].forEach(e => { e.style.textAlign = cfg.metricAlign; });
                         }
                         tile.append(mH3, mVal, mLbl);
@@ -6648,6 +6702,23 @@
         });
         renderSlideTabs();
     }
+
+    // Global keyboard handler: Delete removes the active slide tile; Ctrl+Z undoes last action
+    document.addEventListener('keydown', function(e) {
+        const viewer = document.getElementById('slideshowViewer');
+        if (!viewer || !viewer.classList.contains('active')) return;
+        // Don't fire when user is editing text in an input, textarea, or contenteditable
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' ||
+            active.isContentEditable || active.tagName === 'SELECT')) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            deleteActiveSlideTile();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+            e.preventDefault();
+            undoSlide();
+        }
+    });
 </script>
 
 <!-- ====== SLIDESHOW VIEWER OVERLAY ====== -->
@@ -6700,6 +6771,7 @@
             </span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
+            <button class="add-tile-btn" id="undoSlideBtn" onclick="undoSlide()" title="Undo last tile action (Ctrl+Z)" disabled style="background:#7c3aed;">↩ Undo</button>
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addTextTileToCurrentSlide()" title="Add a text tile for notes or descriptions">+ Add Text</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
