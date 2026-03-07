@@ -4820,7 +4820,10 @@
         // Standard dashboard chart tiles (geoChart, familyChart, etc.) don't have data-fields.
         // Detect their dimension + current chart type from the chart-type-select.
         // Expected onchange format: updateChartType('canvasId', 'dimension', this.value)
-        if (!isText && fields.length === 0 && srcCard.classList.contains('chart-card')) {
+        // Also handle map-card tiles (Candidate Locations) which share the same pattern.
+        const isMapCard = srcCard.classList.contains('map-card');
+        const isChartCard = srcCard.classList.contains('chart-card');
+        if (!isText && fields.length === 0 && (isChartCard || isMapCard)) {
             const sel = srcCard.querySelector('select.chart-type-select');
             if (sel) {
                 const oc = (sel.getAttribute('onchange') || '').replace(/\s+/g, ' ');
@@ -4834,7 +4837,7 @@
             }
         }
 
-        const isChart = srcCard.classList.contains('chart-card') && fields.length > 0;
+        const isChart = (isChartCard || isMapCard) && fields.length > 0;
         const isMetric = srcCard.classList.contains('metric-card');
 
         const tile = document.createElement('div');
@@ -4856,9 +4859,14 @@
             tile.dataset.fields = JSON.stringify(fields);
             tile.dataset.chartType = chartType;
             tile.dataset.tileMetric = tileMetric;
+            // Map tiles are taller — match .map-card height
+            if (isMapCard) tile.dataset.baseHeight = '500';
+            // Preserve source tile header title for editable sub-header
+            const srcH3 = srcCard.querySelector('h3');
+            const tileTitle = srcH3 ? srcH3.textContent.trim() : `${formatLabel(dimension)} Analysis`;
             tile.innerHTML = `
                 <div class="card-header">
-                    <h3>${formatLabel(dimension)} Analysis</h3>
+                    <h3 contenteditable="true" spellcheck="false">${tileTitle}</h3>
                     <select class="chart-type-select" onchange="updateCustomChart('${canvasId}','${dimension}',this.value,this.closest('.card'))">
                         <option value="bar" ${chartType==='bar'?'selected':''}>Bar</option>
                         <option value="horizontalBar" ${chartType==='horizontalBar'?'selected':''}>Horizontal Bar</option>
@@ -5010,6 +5018,17 @@
 
         // Apply autofit if enabled
         if (_autofitEnabled) setTimeout(autofitTiles, 0);
+
+        // Invalidate any Leaflet maps that are now visible so they re-render with correct dimensions
+        setTimeout(() => {
+            slide.tileIds.forEach(tileId => {
+                const card = slideGrid && slideGrid.querySelector(`[data-tile-id="${tileId}"]`);
+                if (!card || card.style.display === 'none') return;
+                card.querySelectorAll('[id^="tilemap-"]').forEach(md => {
+                    if (md._leafletMap) md._leafletMap.invalidateSize();
+                });
+            });
+        }, 200);
 
         renderSlideTabs();
     }
@@ -5253,6 +5272,7 @@
                     if (!el) return { tileId };
                     return {
                         tileId,
+                        title:      el.querySelector('h3')?.textContent || '',
                         fields:     JSON.parse(el.dataset.fields || '[]'),
                         chartType:  el.dataset.chartType || 'bar',
                         tileMetric: el.dataset.tileMetric || 'count',
@@ -5359,13 +5379,14 @@
                     } else if (fields.length > 0) {
                         const dimension = fields[fields.length - 1];
                         const canvasId = `slideChart-${tileId}`;
+                        const tileTitle = cfg.title || `${formatLabel(dimension)} Analysis`;
                         tile.className = 'card chart-card custom-metric-tile';
                         tile.dataset.fields = JSON.stringify(fields);
                         tile.dataset.chartType = chartType;
                         tile.dataset.tileMetric = tileMetric;
                         tile.innerHTML = `
                             <div class="card-header">
-                                <h3>${formatLabel(dimension)} Analysis</h3>
+                                <h3 contenteditable="true" spellcheck="false">${tileTitle}</h3>
                                 <select class="chart-type-select" onchange="updateCustomChart('${canvasId}','${dimension}',this.value,this.closest('.card'))">
                                     <option value="bar" ${chartType==='bar'?'selected':''}>Bar</option>
                                     <option value="horizontalBar" ${chartType==='horizontalBar'?'selected':''}>Horizontal Bar</option>
@@ -5674,7 +5695,7 @@
         tile.dataset.baseHeight = tile.dataset.baseHeight || '450';
         tile.innerHTML = `
             <div class="card-header">
-                <h3>${formatLabel(dimension)} Analysis</h3>
+                <h3 contenteditable="true" spellcheck="false">${formatLabel(dimension)} Analysis</h3>
                 <select class="chart-type-select" onchange="updateCustomChart('${canvasId}','${dimension}',this.value,this.closest('.card'))">
                     <option value="bar" ${chartType==='bar'?'selected':''}>Bar</option>
                     <option value="horizontalBar" ${chartType==='horizontalBar'?'selected':''}>Horizontal Bar</option>
@@ -5867,7 +5888,7 @@
         tile.dataset.baseHeight = '450';
         tile.innerHTML = `
             <div class="card-header">
-                <h3>${formatLabel(field)} Analysis</h3>
+                <h3 contenteditable="true" spellcheck="false">${formatLabel(field)} Analysis</h3>
                 <select class="chart-type-select" onchange="updateCustomChart('${canvasId}', '${field}', this.value, this.closest('.card'))">
                     <option value="bar">Bar</option>
                     <option value="horizontalBar">Horizontal Bar</option>
