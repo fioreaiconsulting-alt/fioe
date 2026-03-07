@@ -3090,6 +3090,20 @@
         return map[metric] || 'Count';
     }
 
+    // Removes all non-canvas overlays (Leaflet map, data table, metric display) from a tile
+    // and destroys any existing Chart.js instance. Call before rendering a new chart type.
+    function _clearTileChartContent(canvasId, canvasEl) {
+        if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+        const parent = canvasEl && canvasEl.parentElement;
+        if (!parent) return;
+        const mapDiv = parent.querySelector(`#tilemap-${canvasId}`);
+        if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+        const tableDiv = parent.querySelector('.chart-data-table');
+        if (tableDiv) tableDiv.remove();
+        const metricDisplay = parent.querySelector('.slide-metric-display');
+        if (metricDisplay) metricDisplay.remove();
+    }
+
     function updateChart(canvasId, dimension, type, metric) {
         // Handle map type with Leaflet
         if (type === 'map') { renderLeafletMapForTile(canvasId, dimension, metric); return; }
@@ -3103,12 +3117,8 @@
         // Handle table type
         if (type === 'table') {
             if (canvasEl) {
-                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
-                const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
-                if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+                _clearTileChartContent(canvasId, canvasEl);
                 canvasEl.style.display = 'none';
-                const existing = canvasEl.parentElement.querySelector('.chart-data-table');
-                if (existing) existing.remove();
                 const agg = aggregateData(dimension, metric);
                 const metricLabel = _metricLabel(metric);
                 const tableDiv = document.createElement('div');
@@ -3121,13 +3131,7 @@
         // Handle metric/KPI display: show a single aggregated value as a KPI card
         if (type === 'metric') {
             if (canvasEl) {
-                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
-                const mapDivM = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
-                if (mapDivM) { if (mapDivM._leafletMap) mapDivM._leafletMap.remove(); mapDivM.remove(); }
-                const tableDivM = canvasEl.parentElement.querySelector('.chart-data-table');
-                if (tableDivM) tableDivM.remove();
-                const existingMD = canvasEl.parentElement.querySelector('.slide-metric-display');
-                if (existingMD) existingMD.remove();
+                _clearTileChartContent(canvasId, canvasEl);
                 canvasEl.style.display = 'none';
                 const aggM = aggregateData(dimension, metric);
                 const total = aggM.values.reduce((a, b) => a + b, 0);
@@ -3149,12 +3153,7 @@
             return;
         }
         if (canvasEl) {
-            const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
-            if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
-            const tableDiv = canvasEl.parentElement.querySelector('.chart-data-table');
-            if (tableDiv) tableDiv.remove();
-            const metricDisplay = canvasEl.parentElement.querySelector('.slide-metric-display');
-            if (metricDisplay) metricDisplay.remove();
+            _clearTileChartContent(canvasId, canvasEl);
             canvasEl.style.display = '';
         }
 
@@ -3163,8 +3162,6 @@
         const values = agg.values.slice(0, 15);
         if (!canvasEl) return;
         const ctx = canvasEl.getContext('2d');
-
-        if (charts[canvasId]) charts[canvasId].destroy();
 
         // Theme-aware colors: check both global body theme and any slide-specific dark/cyberpunk theme
         const isCyber = document.body.classList.contains('theme-cyberpunk');
@@ -4728,6 +4725,19 @@
         });
     }
     
+    // Assembles the full dashboard state object from localStorage for server sync.
+    // Used by both saveDashboardState() and saveSlides() to avoid duplicating the key list.
+    function _assembleDashboardPayload() {
+        return {
+            order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
+            sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
+            config:    localStorage.getItem('dashboard:config'),
+            filters:   localStorage.getItem('dashboard:filters'),
+            map:       localStorage.getItem('dashboard:map'),
+            orgFilter: localStorage.getItem('dashboard:orgFilter')
+        };
+    }
+
     function saveDashboardState() {
         persistOrder();
         persistSizes();
@@ -4746,14 +4756,7 @@
         }
 
         // Build JSON payload for server-side persistence
-        const dashboardPayload = {
-            order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
-            sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
-            config:    localStorage.getItem('dashboard:config'),
-            filters:   localStorage.getItem('dashboard:filters'),
-            map:       localStorage.getItem('dashboard:map'),
-            orgFilter: localStorage.getItem('dashboard:orgFilter')
-        };
+        const dashboardPayload = _assembleDashboardPayload();
         const slidePayload = slides.length > 0
             ? slides.map(s => ({ name: s.name, tileIds: s.tileIds.slice(), topN: s.topN }))
             : null;
@@ -5607,14 +5610,64 @@
         card.style.zIndex = '500';
         card.style.cursor = 'grabbing';
 
+        let swapTarget = null;
+
+        function _cardRect(c) {
+            return {
+                left:   parseFloat(c.style.left)   || 0,
+                top:    parseFloat(c.style.top)    || 0,
+                width:  parseFloat(c.style.width)  || c.offsetWidth,
+                height: parseFloat(c.style.height) || c.offsetHeight
+            };
+        }
+        function _overlapArea(a, b) {
+            const ox = Math.min(a.left + a.width,  b.left + b.width)  - Math.max(a.left, b.left);
+            const oy = Math.min(a.top  + a.height, b.top  + b.height) - Math.max(a.top,  b.top);
+            return (ox > 0 && oy > 0) ? ox * oy : 0;
+        }
+        function _findSwapTarget(dragLeft, dragTop) {
+            const dr = _cardRect(card);
+            const dragged = { left: dragLeft, top: dragTop, width: dr.width, height: dr.height };
+            const dragArea = dragged.width * dragged.height;
+            const minOverlapThreshold = 0.3; // require ≥30% overlap of the smaller tile
+            let best = null, bestRatio = 0;
+            slideGrid.querySelectorAll('.card').forEach(other => {
+                if (other === card || other.style.display === 'none') return;
+                const or = _cardRect(other);
+                const otherArea = or.width * or.height;
+                const overlap = _overlapArea(dragged, or);
+                const ratio = overlap / Math.min(dragArea, otherArea);
+                if (ratio > minOverlapThreshold && ratio > bestRatio) { bestRatio = ratio; best = other; }
+            });
+            return best;
+        }
+
         function onMove(ev) {
             const gr = slideGrid.getBoundingClientRect();
-            card.style.left = Math.max(0, ev.clientX - gr.left - offsetX) + 'px';
-            card.style.top  = Math.max(0, ev.clientY - gr.top  - offsetY) + 'px';
+            const newLeft = Math.max(0, ev.clientX - gr.left - offsetX);
+            const newTop  = Math.max(0, ev.clientY - gr.top  - offsetY);
+            card.style.left = newLeft + 'px';
+            card.style.top  = newTop  + 'px';
+
+            const candidate = _findSwapTarget(newLeft, newTop);
+            if (candidate !== swapTarget) {
+                if (swapTarget) swapTarget.style.outline = '';
+                swapTarget = candidate;
+                if (swapTarget) swapTarget.style.outline = '2px dashed var(--primary)';
+            }
         }
         function onUp() {
             card.style.zIndex = '';
             card.style.cursor = '';
+            if (swapTarget) {
+                swapTarget.style.outline = '';
+                const al = card.style.left, at = card.style.top;
+                card.style.left        = swapTarget.style.left;
+                card.style.top         = swapTarget.style.top;
+                swapTarget.style.left  = al;
+                swapTarget.style.top   = at;
+                swapTarget = null;
+            }
             card.removeEventListener('pointermove', onMove);
             card.removeEventListener('pointerup',   onUp);
         }
@@ -5681,19 +5734,11 @@
                 setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 1500);
             }
             // Also persist to server (create/update the user's JSON file with latest slide state)
-            const dashboardPayload = {
-                order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
-                sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
-                config:    localStorage.getItem('dashboard:config'),
-                filters:   localStorage.getItem('dashboard:filters'),
-                map:       localStorage.getItem('dashboard:map'),
-                orgFilter: localStorage.getItem('dashboard:orgFilter')
-            };
             fetch(`${API_BASE}/dashboard/save-state`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 credentials: 'include',
-                body: JSON.stringify({ dashboard: dashboardPayload, slide: payload })
+                body: JSON.stringify({ dashboard: _assembleDashboardPayload(), slide: payload })
             }).catch(e => console.warn('Could not sync slides to server:', e));
         } catch(err) {
             console.warn('Failed to save slides:', err);
