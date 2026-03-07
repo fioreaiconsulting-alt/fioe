@@ -1249,7 +1249,7 @@
         }
         /* Theme overrides scoped to the slide grid */
         #slideGrid.slide-theme-light { background: #ffffff; color: #1e293b; --bg-card:#ffffff; --text-main:#1e293b; --border:#e2e8f0; }
-        #slideGrid.slide-theme-dark  { background: #1e293b; color: #f1f5f9; --bg-card:#334155; --text-main:#f1f5f9; --border:#475569; }
+        #slideGrid.slide-theme-dark { background: #1e293b; color: #f1f5f9; --bg-card:#334155; --text-main:#f1f5f9; --border:#475569; }
         #slideGrid.slide-theme-cyberpunk { background: #0f172a; color: #e2e8f0; --bg-card:#1e293b; --text-main:#94a3b8; --border:#334155; font-family:'Orbitron',sans-serif; }
 
         .slideshow-nav {
@@ -4804,7 +4804,6 @@
         const fields = JSON.parse(srcCard.dataset.fields || '[]');
         const chartType = srcCard.dataset.chartType || 'bar';
         const tileMetric = srcCard.dataset.tileMetric || 'count';
-        const isMetric = srcCard.classList.contains('metric-card');
         const isText = srcCard.dataset.tileType === 'text';
         const isChart = srcCard.classList.contains('chart-card') && fields.length > 0;
 
@@ -5274,7 +5273,7 @@
                         setTimeout(() => updateChart(canvasId, dimension, chartType, tileMetric), 0);
                         slide.tileIds.push(tileId);
                         const match = tileId.match(/(\d+)$/);
-                        if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10) + 1);
+                        if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10));
                         return;
                     } else {
                         tile.className = 'card empty-tile';
@@ -5290,7 +5289,7 @@
                     enableTileInteractivity(tile);
                     slide.tileIds.push(tileId);
                     const match = tileId.match(/(\d+)$/);
-                    if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10) + 1);
+                    if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10));
                 });
 
                 slides.push(slide);
