@@ -863,8 +863,9 @@
         #slideGrid .card:hover .chart-type-select { opacity: 1; pointer-events: auto; }
         #slideGrid .card .active-tags { opacity: 0; transition: opacity .2s ease; }
         #slideGrid .card:hover .active-tags { opacity: 1; }
-        /* Prevent horizontal scrollbar on metric tiles when resized small */
-        #slideGrid .metric-card { overflow: hidden; }
+        /* Prevent horizontal scrollbar on metric/chart tiles when resized small */
+        #slideGrid .metric-card,
+        #slideGrid .chart-card { overflow: hidden; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -3158,6 +3159,17 @@
                 metricDiv.appendChild(valEl);
                 metricDiv.appendChild(lblEl);
                 canvasEl.after(metricDiv);
+                // Restore persisted font size and alignment (from save/reload or previous edit)
+                const savedCard = canvasEl.closest('.card');
+                if (savedCard && savedCard.dataset.metricDisplayFontSize) {
+                    valEl.style.fontSize = savedCard.dataset.metricDisplayFontSize;
+                }
+                if (savedCard && savedCard.dataset.metricDisplayAlign) {
+                    const align = savedCard.dataset.metricDisplayAlign;
+                    metricDiv.style.textAlign = align;
+                    valEl.style.textAlign = align;
+                    lblEl.style.textAlign = align;
+                }
             }
             return;
         }
@@ -4239,8 +4251,38 @@
                 topnLabel.textContent = Math.round(_metricFontSize) + 'px';
             });
         } else {
-            topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
-            topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
+            topnDown.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const metricDisp = tile.querySelector('.slide-metric-display');
+                if (metricDisp) {
+                    const v = metricDisp.querySelector('.metric-value');
+                    if (v) {
+                        let fs = parseFloat(v.style.fontSize) || parseFloat(getComputedStyle(v).fontSize) || 42;
+                        fs = Math.max(16, fs - 4);
+                        v.style.fontSize = fs + 'px';
+                        tile.dataset.metricDisplayFontSize = fs + 'px';
+                        topnLabel.textContent = Math.round(fs) + 'px';
+                    }
+                } else {
+                    adjustTileTopN(tile, topnLabel, -1);
+                }
+            });
+            topnUp.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const metricDisp = tile.querySelector('.slide-metric-display');
+                if (metricDisp) {
+                    const v = metricDisp.querySelector('.metric-value');
+                    if (v) {
+                        let fs = parseFloat(v.style.fontSize) || parseFloat(getComputedStyle(v).fontSize) || 42;
+                        fs = Math.min(120, fs + 4);
+                        v.style.fontSize = fs + 'px';
+                        tile.dataset.metricDisplayFontSize = fs + 'px';
+                        topnLabel.textContent = Math.round(fs) + 'px';
+                    }
+                } else {
+                    adjustTileTopN(tile, topnLabel, 1);
+                }
+            });
         }
         topnDiv.appendChild(topnDown);
         topnDiv.appendChild(topnLabel);
@@ -4313,6 +4355,32 @@
                 });
             });
             controls.appendChild(metricSel);
+            // Alignment buttons for slide chart tiles (for Metric/KPI mode)
+            if (tile.closest('#slideGrid')) {
+                const alignDivSlide = document.createElement('span');
+                alignDivSlide.className = 'tile-align-btns';
+                alignDivSlide.style.cssText = 'display:inline-flex;gap:2px;margin-left:4px;';
+                [['⬅','left','Align left'],['≡','center','Align center'],['➡','right','Align right']].forEach(([icon, align, ttl]) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'tile-topn-btn';
+                    btn.textContent = icon;
+                    btn.title = ttl;
+                    btn.style.fontSize = '10px';
+                    btn.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        const metricDisp = tile.querySelector('.slide-metric-display');
+                        if (metricDisp) {
+                            metricDisp.style.textAlign = align;
+                            metricDisp.querySelectorAll('.metric-value, .metric-label').forEach(el => {
+                                el.style.textAlign = align;
+                            });
+                            tile.dataset.metricDisplayAlign = align;
+                        }
+                    });
+                    alignDivSlide.appendChild(btn);
+                });
+                controls.appendChild(alignDivSlide);
+            }
         }
         const removeBtn = document.createElement('button');
         removeBtn.style.color = 'red';
@@ -5774,6 +5842,9 @@
                         metricLabel:    tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
                         metricFontSize: tileType === 'metric' ? (el.querySelector('.metric-value')?.style.fontSize || '') : null,
                         metricAlign:    tileType === 'metric' ? (el.querySelector('.metric-value')?.style.textAlign || el.style.textAlign || '') : null,
+                        // Chart tile in Metric/KPI mode: persist font size and alignment of the slide-metric-display
+                        metricDisplayFontSize: (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.fontSize || '') : null,
+                        metricDisplayAlign:    (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.textAlign || '') : null,
                         // Org-chart tile: persist static HTML snapshot + selected company filter for reload
                         orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
                         orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
@@ -5986,6 +6057,9 @@
                         if (cfg.freeformTop)  tile.dataset.freeformTop  = cfg.freeformTop;
                         if (cfg.freeformW)    tile.dataset.freeformW    = cfg.freeformW;
                         if (cfg.freeformH)    tile.dataset.freeformH    = cfg.freeformH;
+                        // Persist metric-display font size/align for chart tiles in Metric/KPI mode
+                        if (cfg.metricDisplayFontSize) tile.dataset.metricDisplayFontSize = cfg.metricDisplayFontSize;
+                        if (cfg.metricDisplayAlign)    tile.dataset.metricDisplayAlign    = cfg.metricDisplayAlign;
                         tile.dataset.baseSpan = cfg.span || '12';
                         tile.dataset.baseHeight = '450';
                         slideGrid.appendChild(tile);
