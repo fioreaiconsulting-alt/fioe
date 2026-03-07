@@ -1250,17 +1250,22 @@
             overflow-y: auto;
             padding: 0;
             position: relative;
+            display: flex;
+            flex-direction: column;
         }
         /* slide-specific grid lives permanently inside the slideshow overlay */
         #slideGrid {
             padding: 16px;
             min-height: 200px;
+            flex: 1;
         }
         /* Layout variants for #slideGrid */
         #slideGrid.slide-layout-2col { grid-template-columns: repeat(2, 1fr) !important; }
         #slideGrid.slide-layout-3col { grid-template-columns: repeat(3, 1fr) !important; }
         #slideGrid.slide-layout-4col { grid-template-columns: repeat(4, 1fr) !important; }
-        #slideGrid.slide-layout-freeform { display: block !important; position: relative; min-height: 800px; }
+        /* Freeform: fill full viewport height so tiles can use the entire canvas */
+        /* 130px accounts for ~80px slideshow-header + ~50px slideshow-nav */
+        #slideGrid.slide-layout-freeform { display: block !important; position: relative; min-height: calc(100vh - 130px); padding: 8px; }
         #slideGrid.slide-layout-freeform .card {
             position: absolute;
             resize: both;
@@ -3160,7 +3165,7 @@
                 const displayVal = metric === 'distinct' ? aggM.labels.length : Math.round(total * 10) / 10;
                 const metricDiv = document.createElement('div');
                 metricDiv.className = 'slide-metric-display';
-                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:flex-start;flex:1;padding:16px 20px 20px;text-align:center;';
+                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;flex:1;padding:16px 20px 20px;text-align:center;';
                 const valEl = document.createElement('div');
                 valEl.className = 'metric-value';
                 valEl.style.fontSize = '2.5em';
@@ -3178,8 +3183,6 @@
                 }
                 if (savedCard && savedCard.dataset.metricDisplayAlign) {
                     const align = savedCard.dataset.metricDisplayAlign;
-                    const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
-                    metricDiv.style.alignItems = flexAlign;
                     metricDiv.style.textAlign = align;
                     valEl.style.textAlign = align;
                     lblEl.style.textAlign = align;
@@ -4017,9 +4020,10 @@
 
         // Shared onUp callback for width-changing handles: snap to nearest grid column span
         // so the freed space can be filled by dragging other tiles (jigsaw layout).
-        // Skip snap in freeform mode — tiles are absolutely positioned so inline width must persist.
+        // Skip snap for all slide tiles (freeform OR grid layouts) — inline width must persist
+        // so tiles don't bounce back to their default CSS grid span on release.
         function snapWidthToSpan() {
-            if (card.closest('#slideGrid.slide-layout-freeform')) return; // keep inline width
+            if (card.closest('#slideGrid')) return; // all slide tiles keep inline width
             const span = widthToGridSpan(card);
             card.dataset.span = String(span);
             card.style.width = '';
@@ -4248,7 +4252,7 @@
                 topnLabel.textContent = _textFontSize2 + 'px';
             });
         } else if (isMetricTile) {
-            // Up/Down controls font size of the metric-value display
+            // Up/Down controls font size of the metric-value display; h3 title scales proportionally
             const _mVal = tile.querySelector('.metric-value');
             let _metricFontSize = _mVal ? (parseFloat(_mVal.style.fontSize) || parseFloat(getComputedStyle(_mVal).fontSize) || 42) : 42;
             topnLabel.textContent = Math.round(_metricFontSize) + 'px';
@@ -4257,6 +4261,9 @@
                 _metricFontSize = Math.max(16, _metricFontSize - 4);
                 const v = tile.querySelector('.metric-value');
                 if (v) v.style.fontSize = _metricFontSize + 'px';
+                // Scale h3 proportionally (h3 ≈ 1/3 of metric value size, min 10px)
+                const h3 = tile.querySelector('h3');
+                if (h3) h3.style.fontSize = Math.max(10, Math.round(_metricFontSize / 3)) + 'px';
                 topnLabel.textContent = Math.round(_metricFontSize) + 'px';
             });
             topnUp.addEventListener('click', (ev) => {
@@ -4264,6 +4271,9 @@
                 _metricFontSize = Math.min(120, _metricFontSize + 4);
                 const v = tile.querySelector('.metric-value');
                 if (v) v.style.fontSize = _metricFontSize + 'px';
+                // Scale h3 proportionally
+                const h3 = tile.querySelector('h3');
+                if (h3) h3.style.fontSize = Math.max(10, Math.round(_metricFontSize / 3)) + 'px';
                 topnLabel.textContent = Math.round(_metricFontSize) + 'px';
             });
         } else {
@@ -4317,10 +4327,9 @@
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     if (isMetricTile) {
-                        // Apply alignment to all text elements and the flex container
-                        const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
+                        // Use text-align on children (which are full-width via align-items:stretch)
                         tile.style.textAlign = align;
-                        tile.style.alignItems = flexAlign;
+                        tile.style.alignItems = 'stretch'; // keep children full width for text-align to work
                         tile.querySelectorAll('h3, .metric-value, .metric-label').forEach(el => {
                             el.style.textAlign = align;
                         });
@@ -4389,8 +4398,7 @@
                         ev.stopPropagation();
                         const metricDisp = tile.querySelector('.slide-metric-display');
                         if (metricDisp) {
-                            const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
-                            metricDisp.style.alignItems = flexAlign;
+                            // With align-items:stretch, only text-align is needed for visual alignment
                             metricDisp.style.textAlign = align;
                             metricDisp.querySelectorAll('.metric-value, .metric-label').forEach(el => {
                                 el.style.textAlign = align;
@@ -5891,6 +5899,7 @@
                     metricValue:    tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
                     metricLabel:    tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
                     metricFontSize: tileType === 'metric' ? (el.querySelector('.metric-value')?.style.fontSize || '') : null,
+                    metricTitleFontSize: tileType === 'metric' ? (el.querySelector('h3')?.style.fontSize || '') : null,
                     metricAlign:    tileType === 'metric' ? (el.querySelector('.metric-value')?.style.textAlign || el.style.textAlign || '') : null,
                     metricDisplayFontSize: (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.fontSize || '') : null,
                     metricDisplayAlign:    (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.textAlign || '') : null,
@@ -6020,10 +6029,10 @@
                         mLbl.textContent = cfg.metricLabel || '';
                         // Restore font size and alignment if persisted
                         if (cfg.metricFontSize) mVal.style.fontSize = cfg.metricFontSize;
+                        if (cfg.metricTitleFontSize) mH3.style.fontSize = cfg.metricTitleFontSize;
                         if (cfg.metricAlign) {
-                            const flexAlign = cfg.metricAlign === 'left' ? 'flex-start' : cfg.metricAlign === 'right' ? 'flex-end' : 'center';
                             tile.style.textAlign = cfg.metricAlign;
-                            tile.style.alignItems = flexAlign;
+                            tile.style.alignItems = 'stretch';
                             [mH3, mVal, mLbl].forEach(e => { e.style.textAlign = cfg.metricAlign; });
                         }
                         tile.append(mH3, mVal, mLbl);
