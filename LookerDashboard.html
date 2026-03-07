@@ -2953,7 +2953,17 @@
         }
         const agg = aggregateData(dimension, metric);
         const labels = agg.labels; const values = agg.values;
-        const maxVal = Math.max(...values, 1);
+
+        // Compute top-10 color map — same palette and logic as the Candidate Locations map
+        const chartColors = [
+            '#1a73e8', '#e37400', '#1e8e3e', '#d93025', '#9334e6', '#00acc1', '#f09300', '#188038',
+            '#3c4043', '#7b1fa2', '#129eaf', '#c2185b'
+        ];
+        const sortedIdx = labels.map((_, i) => i).sort((a, b) => values[b] - values[a]);
+        const top10Labels = sortedIdx.slice(0, 10).map(i => labels[i]);
+        const colorMap = {};
+        top10Labels.forEach((l, i) => { colorMap[l] = chartColors[i % chartColors.length]; });
+
         const map = L.map(mapDiv, { zoomControl: true });
         mapDiv._leafletMap = map;
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 18 }).addTo(map);
@@ -2961,9 +2971,13 @@
         labels.forEach((label, i) => {
             const coords = COUNTRY_COORDS[label] || COUNTRY_COORDS[label.split(',')[0].trim()];
             if (coords) {
-                const radius = 8 + Math.round((values[i] / maxVal) * 28);
-                L.circleMarker(coords, { radius, fillColor: '#1a73e8', color: '#1557b0', weight: 1, fillOpacity: 0.65 })
-                    .addTo(map).bindTooltip(`${label}: ${values[i]}`, { permanent: false });
+                const isTop = top10Labels.includes(label);
+                const color = isTop ? colorMap[label] : '#64748b';
+                const radius = 5 + Math.log(values[i] || 1) * 5;
+                L.circleMarker(coords, { radius, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.7 })
+                    .addTo(map)
+                    .bindTooltip(`${values[i]}`, { permanent: true, direction: 'center', className: 'map-count-label' })
+                    .bindPopup(`<b>${label}</b><br>${_metricLabel(metric)}: ${values[i]}`);
                 bounds.push(coords);
             }
         });
@@ -4823,6 +4837,7 @@
         // Also handle map-card tiles (Candidate Locations) which share the same pattern.
         const isMapCard = srcCard.classList.contains('map-card');
         const isChartCard = srcCard.classList.contains('chart-card');
+        const isOrgChart = srcCard.classList.contains('org-chart-card');
         if (!isText && fields.length === 0 && (isChartCard || isMapCard)) {
             const sel = srcCard.querySelector('select.chart-type-select');
             if (sel) {
@@ -4835,6 +4850,15 @@
                     chartType = sel.value || (sel.options[0] && sel.options[0].value) || 'bar';
                 }
             }
+        }
+
+        // Non-geographic dimensions (e.g. 'skillset', 'jobfamily') cannot render as a Leaflet map
+        // because their values don't correspond to country coordinates. Fall back to 'bar' so the
+        // slide tile shows real data instead of an empty basemap.
+        const GEOGRAPHIC_DIMS = ['country', 'city', 'location', 'region'];
+        const lastDimension = fields[fields.length - 1] || '';
+        if (chartType === 'map' && !GEOGRAPHIC_DIMS.includes(lastDimension)) {
+            chartType = 'bar';
         }
 
         const isChart = (isChartCard || isMapCard) && fields.length > 0;
@@ -4893,6 +4917,7 @@
             // Metric/KPI tile: clone the displayed title, value, and label as a static slide tile.
             // Elements are built programmatically (textContent) to avoid XSS from content values.
             tile.className = 'card metric-card';
+            tile.dataset.tileType = 'metric';
             tile.dataset.baseSpan = '6';
             tile.dataset.span = '6';
             tile.dataset.baseHeight = '200';
@@ -4911,6 +4936,33 @@
             lblDiv.className = 'metric-label';
             lblDiv.textContent = srcLabel ? srcLabel.textContent.trim() : '';
             tile.append(h3, valDiv, lblDiv);
+        } else if (isOrgChart) {
+            // Organisational Hierarchy tile: render a static snapshot of the current org chart HTML
+            tile.className = 'card org-chart-card';
+            tile.dataset.tileType = 'org-chart';
+            tile.dataset.baseHeight = '500';
+            const srcH3 = srcCard.querySelector('h3');
+            const tileTitle = srcH3 ? srcH3.textContent.trim() : 'Organizational Hierarchy';
+            const srcContent = document.getElementById('orgChartContent');
+            // Build header with editable title
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'card-header';
+            const h3El = document.createElement('h3');
+            h3El.contentEditable = 'true';
+            h3El.spellcheck = false;
+            h3El.textContent = tileTitle;
+            headerDiv.appendChild(h3El);
+            tile.appendChild(headerDiv);
+            // Clone org chart content as a read-only static snapshot
+            const scrollDiv = document.createElement('div');
+            scrollDiv.className = 'org-chart-scroll';
+            const contentDiv = document.createElement('div');
+            contentDiv.style.cssText = 'pointer-events:none; user-select:none;';
+            contentDiv.innerHTML = srcContent
+                ? srcContent.innerHTML
+                : '<div style="padding:20px;color:var(--text-sub);">No hierarchy data available.</div>';
+            scrollDiv.appendChild(contentDiv);
+            tile.appendChild(scrollDiv);
         } else {
             // Generic empty tile — placeholder for unsupported tile types
             tile.className = 'card empty-tile';
@@ -5283,17 +5335,23 @@
                 const tiles = s.tileIds.map(tileId => {
                     const el = slideGrid ? slideGrid.querySelector(`[data-tile-id="${tileId}"]`) : null;
                     if (!el) return { tileId };
+                    const tileType = el.dataset.tileType || '';
                     return {
                         tileId,
-                        title:      el.querySelector('h3')?.textContent || '',
-                        fields:     JSON.parse(el.dataset.fields || '[]'),
-                        chartType:  el.dataset.chartType || 'bar',
-                        tileMetric: el.dataset.tileMetric || 'count',
-                        tileType:   el.dataset.tileType || '',
-                        text:       el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
-                        height:     el.style.height || '',
-                        width:      el.style.width  || '',
-                        span:       el.dataset.span  || ''
+                        title:       el.querySelector('h3')?.textContent || '',
+                        fields:      JSON.parse(el.dataset.fields || '[]'),
+                        chartType:   el.dataset.chartType || 'bar',
+                        tileMetric:  el.dataset.tileMetric || 'count',
+                        tileType,
+                        text:        el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
+                        // Metric tile: persist displayed value + label for reload
+                        metricValue: tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
+                        metricLabel: tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
+                        // Org-chart tile: persist static HTML snapshot for reload
+                        orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
+                        height:      el.style.height || '',
+                        width:       el.style.width  || '',
+                        span:        el.dataset.span  || ''
                     };
                 });
                 return { name: s.name, tileIds: s.tileIds.slice(), topN: s.topN, layout: s.layout || 'auto', theme: s.theme || 'match', tiles };
@@ -5389,6 +5447,42 @@
                         tile.className = 'card text-tile';
                         tile.dataset.tileType = 'text';
                         tile.innerHTML = `<textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false">${cfg.text || ''}</textarea>`;
+                    } else if (tileType === 'metric') {
+                        // Restore static metric/KPI tile
+                        tile.className = 'card metric-card';
+                        tile.dataset.tileType = 'metric';
+                        tile.dataset.baseSpan = cfg.span || '6';
+                        tile.dataset.span = cfg.span || '6';
+                        if (cfg.span) tile.style.gridColumn = `span ${cfg.span}`;
+                        const mH3 = document.createElement('h3');
+                        mH3.contentEditable = 'true'; mH3.spellcheck = false;
+                        mH3.textContent = cfg.title || 'Metric';
+                        const mVal = document.createElement('div');
+                        mVal.className = 'metric-value';
+                        mVal.textContent = cfg.metricValue || '—';
+                        const mLbl = document.createElement('div');
+                        mLbl.className = 'metric-label';
+                        mLbl.textContent = cfg.metricLabel || '';
+                        tile.append(mH3, mVal, mLbl);
+                    } else if (tileType === 'org-chart') {
+                        // Restore static org-chart snapshot
+                        tile.className = 'card org-chart-card';
+                        tile.dataset.tileType = 'org-chart';
+                        tile.dataset.baseHeight = '500';
+                        const ocHeader = document.createElement('div');
+                        ocHeader.className = 'card-header';
+                        const ocH3 = document.createElement('h3');
+                        ocH3.contentEditable = 'true'; ocH3.spellcheck = false;
+                        ocH3.textContent = cfg.title || 'Organizational Hierarchy';
+                        ocHeader.appendChild(ocH3);
+                        tile.appendChild(ocHeader);
+                        const ocScroll = document.createElement('div');
+                        ocScroll.className = 'org-chart-scroll';
+                        const ocContent = document.createElement('div');
+                        ocContent.style.cssText = 'pointer-events:none; user-select:none;';
+                        ocContent.innerHTML = cfg.orgChartHtml || '<div style="padding:20px;color:var(--text-sub);">No hierarchy data available.</div>';
+                        ocScroll.appendChild(ocContent);
+                        tile.appendChild(ocScroll);
                     } else if (fields.length > 0) {
                         const dimension = fields[fields.length - 1];
                         const canvasId = `slideChart-${tileId}`;
