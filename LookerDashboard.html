@@ -857,6 +857,18 @@
         /* Slide map chart tiles (data-chart-type=map) stay fully opaque while being dragged;
            indicate drag state with a primary-color outline instead of fading the map. */
         #slideGrid .card.dragging[data-chart-type="map"] { opacity: 1; box-shadow: 0 0 0 3px var(--primary, #3b82f6); }
+        #slideGrid .card.swap-target { outline: 2px dashed var(--primary, #3b82f6); }
+        /* Auto-hide chart type selector and tags in slide mode; reveal on hover */
+        #slideGrid .card .chart-type-select { opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+        #slideGrid .card:hover .chart-type-select { opacity: 1; pointer-events: auto; }
+        #slideGrid .card .active-tags { opacity: 0; transition: opacity .2s ease; }
+        #slideGrid .card:hover .active-tags { opacity: 1; }
+        /* Prevent horizontal scrollbar on metric/chart tiles when resized small */
+        #slideGrid .metric-card,
+        #slideGrid .chart-card { overflow: hidden; }
+        /* Header in metric tiles should sit directly above the value with minimal gap */
+        #slideGrid .metric-card h3 { margin-bottom: 2px; }
+        #slideGrid .metric-card .metric-value { margin-top: 0; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -942,7 +954,7 @@
             flex: 1;
             min-height: 80px;
             resize: none;
-            border: 1px solid var(--border);
+            border: 1px solid transparent;
             border-radius: 6px;
             padding: 8px;
             font-size: 14px;
@@ -951,6 +963,7 @@
             outline: none;
             font-family: inherit;
         }
+        .text-tile-editor:hover { border-color: var(--border); }
         .text-tile-editor:focus { border-color: var(--primary); }
         
         /* Updated Legend Style for Cyberpunk */
@@ -1237,17 +1250,22 @@
             overflow-y: auto;
             padding: 0;
             position: relative;
+            display: flex;
+            flex-direction: column;
         }
         /* slide-specific grid lives permanently inside the slideshow overlay */
         #slideGrid {
             padding: 16px;
             min-height: 200px;
+            flex: 1;
         }
         /* Layout variants for #slideGrid */
         #slideGrid.slide-layout-2col { grid-template-columns: repeat(2, 1fr) !important; }
         #slideGrid.slide-layout-3col { grid-template-columns: repeat(3, 1fr) !important; }
         #slideGrid.slide-layout-4col { grid-template-columns: repeat(4, 1fr) !important; }
-        #slideGrid.slide-layout-freeform { display: block !important; position: relative; min-height: 800px; }
+        /* Freeform: fill full viewport height so tiles can use the entire canvas */
+        /* 130px accounts for ~80px slideshow-header + ~50px slideshow-nav */
+        #slideGrid.slide-layout-freeform { display: block !important; position: relative; min-height: calc(100vh - 130px); padding: 8px; }
         #slideGrid.slide-layout-freeform .card {
             position: absolute;
             resize: both;
@@ -3032,6 +3050,7 @@
         if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
         canvas.style.display = 'none';
         let mapDiv = container.querySelector(`#tilemap-${canvasId}`);
+        if (mapDiv && mapDiv._leafletRO) { mapDiv._leafletRO.disconnect(); delete mapDiv._leafletRO; }
         if (mapDiv && mapDiv._leafletMap) { mapDiv._leafletMap.remove(); mapDiv.innerHTML = ''; }
         if (mapDiv) delete mapDiv._leaflet_id; // Always clear so Leaflet can re-init cleanly
         if (!mapDiv) {
@@ -3073,6 +3092,14 @@
         if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
         else map.setView([20, 0], 2);
         setTimeout(() => map.invalidateSize(), 120);
+        // ResizeObserver: keep map valid when the tile is resized or the viewer opens/closes
+        if (window.ResizeObserver) {
+            const ro = new ResizeObserver(() => {
+                if (mapDiv._leafletMap) mapDiv._leafletMap.invalidateSize();
+            });
+            ro.observe(mapDiv);
+            mapDiv._leafletRO = ro;
+        }
     }
 
     // Returns a human-readable label for the selected metric key
@@ -3090,6 +3117,20 @@
         return map[metric] || 'Count';
     }
 
+    // Removes all non-canvas overlays (Leaflet map, data table, metric display) from a tile
+    // and destroys any existing Chart.js instance. Call before rendering a new chart type.
+    function _clearTileChartContent(canvasId, canvasEl) {
+        if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+        const parent = canvasEl && canvasEl.parentElement;
+        if (!parent) return;
+        const mapDiv = parent.querySelector(`#tilemap-${canvasId}`);
+        if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+        const tableDiv = parent.querySelector('.chart-data-table');
+        if (tableDiv) tableDiv.remove();
+        const metricDisplay = parent.querySelector('.slide-metric-display');
+        if (metricDisplay) metricDisplay.remove();
+    }
+
     function updateChart(canvasId, dimension, type, metric) {
         // Handle map type with Leaflet
         if (type === 'map') { renderLeafletMapForTile(canvasId, dimension, metric); return; }
@@ -3103,12 +3144,8 @@
         // Handle table type
         if (type === 'table') {
             if (canvasEl) {
-                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
-                const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
-                if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
+                _clearTileChartContent(canvasId, canvasEl);
                 canvasEl.style.display = 'none';
-                const existing = canvasEl.parentElement.querySelector('.chart-data-table');
-                if (existing) existing.remove();
                 const agg = aggregateData(dimension, metric);
                 const metricLabel = _metricLabel(metric);
                 const tableDiv = document.createElement('div');
@@ -3121,20 +3158,14 @@
         // Handle metric/KPI display: show a single aggregated value as a KPI card
         if (type === 'metric') {
             if (canvasEl) {
-                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
-                const mapDivM = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
-                if (mapDivM) { if (mapDivM._leafletMap) mapDivM._leafletMap.remove(); mapDivM.remove(); }
-                const tableDivM = canvasEl.parentElement.querySelector('.chart-data-table');
-                if (tableDivM) tableDivM.remove();
-                const existingMD = canvasEl.parentElement.querySelector('.slide-metric-display');
-                if (existingMD) existingMD.remove();
+                _clearTileChartContent(canvasId, canvasEl);
                 canvasEl.style.display = 'none';
                 const aggM = aggregateData(dimension, metric);
                 const total = aggM.values.reduce((a, b) => a + b, 0);
                 const displayVal = metric === 'distinct' ? aggM.labels.length : Math.round(total * 10) / 10;
                 const metricDiv = document.createElement('div');
                 metricDiv.className = 'slide-metric-display';
-                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:20px;text-align:center;';
+                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;flex:1;padding:16px 20px 20px;text-align:center;';
                 const valEl = document.createElement('div');
                 valEl.className = 'metric-value';
                 valEl.style.fontSize = '2.5em';
@@ -3145,16 +3176,22 @@
                 metricDiv.appendChild(valEl);
                 metricDiv.appendChild(lblEl);
                 canvasEl.after(metricDiv);
+                // Restore persisted font size and alignment (from save/reload or previous edit)
+                const savedCard = canvasEl.closest('.card');
+                if (savedCard && savedCard.dataset.metricDisplayFontSize) {
+                    valEl.style.fontSize = savedCard.dataset.metricDisplayFontSize;
+                }
+                if (savedCard && savedCard.dataset.metricDisplayAlign) {
+                    const align = savedCard.dataset.metricDisplayAlign;
+                    metricDiv.style.textAlign = align;
+                    valEl.style.textAlign = align;
+                    lblEl.style.textAlign = align;
+                }
             }
             return;
         }
         if (canvasEl) {
-            const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
-            if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
-            const tableDiv = canvasEl.parentElement.querySelector('.chart-data-table');
-            if (tableDiv) tableDiv.remove();
-            const metricDisplay = canvasEl.parentElement.querySelector('.slide-metric-display');
-            if (metricDisplay) metricDisplay.remove();
+            _clearTileChartContent(canvasId, canvasEl);
             canvasEl.style.display = '';
         }
 
@@ -3163,8 +3200,6 @@
         const values = agg.values.slice(0, 15);
         if (!canvasEl) return;
         const ctx = canvasEl.getContext('2d');
-
-        if (charts[canvasId]) charts[canvasId].destroy();
 
         // Theme-aware colors: check both global body theme and any slide-specific dark/cyberpunk theme
         const isCyber = document.body.classList.contains('theme-cyberpunk');
@@ -3916,9 +3951,17 @@
     // tiles fill the freed space (jigsaw layout).
     // COLS and GAP must match the .dashboard-container CSS (repeat(12,1fr), gap: 24px).
     function widthToGridSpan(card) {
-        const grid = document.getElementById('dashboardGrid');
-        const gridWidth = grid ? grid.offsetWidth : 1200;
-        const COLS = 12, GAP = 24; // must match grid-template-columns / gap in CSS
+        // Use the card's own parent grid so slide tiles use slideGrid dimensions
+        const grid = card.closest('#dashboardGrid, #slideGrid') || document.getElementById('dashboardGrid');
+        const gridWidth = (grid && grid.offsetWidth > 0) ? grid.offsetWidth : 1200;
+        // Detect actual column count from slide layout classes so 2/3/4-col grids snap correctly
+        let COLS = 12;
+        if (grid) {
+            if (grid.classList.contains('slide-layout-2col'))      COLS = 2;
+            else if (grid.classList.contains('slide-layout-3col')) COLS = 3;
+            else if (grid.classList.contains('slide-layout-4col')) COLS = 4;
+        }
+        const GAP = 24; // must match gap in CSS
         // Width occupied by one column (including its trailing gap)
         const colUnit = (gridWidth + GAP) / COLS;
         const rawSpan = (card.offsetWidth + GAP) / colUnit;
@@ -3983,11 +4026,16 @@
         }));
 
         // Shared onUp callback for width-changing handles: snap to nearest grid column span
-        // so the freed space can be filled by dragging other tiles (jigsaw layout).
+        // so freed space is filled by other tiles (jigsaw layout) via grid-auto-flow: dense.
+        // Skip snap ONLY for freeform tiles where inline width must be preserved.
         function snapWidthToSpan() {
+            const sg = card.closest('#slideGrid');
+            if (sg && sg.classList.contains('slide-layout-freeform')) return; // freeform keeps inline width
             const span = widthToGridSpan(card);
             card.dataset.span = String(span);
-            card.style.width = '';
+            card.style.width = ''; // clear inline width — grid-column span controls size
+            // For slide tiles, also update style.gridColumn (overrides any previously set inline value)
+            if (sg) card.style.gridColumn = `span ${span}`;
         }
 
         // East handle — width only (drag right edge)
@@ -4169,6 +4217,8 @@
     }
 
     function addTileControls(tile) {
+        // Track the last-clicked tile for Delete-key deletion
+        tile.addEventListener('mousedown', () => { _activeSlideTile = tile; }, { capture: true });
         const controls = document.createElement('div');
         controls.className = 'tile-controls';
         controls.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -4177,20 +4227,21 @@
         const topnDiv = document.createElement('span');
         topnDiv.className = 'tile-topn';
         const isTextTile = tile.dataset.tileType === 'text';
-        topnDiv.title = isTextTile ? 'Adjust text font size' : 'Filter: adjust number of data points shown';
+        const isMetricTile = tile.dataset.tileType === 'metric';
+        topnDiv.title = (isTextTile || isMetricTile) ? 'Adjust font size' : 'Filter: adjust number of data points shown';
         const topnDown = document.createElement('button');
         topnDown.className = 'tile-topn-btn';
         topnDown.textContent = '▼';
-        topnDown.title = isTextTile ? 'Decrease font size' : 'Show fewer data points';
-        topnDown.setAttribute('aria-label', isTextTile ? 'Decrease font size' : 'Decrease data points');
+        topnDown.title = (isTextTile || isMetricTile) ? 'Decrease font size' : 'Show fewer data points';
+        topnDown.setAttribute('aria-label', (isTextTile || isMetricTile) ? 'Decrease font size' : 'Decrease data points');
         const topnLabel = document.createElement('span');
         topnLabel.className = 'tile-topn-label';
-        topnLabel.textContent = isTextTile ? '14px' : 'All';
+        topnLabel.textContent = (isTextTile || isMetricTile) ? '14px' : 'All';
         const topnUp = document.createElement('button');
         topnUp.className = 'tile-topn-btn';
         topnUp.textContent = '▲';
-        topnUp.title = isTextTile ? 'Increase font size' : 'Show more data points';
-        topnUp.setAttribute('aria-label', isTextTile ? 'Increase font size' : 'Increase data points');
+        topnUp.title = (isTextTile || isMetricTile) ? 'Increase font size' : 'Show more data points';
+        topnUp.setAttribute('aria-label', (isTextTile || isMetricTile) ? 'Increase font size' : 'Increase data points');
         if (isTextTile) {
             const _ed02 = tile.querySelector('.text-tile-editor');
             let _textFontSize2 = _ed02 ? (parseFloat(_ed02.style.fontSize) || 14) : 14;
@@ -4209,15 +4260,70 @@
                 if (ed) ed.style.fontSize = _textFontSize2 + 'px';
                 topnLabel.textContent = _textFontSize2 + 'px';
             });
+        } else if (isMetricTile) {
+            // Up/Down controls font size of the metric-value display; h3 title scales proportionally
+            const _mVal = tile.querySelector('.metric-value');
+            let _metricFontSize = _mVal ? (parseFloat(_mVal.style.fontSize) || parseFloat(getComputedStyle(_mVal).fontSize) || 42) : 42;
+            topnLabel.textContent = Math.round(_metricFontSize) + 'px';
+            topnDown.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _metricFontSize = Math.max(16, _metricFontSize - 4);
+                const v = tile.querySelector('.metric-value');
+                if (v) v.style.fontSize = _metricFontSize + 'px';
+                // Scale h3 proportionally (h3 ≈ 1/3 of metric value size, min 10px)
+                const h3 = tile.querySelector('h3');
+                if (h3) h3.style.fontSize = Math.max(10, Math.round(_metricFontSize / 3)) + 'px';
+                topnLabel.textContent = Math.round(_metricFontSize) + 'px';
+            });
+            topnUp.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _metricFontSize = Math.min(120, _metricFontSize + 4);
+                const v = tile.querySelector('.metric-value');
+                if (v) v.style.fontSize = _metricFontSize + 'px';
+                // Scale h3 proportionally
+                const h3 = tile.querySelector('h3');
+                if (h3) h3.style.fontSize = Math.max(10, Math.round(_metricFontSize / 3)) + 'px';
+                topnLabel.textContent = Math.round(_metricFontSize) + 'px';
+            });
         } else {
-            topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
-            topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
+            topnDown.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const metricDisp = tile.querySelector('.slide-metric-display');
+                if (metricDisp) {
+                    const v = metricDisp.querySelector('.metric-value');
+                    if (v) {
+                        let fs = parseFloat(v.style.fontSize) || parseFloat(getComputedStyle(v).fontSize) || 42;
+                        fs = Math.max(16, fs - 4);
+                        v.style.fontSize = fs + 'px';
+                        tile.dataset.metricDisplayFontSize = fs + 'px';
+                        topnLabel.textContent = Math.round(fs) + 'px';
+                    }
+                } else {
+                    adjustTileTopN(tile, topnLabel, -1);
+                }
+            });
+            topnUp.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const metricDisp = tile.querySelector('.slide-metric-display');
+                if (metricDisp) {
+                    const v = metricDisp.querySelector('.metric-value');
+                    if (v) {
+                        let fs = parseFloat(v.style.fontSize) || parseFloat(getComputedStyle(v).fontSize) || 42;
+                        fs = Math.min(120, fs + 4);
+                        v.style.fontSize = fs + 'px';
+                        tile.dataset.metricDisplayFontSize = fs + 'px';
+                        topnLabel.textContent = Math.round(fs) + 'px';
+                    }
+                } else {
+                    adjustTileTopN(tile, topnLabel, 1);
+                }
+            });
         }
         topnDiv.appendChild(topnDown);
         topnDiv.appendChild(topnLabel);
         topnDiv.appendChild(topnUp);
-        // Text alignment buttons (only for text tiles)
-        if (isTextTile) {
+        // Text/metric alignment buttons
+        if (isTextTile || isMetricTile) {
             const alignDiv = document.createElement('span');
             alignDiv.className = 'tile-align-btns';
             alignDiv.style.cssText = 'display:inline-flex;gap:2px;margin-left:4px;';
@@ -4229,8 +4335,18 @@
                 btn.style.fontSize = '10px';
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
-                    const ed = tile.querySelector('.text-tile-editor');
-                    if (ed) ed.style.textAlign = align;
+                    if (isMetricTile) {
+                        // Use text-align on children (which are full-width via align-items:stretch)
+                        tile.style.textAlign = align;
+                        tile.style.alignItems = 'stretch'; // keep children full width for text-align to work
+                        tile.querySelectorAll('h3, .metric-value, .metric-label').forEach(el => {
+                            el.style.textAlign = align;
+                        });
+                        tile.dataset.metricAlign = align;
+                    } else {
+                        const ed = tile.querySelector('.text-tile-editor');
+                        if (ed) ed.style.textAlign = align;
+                    }
                 });
                 alignDiv.appendChild(btn);
             });
@@ -4276,6 +4392,33 @@
                 });
             });
             controls.appendChild(metricSel);
+            // Alignment buttons for slide chart tiles (for Metric/KPI mode)
+            if (tile.closest('#slideGrid')) {
+                const alignDivSlide = document.createElement('span');
+                alignDivSlide.className = 'tile-align-btns';
+                alignDivSlide.style.cssText = 'display:inline-flex;gap:2px;margin-left:4px;';
+                [['⬅','left','Align left'],['≡','center','Align center'],['➡','right','Align right']].forEach(([icon, align, ttl]) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'tile-topn-btn';
+                    btn.textContent = icon;
+                    btn.title = ttl;
+                    btn.style.fontSize = '10px';
+                    btn.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        const metricDisp = tile.querySelector('.slide-metric-display');
+                        if (metricDisp) {
+                            // With align-items:stretch, only text-align is needed for visual alignment
+                            metricDisp.style.textAlign = align;
+                            metricDisp.querySelectorAll('.metric-value, .metric-label').forEach(el => {
+                                el.style.textAlign = align;
+                            });
+                            tile.dataset.metricDisplayAlign = align;
+                        }
+                    });
+                    alignDivSlide.appendChild(btn);
+                });
+                controls.appendChild(alignDivSlide);
+            }
         }
         const removeBtn = document.createElement('button');
         removeBtn.style.color = 'red';
@@ -4284,13 +4427,14 @@
         removeBtn.addEventListener('click', (ev) => {
             ev.stopPropagation();
             const tileId = tile.dataset.tileId;
+            const inSlideViewer = !!tile.closest('#slideshowViewer');
+            if (inSlideViewer) _pushSlideUndo();
             // If this tile is in a slide, remove from slide tileIds array
             if (tileId) {
                 slides.forEach(s => { s.tileIds = s.tileIds.filter(id => id !== tileId); });
             }
             tile.remove();
             // Decide whether to update slide view or dashboard persistence
-            const inSlideViewer = !!tile.closest('#slideshowViewer');
             if (inSlideViewer) {
                 renderCurrentSlide();
             } else {
@@ -4728,6 +4872,19 @@
         });
     }
     
+    // Assembles the full dashboard state object from localStorage for server sync.
+    // Used by both saveDashboardState() and saveSlides() to avoid duplicating the key list.
+    function _assembleDashboardPayload() {
+        return {
+            order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
+            sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
+            config:    localStorage.getItem('dashboard:config'),
+            filters:   localStorage.getItem('dashboard:filters'),
+            map:       localStorage.getItem('dashboard:map'),
+            orgFilter: localStorage.getItem('dashboard:orgFilter')
+        };
+    }
+
     function saveDashboardState() {
         persistOrder();
         persistSizes();
@@ -4746,14 +4903,7 @@
         }
 
         // Build JSON payload for server-side persistence
-        const dashboardPayload = {
-            order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
-            sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
-            config:    localStorage.getItem('dashboard:config'),
-            filters:   localStorage.getItem('dashboard:filters'),
-            map:       localStorage.getItem('dashboard:map'),
-            orgFilter: localStorage.getItem('dashboard:orgFilter')
-        };
+        const dashboardPayload = _assembleDashboardPayload();
         const slidePayload = slides.length > 0
             ? slides.map(s => ({ name: s.name, tileIds: s.tileIds.slice(), topN: s.topN }))
             : null;
@@ -4910,6 +5060,9 @@
     let _filterOriginalNextSibling = null;
     let _slideIdCounter = 0;                  // monotonic counter for unique tile IDs
     const _slideCharts = new Map();           // tileId → Chart instance
+    // Undo history: stores JSON snapshots of the slides array (max 20 entries)
+    const _slideUndoHistory = [];
+    let _activeSlideTile = null;             // tracks the last-clicked tile in the slide viewer
     let _tileDroppedOnTab = false;            // set by slide-tab drop handler, cleared in makeDraggable dragend
     let _autofitEnabled = false;              // when true, renderCurrentSlide auto-fits all tiles
     let _preFitSizes = null;                  // tile sizes saved just before autofit is applied; restored when autofit is turned OFF
@@ -5088,6 +5241,8 @@
             valDiv.textContent = srcValue ? srcValue.textContent.trim() : '—';
             const lblDiv = document.createElement('div');
             lblDiv.className = 'metric-label';
+            lblDiv.contentEditable = 'true';
+            lblDiv.spellcheck = false;
             lblDiv.textContent = srcLabel ? srcLabel.textContent.trim() : '';
             tile.append(h3, valDiv, lblDiv);
         } else if (isOrgChart) {
@@ -5557,20 +5712,35 @@
         const gridRect = slideGrid.getBoundingClientRect();
         slideGrid.querySelectorAll('.card').forEach(card => {
             if (card.style.display === 'none') return;
-            const r = card.getBoundingClientRect();
-            card.style.left   = (r.left - gridRect.left) + 'px';
-            card.style.top    = (r.top  - gridRect.top)  + 'px';
-            card.style.width  = r.width  + 'px';
-            card.style.height = r.height + 'px';
+            // Restore previously saved freeform positions so tiles don't reset on layout toggle
+            if ('freeformLeft' in card.dataset || 'freeformTop' in card.dataset) {
+                card.style.left   = card.dataset.freeformLeft || '0px';
+                card.style.top    = card.dataset.freeformTop  || '0px';
+                if (card.dataset.freeformW) card.style.width  = card.dataset.freeformW;
+                if (card.dataset.freeformH) card.style.height = card.dataset.freeformH;
+            } else {
+                const r = card.getBoundingClientRect();
+                card.style.left   = (r.left - gridRect.left) + 'px';
+                card.style.top    = (r.top  - gridRect.top)  + 'px';
+                card.style.width  = r.width  + 'px';
+                card.style.height = r.height + 'px';
+            }
             _addFreeformDragHandle(card, slideGrid);
         });
     }
 
-    // Remove absolute position styles so grid layout resumes
+    // Remove absolute position styles so grid layout resumes; save positions for later restore
     function _exitFreeformLayout(slideGrid) {
         slideGrid.querySelectorAll('.card').forEach(card => {
-            card.style.left = '';
-            card.style.top  = '';
+            // Persist freeform position so re-entering freeform restores the user's layout
+            card.dataset.freeformLeft = card.style.left  || '0px';
+            card.dataset.freeformTop  = card.style.top   || '0px';
+            card.dataset.freeformW    = card.style.width  || '';
+            card.dataset.freeformH    = card.style.height || '';
+            // Clear absolute position and inline width; height can remain (grid rows adapt)
+            card.style.left  = '';
+            card.style.top   = '';
+            card.style.width = '';
             if (card.dataset.freeformDrag === '1') {
                 card.removeEventListener('pointerdown', _freeformPointerDown, false);
             }
@@ -5607,14 +5777,64 @@
         card.style.zIndex = '500';
         card.style.cursor = 'grabbing';
 
+        let swapTarget = null;
+
+        function _cardRect(c) {
+            return {
+                left:   parseFloat(c.style.left)   || 0,
+                top:    parseFloat(c.style.top)    || 0,
+                width:  parseFloat(c.style.width)  || c.offsetWidth,
+                height: parseFloat(c.style.height) || c.offsetHeight
+            };
+        }
+        function _overlapArea(a, b) {
+            const ox = Math.min(a.left + a.width,  b.left + b.width)  - Math.max(a.left, b.left);
+            const oy = Math.min(a.top  + a.height, b.top  + b.height) - Math.max(a.top,  b.top);
+            return (ox > 0 && oy > 0) ? ox * oy : 0;
+        }
+        function _findSwapTarget(dragLeft, dragTop) {
+            const dr = _cardRect(card);
+            const dragged = { left: dragLeft, top: dragTop, width: dr.width, height: dr.height };
+            const dragArea = dragged.width * dragged.height;
+            const minOverlapThreshold = 0.3; // require ≥30% overlap of the smaller tile
+            let best = null, bestRatio = 0;
+            slideGrid.querySelectorAll('.card').forEach(other => {
+                if (other === card || other.style.display === 'none') return;
+                const or = _cardRect(other);
+                const otherArea = or.width * or.height;
+                const overlap = _overlapArea(dragged, or);
+                const ratio = overlap / Math.min(dragArea, otherArea);
+                if (ratio > minOverlapThreshold && ratio > bestRatio) { bestRatio = ratio; best = other; }
+            });
+            return best;
+        }
+
         function onMove(ev) {
             const gr = slideGrid.getBoundingClientRect();
-            card.style.left = Math.max(0, ev.clientX - gr.left - offsetX) + 'px';
-            card.style.top  = Math.max(0, ev.clientY - gr.top  - offsetY) + 'px';
+            const newLeft = Math.max(0, ev.clientX - gr.left - offsetX);
+            const newTop  = Math.max(0, ev.clientY - gr.top  - offsetY);
+            card.style.left = newLeft + 'px';
+            card.style.top  = newTop  + 'px';
+
+            const candidate = _findSwapTarget(newLeft, newTop);
+            if (candidate !== swapTarget) {
+                if (swapTarget) swapTarget.style.outline = '';
+                swapTarget = candidate;
+                if (swapTarget) swapTarget.style.outline = '2px dashed var(--primary)';
+            }
         }
         function onUp() {
             card.style.zIndex = '';
             card.style.cursor = '';
+            if (swapTarget) {
+                swapTarget.style.outline = '';
+                const al = card.style.left, at = card.style.top;
+                card.style.left        = swapTarget.style.left;
+                card.style.top         = swapTarget.style.top;
+                swapTarget.style.left  = al;
+                swapTarget.style.top   = at;
+                swapTarget = null;
+            }
             card.removeEventListener('pointermove', onMove);
             card.removeEventListener('pointerup',   onUp);
         }
@@ -5638,39 +5858,80 @@
         }
     };
 
+    // Push a snapshot of the current slides state for undo.
+    function _pushSlideUndo() {
+        if (slides.length === 0) return;
+        try {
+            _slideUndoHistory.push(JSON.stringify(_buildSlidesPayload()));
+        } catch(e) { return; }
+        if (_slideUndoHistory.length > 20) _slideUndoHistory.shift();
+        const btn = document.getElementById('undoSlideBtn');
+        if (btn) btn.disabled = false;
+    }
+    // Restore the previous state from the undo history.
+    window.undoSlide = function() {
+        if (!_slideUndoHistory.length) return;
+        const prevJson = _slideUndoHistory.pop();
+        const btn = document.getElementById('undoSlideBtn');
+        if (btn) btn.disabled = _slideUndoHistory.length === 0;
+        // Write the snapshot to localStorage so loadSavedSlides can restore it
+        localStorage.setItem('dashboard:slides', prevJson);
+        loadSavedSlides();
+        renderSlideTabs();
+        renderCurrentSlide();
+    };
+    // Delete the active (last-clicked) slide tile.
+    window.deleteActiveSlideTile = function() {
+        if (!_activeSlideTile || !_activeSlideTile.isConnected) return;
+        const removeBtn = _activeSlideTile.querySelector('.tile-controls button[title="Remove"]');
+        if (removeBtn) removeBtn.click();
+    };
+
+    // Build the slides serialization payload (same format as saveSlides) for use in undo snapshots.
+    function _buildSlidesPayload() {
+        const slideGrid = getSlideGrid();
+        return slides.map(s => {
+            const tiles = s.tileIds.map(tileId => {
+                const el = slideGrid ? slideGrid.querySelector(`[data-tile-id="${tileId}"]`) : null;
+                if (!el) return { tileId };
+                const tileType = el.dataset.tileType || '';
+                return {
+                    tileId,
+                    title:       el.querySelector('h3')?.textContent || '',
+                    fields:      JSON.parse(el.dataset.fields || '[]'),
+                    chartType:   el.dataset.chartType || 'bar',
+                    tileMetric:  el.dataset.tileMetric || 'count',
+                    tileType,
+                    text:        el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
+                    textFontSize: tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.fontSize || '') : null,
+                    textAlign:    tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.textAlign || '') : null,
+                    metricValue:    tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
+                    metricLabel:    tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
+                    metricFontSize: tileType === 'metric' ? (el.querySelector('.metric-value')?.style.fontSize || '') : null,
+                    metricTitleFontSize: tileType === 'metric' ? (el.querySelector('h3')?.style.fontSize || '') : null,
+                    metricAlign:    tileType === 'metric' ? (el.querySelector('.metric-value')?.style.textAlign || el.style.textAlign || '') : null,
+                    metricDisplayFontSize: (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.fontSize || '') : null,
+                    metricDisplayAlign:    (el.dataset.chartType === 'metric') ? (el.querySelector('.slide-metric-display .metric-value')?.style.textAlign || '') : null,
+                    orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
+                    orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
+                    tableHtml:    tileType === 'table' ? (el.querySelector('.table-wrapper')?.innerHTML || '') : null,
+                    height:      el.style.height || '',
+                    width:       el.style.width  || '',
+                    span:        el.dataset.span  || '',
+                    freeformLeft: el.dataset.freeformLeft || el.style.left  || '',
+                    freeformTop:  el.dataset.freeformTop  || el.style.top   || '',
+                    freeformW:    el.dataset.freeformW    || '',
+                    freeformH:    el.dataset.freeformH    || ''
+                };
+            });
+            return { name: s.name, tileIds: s.tileIds.slice(), topN: s.topN, layout: s.layout || 'auto', theme: s.theme || 'match', tiles };
+        });
+    }
+
     function saveSlides() {
         if (slides.length === 0) { alert('No slides to save.'); return; }
         try {
-            const slideGrid = getSlideGrid();
-            const payload = slides.map(s => {
-                // Serialize each tile's config so they can be fully recreated on reload
-                const tiles = s.tileIds.map(tileId => {
-                    const el = slideGrid ? slideGrid.querySelector(`[data-tile-id="${tileId}"]`) : null;
-                    if (!el) return { tileId };
-                    const tileType = el.dataset.tileType || '';
-                    return {
-                        tileId,
-                        title:       el.querySelector('h3')?.textContent || '',
-                        fields:      JSON.parse(el.dataset.fields || '[]'),
-                        chartType:   el.dataset.chartType || 'bar',
-                        tileMetric:  el.dataset.tileMetric || 'count',
-                        tileType,
-                        text:        el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
-                        // Metric tile: persist displayed value + label for reload
-                        metricValue: tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
-                        metricLabel: tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
-                        // Org-chart tile: persist static HTML snapshot + selected company filter for reload
-                        orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
-                        orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
-                        // Table tile: persist the cloned table HTML for reload
-                        tableHtml:    tileType === 'table' ? (el.querySelector('.table-wrapper')?.innerHTML || '') : null,
-                        height:      el.style.height || '',
-                        width:       el.style.width  || '',
-                        span:        el.dataset.span  || ''
-                    };
-                });
-                return { name: s.name, tileIds: s.tileIds.slice(), topN: s.topN, layout: s.layout || 'auto', theme: s.theme || 'match', tiles };
-            });
+            const payload = _buildSlidesPayload();
             localStorage.setItem('dashboard:slides', JSON.stringify(payload));
             // Visual feedback
             const btn = document.getElementById('saveSlidesBtn');
@@ -5681,19 +5942,11 @@
                 setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 1500);
             }
             // Also persist to server (create/update the user's JSON file with latest slide state)
-            const dashboardPayload = {
-                order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
-                sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
-                config:    localStorage.getItem('dashboard:config'),
-                filters:   localStorage.getItem('dashboard:filters'),
-                map:       localStorage.getItem('dashboard:map'),
-                orgFilter: localStorage.getItem('dashboard:orgFilter')
-            };
             fetch(`${API_BASE}/dashboard/save-state`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 credentials: 'include',
-                body: JSON.stringify({ dashboard: dashboardPayload, slide: payload })
+                body: JSON.stringify({ dashboard: _assembleDashboardPayload(), slide: payload })
             }).catch(e => console.warn('Could not sync slides to server:', e));
         } catch(err) {
             console.warn('Failed to save slides:', err);
@@ -5762,6 +6015,9 @@
                         tile.className = 'card text-tile';
                         tile.dataset.tileType = 'text';
                         tile.innerHTML = `<textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false">${cfg.text || ''}</textarea>`;
+                        const ed = tile.querySelector('.text-tile-editor');
+                        if (cfg.textFontSize) ed.style.fontSize = cfg.textFontSize;
+                        if (cfg.textAlign) ed.style.textAlign = cfg.textAlign;
                     } else if (tileType === 'metric') {
                         // Restore static metric/KPI tile
                         tile.className = 'card metric-card';
@@ -5777,7 +6033,17 @@
                         mVal.textContent = cfg.metricValue || '—';
                         const mLbl = document.createElement('div');
                         mLbl.className = 'metric-label';
+                        mLbl.contentEditable = 'true';
+                        mLbl.spellcheck = false;
                         mLbl.textContent = cfg.metricLabel || '';
+                        // Restore font size and alignment if persisted
+                        if (cfg.metricFontSize) mVal.style.fontSize = cfg.metricFontSize;
+                        if (cfg.metricTitleFontSize) mH3.style.fontSize = cfg.metricTitleFontSize;
+                        if (cfg.metricAlign) {
+                            tile.style.textAlign = cfg.metricAlign;
+                            tile.style.alignItems = 'stretch';
+                            [mH3, mVal, mLbl].forEach(e => { e.style.textAlign = cfg.metricAlign; });
+                        }
                         tile.append(mH3, mVal, mLbl);
                     } else if (tileType === 'org-chart') {
                         // Restore static org-chart snapshot with company filter
@@ -5856,8 +6122,17 @@
                             <div class="active-tags">${fields.map(f=>`<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}</div>
                         `;
                         if (cfg.height) tile.style.height = cfg.height;
-                        if (cfg.width)  tile.style.width  = cfg.width;
+                        // Only restore inline width for freeform slides; grid layouts use span-based sizing
+                        if (cfg.width && (slide.layout || '') === 'freeform') tile.style.width = cfg.width;
                         if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
+                        // Restore freeform positions
+                        if (cfg.freeformLeft) tile.dataset.freeformLeft = cfg.freeformLeft;
+                        if (cfg.freeformTop)  tile.dataset.freeformTop  = cfg.freeformTop;
+                        if (cfg.freeformW)    tile.dataset.freeformW    = cfg.freeformW;
+                        if (cfg.freeformH)    tile.dataset.freeformH    = cfg.freeformH;
+                        // Persist metric-display font size/align for chart tiles in Metric/KPI mode
+                        if (cfg.metricDisplayFontSize) tile.dataset.metricDisplayFontSize = cfg.metricDisplayFontSize;
+                        if (cfg.metricDisplayAlign)    tile.dataset.metricDisplayAlign    = cfg.metricDisplayAlign;
                         tile.dataset.baseSpan = cfg.span || '12';
                         tile.dataset.baseHeight = '450';
                         slideGrid.appendChild(tile);
@@ -5874,8 +6149,14 @@
                     }
 
                     if (cfg.height) tile.style.height = cfg.height;
-                    if (cfg.width)  tile.style.width  = cfg.width;
+                    // Only restore inline width for freeform slides; grid layouts use span-based sizing
+                    if (cfg.width && (slide.layout || '') === 'freeform') tile.style.width = cfg.width;
                     if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
+                    // Restore freeform positions to dataset so _enterFreeformLayout uses them
+                    if (cfg.freeformLeft) tile.dataset.freeformLeft = cfg.freeformLeft;
+                    if (cfg.freeformTop)  tile.dataset.freeformTop  = cfg.freeformTop;
+                    if (cfg.freeformW)    tile.dataset.freeformW    = cfg.freeformW;
+                    if (cfg.freeformH)    tile.dataset.freeformH    = cfg.freeformH;
                     tile.dataset.baseSpan = cfg.span || '12';
                     slideGrid.appendChild(tile);
                     _initSlideTile(tile);
@@ -5972,10 +6253,32 @@
             for (let i = 0; i < slides.length; i++) {
                 currentSlideIndex = i;
                 renderCurrentSlide();
-                // Brief paint pause so charts redraw
-                await new Promise(resolve => setTimeout(resolve, 200));
+                // Check if this slide has any map tiles; maps need more time to load tiles
+                const slideGrid = getSlideGrid();
+                const hasMap = slideGrid && slideGrid.querySelector('[data-chart-type="map"]') !== null;
+                const paintDelay = hasMap ? 1200 : 300;
+                await new Promise(resolve => setTimeout(resolve, paintDelay));
+                // For map slides, ensure Leaflet maps are fully re-rendered before capture
+                if (hasMap) {
+                    const mapTiles = slideGrid.querySelectorAll('[data-chart-type="map"]');
+                    mapTiles.forEach(t => {
+                        const mapDiv = t.querySelector('[id^="tilemap-"]');
+                        if (mapDiv && mapDiv._leafletMap) {
+                            try { mapDiv._leafletMap.invalidateSize(true); } catch (e) { /* ignore */ }
+                        }
+                    });
+                    // Extra paint pause after invalidateSize
+                    await new Promise(resolve => setTimeout(resolve, 400));
+                }
 
-                const canvas = await html2canvas(content, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                const canvas = await html2canvas(content, {
+                    scale: 2,
+                    useCORS: true,
+                    allowTaint: true,      // allow map tile images from external CDN (e.g. OpenStreetMap)
+                    backgroundColor: '#ffffff',
+                    logging: false,
+                    imageTimeout: 15000    // map tile images can take longer to load over slow connections
+                });
                 const imgData = canvas.toDataURL('image/png');
 
                 const pptSlide = pptx.addSlide();
@@ -6169,28 +6472,72 @@
         setTimeout(() => updateChart(canvasId, dimension, chartType, tile.dataset.tileMetric || 'count'), 0);
     }
 
+    // Swap two slide tiles' DOM positions (autogrid layout; also updates tileIds order)
+    function _swapSlideTiles(tileA, tileB) {
+        const parent = tileA.parentNode;
+        if (!parent || parent !== tileB.parentNode) return;
+        // Use comment markers to safely swap when tiles are siblings
+        const swapMarkerA = document.createComment('');
+        const swapMarkerB = document.createComment('');
+        parent.insertBefore(swapMarkerA, tileA);
+        parent.insertBefore(swapMarkerB, tileB);
+        parent.insertBefore(tileA, swapMarkerB);
+        parent.insertBefore(tileB, swapMarkerA);
+        swapMarkerA.remove();
+        swapMarkerB.remove();
+        // Keep slide.tileIds in sync with DOM order
+        const idSlide = slides[currentSlideIndex];
+        if (idSlide) {
+            const idA = tileA.dataset.tileId, idB = tileB.dataset.tileId;
+            const ia = idSlide.tileIds.indexOf(idA), ib = idSlide.tileIds.indexOf(idB);
+            if (ia !== -1 && ib !== -1) {
+                [idSlide.tileIds[ia], idSlide.tileIds[ib]] = [idSlide.tileIds[ib], idSlide.tileIds[ia]];
+            }
+        }
+    }
+
     // Set up drop-zone behavior on a slide tile (supports multiple tags → chart)
     function _setupSlideTileDrop(tile) {
         tile.addEventListener('dragover', e => {
             if (e.dataTransfer.types.includes('application/x-filter-field')) {
                 e.preventDefault();
                 tile.classList.add('drag-over');
+            } else if (e.dataTransfer.types.includes('application/x-slide-tile-id')) {
+                // Tile-to-tile swap (grid layouts only — freeform uses pointer-capture)
+                const slideGrid = tile.closest('#slideGrid');
+                if (slideGrid && !slideGrid.classList.contains('slide-layout-freeform')) {
+                    e.preventDefault();
+                    tile.classList.add('swap-target');
+                }
             }
         });
-        tile.addEventListener('dragleave', () => tile.classList.remove('drag-over'));
-        tile.addEventListener('drop', e => {
-            e.preventDefault();
+        tile.addEventListener('dragleave', () => {
             tile.classList.remove('drag-over');
+            tile.classList.remove('swap-target');
+        });
+        tile.addEventListener('drop', e => {
+            tile.classList.remove('drag-over');
+            tile.classList.remove('swap-target');
+            // Tile-to-tile swap
+            const srcId = e.dataTransfer.getData('application/x-slide-tile-id');
+            if (srcId && srcId !== tile.dataset.tileId) {
+                const slideGrid = tile.closest('#slideGrid');
+                if (slideGrid && !slideGrid.classList.contains('slide-layout-freeform')) {
+                    e.preventDefault();
+                    const srcTile = slideGrid.querySelector(`[data-tile-id="${srcId}"]`);
+                    if (srcTile) _swapSlideTiles(srcTile, tile);
+                    return;
+                }
+            }
+            // Field drop → chart conversion
+            e.preventDefault();
             const field = e.dataTransfer.getData('application/x-filter-field');
             if (!field) return;
-            // Accumulate fields on the tile
             let fields = [];
             try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
             if (!fields.includes(field)) fields.push(field);
             const slide = slides[currentSlideIndex];
-            // Transform using slide-specific function (no dashboard side effects)
             _transformSlideTile(tile, fields);
-            // Ensure tile is in the current slide
             if (slide && !slide.tileIds.includes(tile.dataset.tileId)) {
                 slide.tileIds.push(tile.dataset.tileId);
             }
@@ -6375,6 +6722,23 @@
         });
         renderSlideTabs();
     }
+
+    // Global keyboard handler: Delete removes the active slide tile; Ctrl+Z undoes last action
+    document.addEventListener('keydown', function(e) {
+        const viewer = document.getElementById('slideshowViewer');
+        if (!viewer || !viewer.classList.contains('active')) return;
+        // Don't fire when user is editing text in an input, textarea, or contenteditable
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' ||
+            active.isContentEditable || active.tagName === 'SELECT')) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            deleteActiveSlideTile();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+            e.preventDefault();
+            undoSlide();
+        }
+    });
 </script>
 
 <!-- ====== SLIDESHOW VIEWER OVERLAY ====== -->
@@ -6427,6 +6791,7 @@
             </span>
             <!-- Slide tabs -->
             <div class="slide-tabs" id="slideTabs"></div>
+            <button class="add-tile-btn" id="undoSlideBtn" onclick="undoSlide()" title="Undo last tile action (Ctrl+Z)" disabled style="background:#7c3aed;">↩ Undo</button>
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addTextTileToCurrentSlide()" title="Add a text tile for notes or descriptions">+ Add Text</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
