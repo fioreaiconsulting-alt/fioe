@@ -1239,7 +1239,7 @@
         #slideGrid.slide-layout-2col { grid-template-columns: repeat(2, 1fr) !important; }
         #slideGrid.slide-layout-3col { grid-template-columns: repeat(3, 1fr) !important; }
         #slideGrid.slide-layout-4col { grid-template-columns: repeat(4, 1fr) !important; }
-        #slideGrid.slide-layout-freeform { display: block !important; position: relative; }
+        #slideGrid.slide-layout-freeform { display: block !important; position: relative; min-height: 800px; }
         #slideGrid.slide-layout-freeform .card {
             position: absolute;
             resize: both;
@@ -4875,8 +4875,7 @@
                 <div class="active-tags">${fields.map(f=>`<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}</div>
             `;
             slideGrid.appendChild(tile);
-            addTileControls(tile);
-            _setupSlideTileDrop(tile);
+            _initSlideTile(tile);
             setTimeout(() => updateChart(canvasId, dimension, chartType, tileMetric), 0);
             return tileId;
         } else {
@@ -4887,8 +4886,7 @@
         }
 
         slideGrid.appendChild(tile);
-        addTileControls(tile);
-        _setupSlideTileDrop(tile);
+        _initSlideTile(tile);
         return tileId;
     }
 
@@ -5299,8 +5297,7 @@
                         tile.dataset.baseSpan = cfg.span || '12';
                         tile.dataset.baseHeight = '450';
                         slideGrid.appendChild(tile);
-                        addTileControls(tile);
-                        _setupSlideTileDrop(tile);
+                        _initSlideTile(tile);
                         setTimeout(() => updateChart(canvasId, dimension, chartType, tileMetric), 0);
                         slide.tileIds.push(tileId);
                         const match = tileId.match(/(\d+)$/);
@@ -5317,8 +5314,7 @@
                     if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
                     tile.dataset.baseSpan = cfg.span || '12';
                     slideGrid.appendChild(tile);
-                    _setupSlideTileDrop(tile);
-                    addTileControls(tile);
+                    _initSlideTile(tile);
                     slide.tileIds.push(tileId);
                     const match = tileId.match(/(\d+)$/);
                     if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10));
@@ -5481,9 +5477,8 @@
             <div class="empty-tile-content">Drag filter tags here to build a chart</div>
         `;
         slideGrid.appendChild(tile);
-        // Setup drag-drop and controls (no enableTileInteractivity — slide tiles are independent)
-        _setupSlideTileDrop(tile);
-        addTileControls(tile);
+        // Setup controls, drop zone, and tab-drag — no enableTileInteractivity (slide tiles are independent)
+        _initSlideTile(tile);
 
         slides.push({ name: slideName, tileIds: [tileId], topN: null, layout: 'auto', theme: 'match' });
         currentSlideIndex = slides.length - 1;
@@ -5508,8 +5503,7 @@
             <div class="empty-tile-content">Drag filter tags here to build a chart</div>
         `;
         slideGrid.appendChild(tile);
-        _setupSlideTileDrop(tile);
-        addTileControls(tile);
+        _initSlideTile(tile);
         slide.tileIds.push(tileId);
         // Hide tiles not in this slide, show the new one
         document.getElementById('slideDropZone').style.display = 'none';
@@ -5536,7 +5530,7 @@
             <textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false"></textarea>
         `;
         slideGrid.appendChild(tile);
-        addTileControls(tile);
+        _initSlideTile(tile);
         slide.tileIds.push(tileId);
         document.getElementById('slideDropZone').style.display = 'none';
         slideGrid.style.display = '';
@@ -5546,7 +5540,71 @@
         renderSlideTabs();
     }
 
-    // Set up drop-zone behavior on a slide tile (supports multiple tags → transformToChartTile)
+    // Make a slide tile draggable so it can be copied to another slide tab via drag-and-drop.
+    // Unlike makeDraggable (for dashboard tiles), this ONLY handles tab-copy — no grid reordering.
+    function _makeSlideTileDraggable(tile) {
+        if (tile.dataset.slideDraggable === '1') return; // idempotent
+        tile.dataset.slideDraggable = '1';
+        tile.setAttribute('draggable', 'true');
+        tile.addEventListener('dragstart', e => {
+            // Block drag from interactive elements
+            if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' ||
+                e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+                e.preventDefault();
+                return;
+            }
+            if (tile.dataset.tileId) {
+                e.dataTransfer.setData('application/x-slide-tile-id', tile.dataset.tileId);
+            }
+            e.dataTransfer.effectAllowed = 'copy';
+            tile.classList.add('dragging');
+        });
+        tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+    }
+
+    // Shared initializer for slide tiles: controls + drop zone + drag-to-copy
+    function _initSlideTile(tile) {
+        addTileControls(tile);
+        _setupSlideTileDrop(tile);
+        _makeSlideTileDraggable(tile);
+    }
+
+    // Transform an existing slide tile into a chart tile — slide-specific, no dashboard side effects
+    function _transformSlideTile(tile, fields, chartType) {
+        chartType = chartType || tile.dataset.chartType || 'bar';
+        const dimension = fields[fields.length - 1];
+        const canvasId = `slideChart-${tile.dataset.tileId}`;
+        tile.className = 'card chart-card custom-metric-tile';
+        tile.dataset.fields = JSON.stringify(fields);
+        tile.dataset.chartType = chartType;
+        tile.dataset.baseSpan = tile.dataset.baseSpan || '12';
+        tile.dataset.baseHeight = tile.dataset.baseHeight || '450';
+        tile.innerHTML = `
+            <div class="card-header">
+                <h3>${formatLabel(dimension)} Analysis</h3>
+                <select class="chart-type-select" onchange="updateCustomChart('${canvasId}','${dimension}',this.value,this.closest('.card'))">
+                    <option value="bar" ${chartType==='bar'?'selected':''}>Bar</option>
+                    <option value="horizontalBar" ${chartType==='horizontalBar'?'selected':''}>Horizontal Bar</option>
+                    <option value="pie" ${chartType==='pie'?'selected':''}>Pie</option>
+                    <option value="line" ${chartType==='line'?'selected':''}>Line</option>
+                    <option value="area" ${chartType==='area'?'selected':''}>Area</option>
+                    <option value="doughnut" ${chartType==='doughnut'?'selected':''}>Doughnut</option>
+                    <option value="polarArea" ${chartType==='polarArea'?'selected':''}>Polar Area</option>
+                    <option value="radar" ${chartType==='radar'?'selected':''}>Radar</option>
+                    <option value="scatter" ${chartType==='scatter'?'selected':''}>Scatter</option>
+                    <option value="bubble" ${chartType==='bubble'?'selected':''}>Bubble</option>
+                    <option value="map" ${chartType==='map'?'selected':''}>Map</option>
+                    <option value="table" ${chartType==='table'?'selected':''}>Table</option>
+                </select>
+            </div>
+            <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
+            <div class="active-tags">${fields.map(f=>`<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}</div>
+        `;
+        _initSlideTile(tile);
+        setTimeout(() => updateChart(canvasId, dimension, chartType, tile.dataset.tileMetric || 'count'), 0);
+    }
+
+    // Set up drop-zone behavior on a slide tile (supports multiple tags → chart)
     function _setupSlideTileDrop(tile) {
         tile.addEventListener('dragover', e => {
             if (e.dataTransfer.types.includes('application/x-filter-field')) {
@@ -5560,13 +5618,13 @@
             tile.classList.remove('drag-over');
             const field = e.dataTransfer.getData('application/x-filter-field');
             if (!field) return;
-            // Accumulate fields on the tile (same logic as existing empty tile drop zone)
+            // Accumulate fields on the tile
             let fields = [];
             try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
             if (!fields.includes(field)) fields.push(field);
             const slide = slides[currentSlideIndex];
-            // Replace the empty tile content with a chart (reuse transformToChartTile)
-            transformToChartTile(tile, fields);
+            // Transform using slide-specific function (no dashboard side effects)
+            _transformSlideTile(tile, fields);
             // Ensure tile is in the current slide
             if (slide && !slide.tileIds.includes(tile.dataset.tileId)) {
                 slide.tileIds.push(tile.dataset.tileId);
@@ -5603,7 +5661,7 @@
 
             tab.addEventListener('click', () => { currentSlideIndex = idx; renderCurrentSlide(); });
 
-            // Drop target: accept tile-move drags to move a tile into this slide
+            // Drop target: accept tile drags to copy a tile into this slide
             tab.addEventListener('dragover', e => {
                 if (e.dataTransfer.types.includes('application/x-slide-tile-id')) {
                     e.preventDefault();
@@ -5616,27 +5674,36 @@
                 tab.classList.remove('drop-target');
                 const tileId = e.dataTransfer.getData('application/x-slide-tile-id');
                 if (!tileId) return;
-                _tileDroppedOnTab = true;  // tell makeDraggable dragend not to restore card position
-                moveTileToSlide(tileId, idx);
+                // Copy tile to target slide (keep it in source slide too)
+                copyTileToSlide(tileId, idx);
             });
 
             tabsEl.appendChild(tab);
         });
     }
 
-    // Move a tile from whichever slide owns it to target slide index
+    // Copy a tile to a target slide — keeps the tile in its source slide(s) as well
+    function copyTileToSlide(tileId, targetIdx) {
+        if (!slides[targetIdx]) return;
+        // Add to target slide (avoid duplicates)
+        if (!slides[targetIdx].tileIds.includes(tileId)) {
+            slides[targetIdx].tileIds.push(tileId);
+        }
+        // Stay on the current slide (tile was copied, not moved)
+        renderCurrentSlide();
+    }
+
+    // Keep moveTileToSlide for any internal use that explicitly wants a move operation
     function moveTileToSlide(tileId, targetIdx) {
-        // Remove from source slide
+        // Remove from all other slides
         slides.forEach((s, i) => {
             if (i !== targetIdx) {
                 s.tileIds = s.tileIds.filter(id => id !== tileId);
             }
         });
-        // Add to target slide (avoid duplicates)
         if (!slides[targetIdx].tileIds.includes(tileId)) {
             slides[targetIdx].tileIds.push(tileId);
         }
-        // If we moved away from current slide, re-render it
         renderCurrentSlide();
     }
 
@@ -5727,8 +5794,7 @@
             <div class="active-tags"><span class="active-tag">${field}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${field}">×</button></span></div>
         `;
         slideGrid.appendChild(tile);
-        addTileControls(tile);
-        _setupSlideTileDrop(tile);
+        _initSlideTile(tile);
 
         slide.tileIds.push(tileId);
 
