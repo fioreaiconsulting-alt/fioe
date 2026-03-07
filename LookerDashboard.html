@@ -853,8 +853,9 @@
            Keep them visually solid while dragging — the drag ghost is a browser-rendered snapshot. */
         .map-card.dragging,
         .org-chart-card.dragging { opacity: 0.85; }
-        /* Slide map chart tiles (data-chart-type=map) stay solid while being dragged */
-        #slideGrid .card.dragging[data-chart-type="map"] { opacity: 0.85; }
+        /* Slide map chart tiles (data-chart-type=map) stay fully opaque while being dragged;
+           indicate drag state with a primary-color outline instead of fading the map. */
+        #slideGrid .card.dragging[data-chart-type="map"] { opacity: 1; box-shadow: 0 0 0 3px var(--primary, #3b82f6); }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -1311,6 +1312,29 @@
         #slideGrid.slide-theme-cyberpunk .text-tile-editor {
             background: var(--bg-card);
             color: var(--text-main);
+        }
+        /* Tile controls (top-N/font-size slider bar) in dark/cyberpunk slide themes:
+           .tile-controls uses var(--bg-body) by default which stays LIGHT when the global
+           page theme is light. Override with var(--bg-card) so the control bar matches the
+           dark card background, keeping text legible. */
+        #slideGrid.slide-theme-dark .tile-controls,
+        #slideGrid.slide-theme-cyberpunk .tile-controls {
+            background: var(--bg-card) !important;
+            border-color: var(--border) !important;
+        }
+        #slideGrid.slide-theme-dark .tile-controls button,
+        #slideGrid.slide-theme-dark .tile-topn-label,
+        #slideGrid.slide-theme-cyberpunk .tile-controls button,
+        #slideGrid.slide-theme-cyberpunk .tile-topn-label {
+            color: var(--text-main) !important;
+            background: var(--bg-card) !important;
+            border-color: var(--border) !important;
+        }
+        #slideGrid.slide-theme-dark .tile-metric-select,
+        #slideGrid.slide-theme-cyberpunk .tile-metric-select {
+            background: var(--bg-card) !important;
+            color: var(--text-main) !important;
+            border-color: var(--border) !important;
         }
 
         .slideshow-nav {
@@ -3006,6 +3030,7 @@
         canvas.style.display = 'none';
         let mapDiv = container.querySelector(`#tilemap-${canvasId}`);
         if (mapDiv && mapDiv._leafletMap) { mapDiv._leafletMap.remove(); mapDiv.innerHTML = ''; }
+        if (mapDiv) delete mapDiv._leaflet_id; // Always clear so Leaflet can re-init cleanly
         if (!mapDiv) {
             mapDiv = document.createElement('div');
             mapDiv.id = `tilemap-${canvasId}`;
