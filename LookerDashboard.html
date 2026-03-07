@@ -3954,7 +3954,14 @@
         // Use the card's own parent grid so slide tiles use slideGrid dimensions
         const grid = card.closest('#dashboardGrid, #slideGrid') || document.getElementById('dashboardGrid');
         const gridWidth = (grid && grid.offsetWidth > 0) ? grid.offsetWidth : 1200;
-        const COLS = 12, GAP = 24; // must match grid-template-columns / gap in CSS
+        // Detect actual column count from slide layout classes so 2/3/4-col grids snap correctly
+        let COLS = 12;
+        if (grid) {
+            if (grid.classList.contains('slide-layout-2col'))      COLS = 2;
+            else if (grid.classList.contains('slide-layout-3col')) COLS = 3;
+            else if (grid.classList.contains('slide-layout-4col')) COLS = 4;
+        }
+        const GAP = 24; // must match gap in CSS
         // Width occupied by one column (including its trailing gap)
         const colUnit = (gridWidth + GAP) / COLS;
         const rawSpan = (card.offsetWidth + GAP) / colUnit;
@@ -4019,14 +4026,16 @@
         }));
 
         // Shared onUp callback for width-changing handles: snap to nearest grid column span
-        // so the freed space can be filled by dragging other tiles (jigsaw layout).
-        // Skip snap for all slide tiles (freeform OR grid layouts) — inline width must persist
-        // so tiles don't bounce back to their default CSS grid span on release.
+        // so freed space is filled by other tiles (jigsaw layout) via grid-auto-flow: dense.
+        // Skip snap ONLY for freeform tiles where inline width must be preserved.
         function snapWidthToSpan() {
-            if (card.closest('#slideGrid')) return; // all slide tiles keep inline width
+            const sg = card.closest('#slideGrid');
+            if (sg && sg.classList.contains('slide-layout-freeform')) return; // freeform keeps inline width
             const span = widthToGridSpan(card);
             card.dataset.span = String(span);
-            card.style.width = '';
+            card.style.width = ''; // clear inline width — grid-column span controls size
+            // For slide tiles, also update style.gridColumn (overrides any previously set inline value)
+            if (sg) card.style.gridColumn = `span ${span}`;
         }
 
         // East handle — width only (drag right edge)
@@ -6113,7 +6122,8 @@
                             <div class="active-tags">${fields.map(f=>`<span class="active-tag">${f}<button class="tag-remove-btn" title="Remove tag" data-remove-field="${f}">×</button></span>`).join('')}</div>
                         `;
                         if (cfg.height) tile.style.height = cfg.height;
-                        if (cfg.width)  tile.style.width  = cfg.width;
+                        // Only restore inline width for freeform slides; grid layouts use span-based sizing
+                        if (cfg.width && (slide.layout || '') === 'freeform') tile.style.width = cfg.width;
                         if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
                         // Restore freeform positions
                         if (cfg.freeformLeft) tile.dataset.freeformLeft = cfg.freeformLeft;
@@ -6139,7 +6149,8 @@
                     }
 
                     if (cfg.height) tile.style.height = cfg.height;
-                    if (cfg.width)  tile.style.width  = cfg.width;
+                    // Only restore inline width for freeform slides; grid layouts use span-based sizing
+                    if (cfg.width && (slide.layout || '') === 'freeform') tile.style.width = cfg.width;
                     if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
                     // Restore freeform positions to dataset so _enterFreeformLayout uses them
                     if (cfg.freeformLeft) tile.dataset.freeformLeft = cfg.freeformLeft;
