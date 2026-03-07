@@ -484,7 +484,7 @@
             position: relative;
         }
         .chart-card.full-width { grid-column: span 12; }
-        .chart-container { position: relative; flex: 1; width: 100%; height: 100%; min-height: 0; }
+        .chart-container { position: relative; flex: 1; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 
         /* Map Card */
         /* Updated: Ensuring Map and Org Chart share identical height sizing */
@@ -714,7 +714,7 @@
             gap: 6px;
             opacity: 0;
             transition: opacity .2s ease;
-            z-index: 5;
+            z-index: 1000;
             background: var(--bg-body, #fff);
             border: 1px solid var(--border, #e5e7eb);
             border-radius: 8px;
@@ -3816,7 +3816,8 @@
                 function onUp() {
                     handle.classList.remove('dragging');
                     if (onUpCallback) onUpCallback();
-                    persistSizes();
+                    // Only persist dashboard tile sizes — slide tiles are saved independently
+                    if (!card.closest('#slideshowViewer')) persistSizes();
                     handle.removeEventListener('pointermove', onMove);
                     handle.removeEventListener('pointerup', onUp);
                     handle.removeEventListener('pointercancel', onUp);
@@ -4145,11 +4146,19 @@
         removeBtn.addEventListener('click', (ev) => {
             ev.stopPropagation();
             const tileId = tile.dataset.tileId;
+            // If this tile is in a slide, remove from slide tileIds array
             if (tileId) {
                 slides.forEach(s => { s.tileIds = s.tileIds.filter(id => id !== tileId); });
             }
             tile.remove();
-            renderCurrentSlide();
+            // Decide whether to update slide view or dashboard persistence
+            const inSlideViewer = !!tile.closest('#slideshowViewer');
+            if (inSlideViewer) {
+                renderCurrentSlide();
+            } else {
+                persistOrder();
+                persistSizes();
+            }
         });
         controls.appendChild(removeBtn);
         tile.appendChild(controls);
@@ -4801,21 +4810,43 @@
     function _cloneTileToSlideGrid(srcCard) {
         const slideGrid = getSlideGrid();
         const tileId = `tile-slide-${++_slideIdCounter}`;
-        const fields = JSON.parse(srcCard.dataset.fields || '[]');
-        const chartType = srcCard.dataset.chartType || 'bar';
+        let fields = JSON.parse(srcCard.dataset.fields || '[]');
+        let chartType = srcCard.dataset.chartType || 'bar';
         const tileMetric = srcCard.dataset.tileMetric || 'count';
         const isText = srcCard.dataset.tileType === 'text';
+
+        // Standard dashboard chart tiles (geoChart, familyChart, etc.) don't have data-fields.
+        // Detect their dimension + current chart type from the chart-type-select.
+        // Expected onchange format: updateChartType('canvasId', 'dimension', this.value)
+        if (!isText && fields.length === 0 && srcCard.classList.contains('chart-card')) {
+            const sel = srcCard.querySelector('select.chart-type-select');
+            if (sel) {
+                const oc = (sel.getAttribute('onchange') || '').replace(/\s+/g, ' ');
+                // Match both single- and double-quoted arguments; allow optional whitespace
+                const m = oc.match(/updateChartType\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/);
+                if (m) {
+                    fields = [m[2]];           // e.g. ['country'] — the dimension argument
+                    // sel.value reflects the user's current selection; fall back to first option
+                    chartType = sel.value || (sel.options[0] && sel.options[0].value) || 'bar';
+                }
+            }
+        }
+
         const isChart = srcCard.classList.contains('chart-card') && fields.length > 0;
 
         const tile = document.createElement('div');
         tile.dataset.tileId = tileId;
+        tile.dataset.baseSpan = '12';
+        tile.dataset.span = '12';
+        tile.dataset.baseHeight = '450';
 
         if (isText) {
             tile.className = 'card text-tile';
             tile.dataset.tileType = 'text';
+            tile.dataset.baseHeight = '200';
             const srcText = srcCard.querySelector('.text-tile-editor');
             tile.innerHTML = `<textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false">${srcText ? srcText.value : ''}</textarea>`;
-        } else if (isChart && fields.length > 0) {
+        } else if (isChart) {
             const dimension = fields[fields.length - 1];
             const canvasId = `slideChart-${tileId}`;
             tile.className = 'card chart-card custom-metric-tile';
@@ -4845,19 +4876,18 @@
             `;
             slideGrid.appendChild(tile);
             addTileControls(tile);
-            enableTileInteractivity(tile);
             _setupSlideTileDrop(tile);
             setTimeout(() => updateChart(canvasId, dimension, chartType, tileMetric), 0);
             return tileId;
         } else {
-            // Generic empty / metric tile
+            // Generic empty / metric tile — still useful as a placeholder
             tile.className = 'card empty-tile';
+            tile.dataset.baseHeight = '200';
             tile.innerHTML = `<h3>Slide Tile</h3><div class="empty-tile-content">Drag filter tags here to build a chart</div>`;
         }
 
         slideGrid.appendChild(tile);
         addTileControls(tile);
-        enableTileInteractivity(tile);
         _setupSlideTileDrop(tile);
         return tileId;
     }
@@ -5266,9 +5296,10 @@
                         if (cfg.height) tile.style.height = cfg.height;
                         if (cfg.width)  tile.style.width  = cfg.width;
                         if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
+                        tile.dataset.baseSpan = cfg.span || '12';
+                        tile.dataset.baseHeight = '450';
                         slideGrid.appendChild(tile);
                         addTileControls(tile);
-                        enableTileInteractivity(tile);
                         _setupSlideTileDrop(tile);
                         setTimeout(() => updateChart(canvasId, dimension, chartType, tileMetric), 0);
                         slide.tileIds.push(tileId);
@@ -5277,16 +5308,17 @@
                         return;
                     } else {
                         tile.className = 'card empty-tile';
+                        tile.dataset.baseHeight = '200';
                         tile.innerHTML = `<h3>Slide Tile</h3><div class="empty-tile-content">Drag filter tags here to build a chart</div>`;
                     }
 
                     if (cfg.height) tile.style.height = cfg.height;
                     if (cfg.width)  tile.style.width  = cfg.width;
                     if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
+                    tile.dataset.baseSpan = cfg.span || '12';
                     slideGrid.appendChild(tile);
                     _setupSlideTileDrop(tile);
                     addTileControls(tile);
-                    enableTileInteractivity(tile);
                     slide.tileIds.push(tileId);
                     const match = tileId.match(/(\d+)$/);
                     if (match) _slideIdCounter = Math.max(_slideIdCounter, parseInt(match[1], 10));
@@ -5441,15 +5473,17 @@
         const tile = document.createElement('div');
         tile.className = 'card empty-tile';
         tile.dataset.tileId = tileId;
+        tile.dataset.baseSpan = '12';
+        tile.dataset.span = '12';
+        tile.dataset.baseHeight = '200';
         tile.innerHTML = `
             <h3>Slide Tile</h3>
             <div class="empty-tile-content">Drag filter tags here to build a chart</div>
         `;
         slideGrid.appendChild(tile);
-        // Setup drag-drop and controls
+        // Setup drag-drop and controls (no enableTileInteractivity — slide tiles are independent)
         _setupSlideTileDrop(tile);
         addTileControls(tile);
-        enableTileInteractivity(tile);
 
         slides.push({ name: slideName, tileIds: [tileId], topN: null, layout: 'auto', theme: 'match' });
         currentSlideIndex = slides.length - 1;
@@ -5466,6 +5500,9 @@
         const tile = document.createElement('div');
         tile.className = 'card empty-tile';
         tile.dataset.tileId = tileId;
+        tile.dataset.baseSpan = '12';
+        tile.dataset.span = '12';
+        tile.dataset.baseHeight = '200';
         tile.innerHTML = `
             <h3>New Tile</h3>
             <div class="empty-tile-content">Drag filter tags here to build a chart</div>
@@ -5473,10 +5510,6 @@
         slideGrid.appendChild(tile);
         _setupSlideTileDrop(tile);
         addTileControls(tile);
-        enableTileInteractivity(tile);
-        // Ensure baseSpan/baseHeight set for resize slider
-        if (!tile.dataset.baseSpan) tile.dataset.baseSpan = '12';
-        if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
         slide.tileIds.push(tileId);
         // Hide tiles not in this slide, show the new one
         document.getElementById('slideDropZone').style.display = 'none';
@@ -5496,13 +5529,14 @@
         tile.className = 'card text-tile';
         tile.dataset.tileId = tileId;
         tile.dataset.tileType = 'text';
+        tile.dataset.baseSpan = '12';
+        tile.dataset.span = '12';
+        tile.dataset.baseHeight = '200';
         tile.innerHTML = `
             <textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false"></textarea>
         `;
         slideGrid.appendChild(tile);
         addTileControls(tile);
-        enableTileInteractivity(tile);
-        if (!tile.dataset.baseHeight) tile.dataset.baseHeight = '200';
         slide.tileIds.push(tileId);
         document.getElementById('slideDropZone').style.display = 'none';
         slideGrid.style.display = '';
@@ -5668,6 +5702,9 @@
         tile.className = 'card chart-card custom-metric-tile';
         tile.dataset.tileId = tileId;
         tile.dataset.fields = JSON.stringify([field]);
+        tile.dataset.baseSpan = '12';
+        tile.dataset.span = '12';
+        tile.dataset.baseHeight = '450';
         tile.innerHTML = `
             <div class="card-header">
                 <h3>${formatLabel(field)} Analysis</h3>
@@ -5691,7 +5728,6 @@
         `;
         slideGrid.appendChild(tile);
         addTileControls(tile);
-        enableTileInteractivity(tile);
         _setupSlideTileDrop(tile);
 
         slide.tileIds.push(tileId);
