@@ -857,6 +857,7 @@
         /* Slide map chart tiles (data-chart-type=map) stay fully opaque while being dragged;
            indicate drag state with a primary-color outline instead of fading the map. */
         #slideGrid .card.dragging[data-chart-type="map"] { opacity: 1; box-shadow: 0 0 0 3px var(--primary, #3b82f6); }
+        #slideGrid .card.swap-target { outline: 2px dashed var(--primary, #3b82f6); }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -3913,8 +3914,9 @@
     // tiles fill the freed space (jigsaw layout).
     // COLS and GAP must match the .dashboard-container CSS (repeat(12,1fr), gap: 24px).
     function widthToGridSpan(card) {
-        const grid = document.getElementById('dashboardGrid');
-        const gridWidth = grid ? grid.offsetWidth : 1200;
+        // Use the card's own parent grid so slide tiles use slideGrid dimensions
+        const grid = card.closest('#dashboardGrid, #slideGrid') || document.getElementById('dashboardGrid');
+        const gridWidth = (grid && grid.offsetWidth > 0) ? grid.offsetWidth : 1200;
         const COLS = 12, GAP = 24; // must match grid-template-columns / gap in CSS
         // Width occupied by one column (including its trailing gap)
         const colUnit = (gridWidth + GAP) / COLS;
@@ -3981,7 +3983,9 @@
 
         // Shared onUp callback for width-changing handles: snap to nearest grid column span
         // so the freed space can be filled by dragging other tiles (jigsaw layout).
+        // Skip snap in freeform mode — tiles are absolutely positioned so inline width must persist.
         function snapWidthToSpan() {
+            if (card.closest('#slideGrid.slide-layout-freeform')) return; // keep inline width
             const span = widthToGridSpan(card);
             card.dataset.span = String(span);
             card.style.width = '';
@@ -5560,20 +5564,35 @@
         const gridRect = slideGrid.getBoundingClientRect();
         slideGrid.querySelectorAll('.card').forEach(card => {
             if (card.style.display === 'none') return;
-            const r = card.getBoundingClientRect();
-            card.style.left   = (r.left - gridRect.left) + 'px';
-            card.style.top    = (r.top  - gridRect.top)  + 'px';
-            card.style.width  = r.width  + 'px';
-            card.style.height = r.height + 'px';
+            // Restore previously saved freeform positions so tiles don't reset on layout toggle
+            if ('freeformLeft' in card.dataset || 'freeformTop' in card.dataset) {
+                card.style.left   = card.dataset.freeformLeft || '0px';
+                card.style.top    = card.dataset.freeformTop  || '0px';
+                if (card.dataset.freeformW) card.style.width  = card.dataset.freeformW;
+                if (card.dataset.freeformH) card.style.height = card.dataset.freeformH;
+            } else {
+                const r = card.getBoundingClientRect();
+                card.style.left   = (r.left - gridRect.left) + 'px';
+                card.style.top    = (r.top  - gridRect.top)  + 'px';
+                card.style.width  = r.width  + 'px';
+                card.style.height = r.height + 'px';
+            }
             _addFreeformDragHandle(card, slideGrid);
         });
     }
 
-    // Remove absolute position styles so grid layout resumes
+    // Remove absolute position styles so grid layout resumes; save positions for later restore
     function _exitFreeformLayout(slideGrid) {
         slideGrid.querySelectorAll('.card').forEach(card => {
-            card.style.left = '';
-            card.style.top  = '';
+            // Persist freeform position so re-entering freeform restores the user's layout
+            card.dataset.freeformLeft = card.style.left  || '0px';
+            card.dataset.freeformTop  = card.style.top   || '0px';
+            card.dataset.freeformW    = card.style.width  || '';
+            card.dataset.freeformH    = card.style.height || '';
+            // Clear absolute position and inline width; height can remain (grid rows adapt)
+            card.style.left  = '';
+            card.style.top   = '';
+            card.style.width = '';
             if (card.dataset.freeformDrag === '1') {
                 card.removeEventListener('pointerdown', _freeformPointerDown, false);
             }
@@ -5719,7 +5738,12 @@
                         tableHtml:    tileType === 'table' ? (el.querySelector('.table-wrapper')?.innerHTML || '') : null,
                         height:      el.style.height || '',
                         width:       el.style.width  || '',
-                        span:        el.dataset.span  || ''
+                        span:        el.dataset.span  || '',
+                        // Freeform layout positions: prefer dataset (saved on exit) or live inline style
+                        freeformLeft: el.dataset.freeformLeft || el.style.left  || '',
+                        freeformTop:  el.dataset.freeformTop  || el.style.top   || '',
+                        freeformW:    el.dataset.freeformW    || '',
+                        freeformH:    el.dataset.freeformH    || ''
                     };
                 });
                 return { name: s.name, tileIds: s.tileIds.slice(), topN: s.topN, layout: s.layout || 'auto', theme: s.theme || 'match', tiles };
@@ -5903,6 +5927,11 @@
                         if (cfg.height) tile.style.height = cfg.height;
                         if (cfg.width)  tile.style.width  = cfg.width;
                         if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
+                        // Restore freeform positions
+                        if (cfg.freeformLeft) tile.dataset.freeformLeft = cfg.freeformLeft;
+                        if (cfg.freeformTop)  tile.dataset.freeformTop  = cfg.freeformTop;
+                        if (cfg.freeformW)    tile.dataset.freeformW    = cfg.freeformW;
+                        if (cfg.freeformH)    tile.dataset.freeformH    = cfg.freeformH;
                         tile.dataset.baseSpan = cfg.span || '12';
                         tile.dataset.baseHeight = '450';
                         slideGrid.appendChild(tile);
@@ -5921,6 +5950,11 @@
                     if (cfg.height) tile.style.height = cfg.height;
                     if (cfg.width)  tile.style.width  = cfg.width;
                     if (cfg.span)   { tile.dataset.span = cfg.span; tile.style.gridColumn = `span ${cfg.span}`; }
+                    // Restore freeform positions to dataset so _enterFreeformLayout uses them
+                    if (cfg.freeformLeft) tile.dataset.freeformLeft = cfg.freeformLeft;
+                    if (cfg.freeformTop)  tile.dataset.freeformTop  = cfg.freeformTop;
+                    if (cfg.freeformW)    tile.dataset.freeformW    = cfg.freeformW;
+                    if (cfg.freeformH)    tile.dataset.freeformH    = cfg.freeformH;
                     tile.dataset.baseSpan = cfg.span || '12';
                     slideGrid.appendChild(tile);
                     _initSlideTile(tile);
@@ -6214,28 +6248,72 @@
         setTimeout(() => updateChart(canvasId, dimension, chartType, tile.dataset.tileMetric || 'count'), 0);
     }
 
+    // Swap two slide tiles' DOM positions (autogrid layout; also updates tileIds order)
+    function _swapSlideTiles(tileA, tileB) {
+        const parent = tileA.parentNode;
+        if (!parent || parent !== tileB.parentNode) return;
+        // Use comment markers to safely swap when tiles are siblings
+        const swapMarkerA = document.createComment('');
+        const swapMarkerB = document.createComment('');
+        parent.insertBefore(swapMarkerA, tileA);
+        parent.insertBefore(swapMarkerB, tileB);
+        parent.insertBefore(tileA, swapMarkerB);
+        parent.insertBefore(tileB, swapMarkerA);
+        swapMarkerA.remove();
+        swapMarkerB.remove();
+        // Keep slide.tileIds in sync with DOM order
+        const idSlide = slides[currentSlideIndex];
+        if (idSlide) {
+            const idA = tileA.dataset.tileId, idB = tileB.dataset.tileId;
+            const ia = idSlide.tileIds.indexOf(idA), ib = idSlide.tileIds.indexOf(idB);
+            if (ia !== -1 && ib !== -1) {
+                [idSlide.tileIds[ia], idSlide.tileIds[ib]] = [idSlide.tileIds[ib], idSlide.tileIds[ia]];
+            }
+        }
+    }
+
     // Set up drop-zone behavior on a slide tile (supports multiple tags → chart)
     function _setupSlideTileDrop(tile) {
         tile.addEventListener('dragover', e => {
             if (e.dataTransfer.types.includes('application/x-filter-field')) {
                 e.preventDefault();
                 tile.classList.add('drag-over');
+            } else if (e.dataTransfer.types.includes('application/x-slide-tile-id')) {
+                // Tile-to-tile swap (grid layouts only — freeform uses pointer-capture)
+                const slideGrid = tile.closest('#slideGrid');
+                if (slideGrid && !slideGrid.classList.contains('slide-layout-freeform')) {
+                    e.preventDefault();
+                    tile.classList.add('swap-target');
+                }
             }
         });
-        tile.addEventListener('dragleave', () => tile.classList.remove('drag-over'));
-        tile.addEventListener('drop', e => {
-            e.preventDefault();
+        tile.addEventListener('dragleave', () => {
             tile.classList.remove('drag-over');
+            tile.classList.remove('swap-target');
+        });
+        tile.addEventListener('drop', e => {
+            tile.classList.remove('drag-over');
+            tile.classList.remove('swap-target');
+            // Tile-to-tile swap
+            const srcId = e.dataTransfer.getData('application/x-slide-tile-id');
+            if (srcId && srcId !== tile.dataset.tileId) {
+                const slideGrid = tile.closest('#slideGrid');
+                if (slideGrid && !slideGrid.classList.contains('slide-layout-freeform')) {
+                    e.preventDefault();
+                    const srcTile = slideGrid.querySelector(`[data-tile-id="${srcId}"]`);
+                    if (srcTile) _swapSlideTiles(srcTile, tile);
+                    return;
+                }
+            }
+            // Field drop → chart conversion
+            e.preventDefault();
             const field = e.dataTransfer.getData('application/x-filter-field');
             if (!field) return;
-            // Accumulate fields on the tile
             let fields = [];
             try { fields = JSON.parse(tile.dataset.fields || '[]'); } catch(_) {}
             if (!fields.includes(field)) fields.push(field);
             const slide = slides[currentSlideIndex];
-            // Transform using slide-specific function (no dashboard side effects)
             _transformSlideTile(tile, fields);
-            // Ensure tile is in the current slide
             if (slide && !slide.tileIds.includes(tile.dataset.tileId)) {
                 slide.tileIds.push(tile.dataset.tileId);
             }
