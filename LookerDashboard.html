@@ -853,6 +853,8 @@
            Keep them visually solid while dragging — the drag ghost is a browser-rendered snapshot. */
         .map-card.dragging,
         .org-chart-card.dragging { opacity: 0.85; }
+        /* Slide map chart tiles (data-chart-type=map) stay solid while being dragged */
+        #slideGrid .card.dragging[data-chart-type="map"] { opacity: 0.85; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -1278,6 +1280,20 @@
         #slideGrid.slide-theme-cyberpunk .card span,
         #slideGrid.slide-theme-cyberpunk .card label {
             color: var(--text-main) !important;
+        }
+        /* Active tag text and background in dark/cyberpunk slide themes */
+        #slideGrid.slide-theme-dark .active-tag,
+        #slideGrid.slide-theme-cyberpunk .active-tag {
+            color: var(--text-main) !important;
+            background: rgba(255,255,255,0.12) !important;
+            border-color: rgba(255,255,255,0.2) !important;
+        }
+        /* Select controls readability in dark/cyberpunk slide themes */
+        #slideGrid.slide-theme-dark select,
+        #slideGrid.slide-theme-cyberpunk select {
+            background: var(--bg-card);
+            color: var(--text-main);
+            border-color: var(--border);
         }
         /* Light theme: enforce dark text on light card backgrounds */
         #slideGrid.slide-theme-light .card {
@@ -3074,12 +3090,43 @@
             }
             return;
         }
-        // When switching away from map or table, restore canvas
+        // Handle metric/KPI display: show a single aggregated value as a KPI card
+        if (type === 'metric') {
+            if (canvasEl) {
+                if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+                const mapDivM = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
+                if (mapDivM) { if (mapDivM._leafletMap) mapDivM._leafletMap.remove(); mapDivM.remove(); }
+                const tableDivM = canvasEl.parentElement.querySelector('.chart-data-table');
+                if (tableDivM) tableDivM.remove();
+                const existingMD = canvasEl.parentElement.querySelector('.slide-metric-display');
+                if (existingMD) existingMD.remove();
+                canvasEl.style.display = 'none';
+                const aggM = aggregateData(dimension, metric);
+                const total = aggM.values.reduce((a, b) => a + b, 0);
+                const displayVal = metric === 'distinct' ? aggM.labels.length : Math.round(total * 10) / 10;
+                const metricDiv = document.createElement('div');
+                metricDiv.className = 'slide-metric-display';
+                metricDiv.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:20px;text-align:center;';
+                const valEl = document.createElement('div');
+                valEl.className = 'metric-value';
+                valEl.style.fontSize = '2.5em';
+                valEl.textContent = displayVal;
+                const lblEl = document.createElement('div');
+                lblEl.className = 'metric-label';
+                lblEl.textContent = `${_metricLabel(metric)} — ${formatLabel(dimension)}`;
+                metricDiv.appendChild(valEl);
+                metricDiv.appendChild(lblEl);
+                canvasEl.after(metricDiv);
+            }
+            return;
+        }
         if (canvasEl) {
             const mapDiv = canvasEl.parentElement.querySelector(`#tilemap-${canvasId}`);
             if (mapDiv) { if (mapDiv._leafletMap) mapDiv._leafletMap.remove(); mapDiv.remove(); }
             const tableDiv = canvasEl.parentElement.querySelector('.chart-data-table');
             if (tableDiv) tableDiv.remove();
+            const metricDisplay = canvasEl.parentElement.querySelector('.slide-metric-display');
+            if (metricDisplay) metricDisplay.remove();
             canvasEl.style.display = '';
         }
 
@@ -3091,14 +3138,18 @@
 
         if (charts[canvasId]) charts[canvasId].destroy();
 
-        // Theme-aware colors?
+        // Theme-aware colors: check both global body theme and any slide-specific dark/cyberpunk theme
         const isCyber = document.body.classList.contains('theme-cyberpunk');
+        const _slideGridEl = canvasEl && canvasEl.closest('#slideGrid');
+        const _slideTheme = _slideGridEl ? ([..._slideGridEl.classList].find(c => c.startsWith('slide-theme-')) || '') : '';
+        const _isSlideDark  = _slideTheme === 'slide-theme-dark';
+        const _isSlideCyber = _slideTheme === 'slide-theme-cyberpunk';
         const colors = [
             '#1a73e8', '#e37400', '#1e8e3e', '#d93025', '#9334e6', '#00acc1', '#f09300', '#188038',
             '#3c4043', '#7b1fa2', '#129eaf', '#c2185b'
         ];
-        const gridColor = isCyber ? '#334155' : '#e5e7eb';
-        const textColor = isCyber ? '#94a3b8' : '#64748b';
+        const gridColor  = (isCyber || _isSlideDark || _isSlideCyber) ? '#334155' : '#e5e7eb';
+        const textColor  = (isCyber || _isSlideCyber) ? '#94a3b8' : _isSlideDark ? '#f1f5f9' : '#64748b';
 
         // Normalise extended types to Chart.js types
         const chartJsType = (type === 'horizontalBar') ? 'bar'
@@ -4978,6 +5029,7 @@
                         <option value="bubble" ${chartType==='bubble'?'selected':''}>Bubble</option>
                         <option value="map" ${chartType==='map'?'selected':''}>Map</option>
                         <option value="table" ${chartType==='table'?'selected':''}>Table</option>
+                        <option value="metric" ${chartType==='metric'?'selected':''}>Metric / KPI</option>
                     </select>
                 </div>
                 <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
@@ -5046,6 +5098,49 @@
             orgFilterSel.addEventListener('change', function() {
                 _applyOrgCompanyFilter(contentDiv, this.value);
             });
+        } else if (srcCard.classList.contains('data-grid-card')) {
+            // Candidate Details / data table tile: clone as a static HTML table snapshot
+            tile.className = 'card data-grid-card';
+            tile.dataset.tileType = 'table';
+            tile.dataset.baseHeight = '500';
+            const srcH3dg = srcCard.querySelector('h3');
+            const h3Dg = document.createElement('h3');
+            h3Dg.contentEditable = 'true';
+            h3Dg.spellcheck = false;
+            h3Dg.textContent = srcH3dg ? srcH3dg.textContent.trim() : 'Candidate Details';
+            tile.appendChild(h3Dg);
+            const wrapDg = document.createElement('div');
+            wrapDg.className = 'table-wrapper';
+            wrapDg.style.cssText = 'overflow:auto;flex:1;';
+            const srcTbl = document.getElementById('dataTable');
+            if (srcTbl && srcTbl.tBodies[0] && srcTbl.tBodies[0].rows.length > 0) {
+                // Clone the live table (header + populated tbody rows)
+                const clonedTbl = srcTbl.cloneNode(true);
+                clonedTbl.removeAttribute('id');
+                wrapDg.appendChild(clonedTbl);
+            } else {
+                // Table not yet populated — build from filtered data using DOM API
+                const fData = typeof getFilteredData === 'function' ? getFilteredData() : [];
+                const tbl = document.createElement('table');
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                ['Name','Job Title','Company','Country','Job Family','Score','Status'].forEach(h => {
+                    const th = document.createElement('th'); th.textContent = h; headerRow.appendChild(th);
+                });
+                thead.appendChild(headerRow);
+                tbl.appendChild(thead);
+                const tbody = document.createElement('tbody');
+                fData.slice(0, 100).forEach(r => {
+                    const tr = document.createElement('tr');
+                    [r.name||'', r.jobtitle||'', r.company||'', r.country||'', r.jobfamily||'', r.rating||'', r.sourcingstatus||''].forEach(v => {
+                        const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                tbl.appendChild(tbody);
+                wrapDg.appendChild(tbl);
+            }
+            tile.appendChild(wrapDg);
         } else {
             // Generic empty tile — placeholder for unsupported tile types
             tile.className = 'card empty-tile';
@@ -5433,6 +5528,8 @@
                         // Org-chart tile: persist static HTML snapshot + selected company filter for reload
                         orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
                         orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
+                        // Table tile: persist the cloned table HTML for reload
+                        tableHtml:    tileType === 'table' ? (el.querySelector('.table-wrapper')?.innerHTML || '') : null,
                         height:      el.style.height || '',
                         width:       el.style.width  || '',
                         span:        el.dataset.span  || ''
@@ -5580,6 +5677,20 @@
                         ocFilterSel.addEventListener('change', function() {
                             _applyOrgCompanyFilter(ocContent, this.value);
                         });
+                    } else if (tileType === 'table') {
+                        // Restore static candidate details table tile
+                        tile.className = 'card data-grid-card';
+                        tile.dataset.tileType = 'table';
+                        tile.dataset.baseHeight = '500';
+                        const tblH3 = document.createElement('h3');
+                        tblH3.contentEditable = 'true'; tblH3.spellcheck = false;
+                        tblH3.textContent = cfg.title || 'Candidate Details';
+                        tile.appendChild(tblH3);
+                        const tblWrap = document.createElement('div');
+                        tblWrap.className = 'table-wrapper';
+                        tblWrap.style.cssText = 'overflow:auto;flex:1;';
+                        tblWrap.innerHTML = cfg.tableHtml || '<p style="padding:20px;color:var(--text-sub);">No table data available.</p>';
+                        tile.appendChild(tblWrap);
                     } else if (fields.length > 0) {
                         const dimension = fields[fields.length - 1];
                         const canvasId = `slideChart-${tileId}`;
@@ -5604,6 +5715,7 @@
                                     <option value="bubble" ${chartType==='bubble'?'selected':''}>Bubble</option>
                                     <option value="map" ${chartType==='map'?'selected':''}>Map</option>
                                     <option value="table" ${chartType==='table'?'selected':''}>Table</option>
+                                    <option value="metric" ${chartType==='metric'?'selected':''}>Metric / KPI</option>
                                 </select>
                             </div>
                             <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
@@ -5913,6 +6025,7 @@
                     <option value="bubble" ${chartType==='bubble'?'selected':''}>Bubble</option>
                     <option value="map" ${chartType==='map'?'selected':''}>Map</option>
                     <option value="table" ${chartType==='table'?'selected':''}>Table</option>
+                    <option value="metric" ${chartType==='metric'?'selected':''}>Metric / KPI</option>
                 </select>
             </div>
             <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
@@ -6106,6 +6219,7 @@
                     <option value="bubble">Bubble</option>
                     <option value="map">Map</option>
                     <option value="table">Table</option>
+                    <option value="metric">Metric / KPI</option>
                 </select>
             </div>
             <div class="chart-container"><canvas id="${canvasId}"></canvas></div>
