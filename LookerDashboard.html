@@ -858,6 +858,11 @@
            indicate drag state with a primary-color outline instead of fading the map. */
         #slideGrid .card.dragging[data-chart-type="map"] { opacity: 1; box-shadow: 0 0 0 3px var(--primary, #3b82f6); }
         #slideGrid .card.swap-target { outline: 2px dashed var(--primary, #3b82f6); }
+        /* Auto-hide chart type selector and tags in slide mode; reveal on hover */
+        #slideGrid .card .chart-type-select { opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+        #slideGrid .card:hover .chart-type-select { opacity: 1; pointer-events: auto; }
+        #slideGrid .card .active-tags { opacity: 0; transition: opacity .2s ease; }
+        #slideGrid .card:hover .active-tags { opacity: 1; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -943,7 +948,7 @@
             flex: 1;
             min-height: 80px;
             resize: none;
-            border: 1px solid var(--border);
+            border: 1px solid transparent;
             border-radius: 6px;
             padding: 8px;
             font-size: 14px;
@@ -952,6 +957,7 @@
             outline: none;
             font-family: inherit;
         }
+        .text-tile-editor:hover { border-color: var(--border); }
         .text-tile-editor:focus { border-color: var(--primary); }
         
         /* Updated Legend Style for Cyberpunk */
@@ -5095,6 +5101,8 @@
             valDiv.textContent = srcValue ? srcValue.textContent.trim() : '—';
             const lblDiv = document.createElement('div');
             lblDiv.className = 'metric-label';
+            lblDiv.contentEditable = 'true';
+            lblDiv.spellcheck = false;
             lblDiv.textContent = srcLabel ? srcLabel.textContent.trim() : '';
             tile.append(h3, valDiv, lblDiv);
         } else if (isOrgChart) {
@@ -5728,6 +5736,9 @@
                         tileMetric:  el.dataset.tileMetric || 'count',
                         tileType,
                         text:        el.querySelector('.text-tile-editor') ? el.querySelector('.text-tile-editor').value : null,
+                        // Text tile: persist font size and alignment for reload
+                        textFontSize: tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.fontSize || '') : null,
+                        textAlign:    tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.textAlign || '') : null,
                         // Metric tile: persist displayed value + label for reload
                         metricValue: tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
                         metricLabel: tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
@@ -5831,6 +5842,9 @@
                         tile.className = 'card text-tile';
                         tile.dataset.tileType = 'text';
                         tile.innerHTML = `<textarea class="text-tile-editor" placeholder="Type your note or description here" spellcheck="false">${cfg.text || ''}</textarea>`;
+                        const ed = tile.querySelector('.text-tile-editor');
+                        if (cfg.textFontSize) ed.style.fontSize = cfg.textFontSize;
+                        if (cfg.textAlign) ed.style.textAlign = cfg.textAlign;
                     } else if (tileType === 'metric') {
                         // Restore static metric/KPI tile
                         tile.className = 'card metric-card';
@@ -5846,6 +5860,8 @@
                         mVal.textContent = cfg.metricValue || '—';
                         const mLbl = document.createElement('div');
                         mLbl.className = 'metric-label';
+                        mLbl.contentEditable = 'true';
+                        mLbl.spellcheck = false;
                         mLbl.textContent = cfg.metricLabel || '';
                         tile.append(mH3, mVal, mLbl);
                     } else if (tileType === 'org-chart') {
