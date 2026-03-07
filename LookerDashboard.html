@@ -863,6 +863,8 @@
         #slideGrid .card:hover .chart-type-select { opacity: 1; pointer-events: auto; }
         #slideGrid .card .active-tags { opacity: 0; transition: opacity .2s ease; }
         #slideGrid .card:hover .active-tags { opacity: 1; }
+        /* Prevent horizontal scrollbar on metric tiles when resized small */
+        #slideGrid .metric-card { overflow: hidden; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -4184,20 +4186,21 @@
         const topnDiv = document.createElement('span');
         topnDiv.className = 'tile-topn';
         const isTextTile = tile.dataset.tileType === 'text';
-        topnDiv.title = isTextTile ? 'Adjust text font size' : 'Filter: adjust number of data points shown';
+        const isMetricTile = tile.dataset.tileType === 'metric';
+        topnDiv.title = (isTextTile || isMetricTile) ? 'Adjust font size' : 'Filter: adjust number of data points shown';
         const topnDown = document.createElement('button');
         topnDown.className = 'tile-topn-btn';
         topnDown.textContent = '▼';
-        topnDown.title = isTextTile ? 'Decrease font size' : 'Show fewer data points';
-        topnDown.setAttribute('aria-label', isTextTile ? 'Decrease font size' : 'Decrease data points');
+        topnDown.title = (isTextTile || isMetricTile) ? 'Decrease font size' : 'Show fewer data points';
+        topnDown.setAttribute('aria-label', (isTextTile || isMetricTile) ? 'Decrease font size' : 'Decrease data points');
         const topnLabel = document.createElement('span');
         topnLabel.className = 'tile-topn-label';
-        topnLabel.textContent = isTextTile ? '14px' : 'All';
+        topnLabel.textContent = (isTextTile || isMetricTile) ? '14px' : 'All';
         const topnUp = document.createElement('button');
         topnUp.className = 'tile-topn-btn';
         topnUp.textContent = '▲';
-        topnUp.title = isTextTile ? 'Increase font size' : 'Show more data points';
-        topnUp.setAttribute('aria-label', isTextTile ? 'Increase font size' : 'Increase data points');
+        topnUp.title = (isTextTile || isMetricTile) ? 'Increase font size' : 'Show more data points';
+        topnUp.setAttribute('aria-label', (isTextTile || isMetricTile) ? 'Increase font size' : 'Increase data points');
         if (isTextTile) {
             const _ed02 = tile.querySelector('.text-tile-editor');
             let _textFontSize2 = _ed02 ? (parseFloat(_ed02.style.fontSize) || 14) : 14;
@@ -4216,6 +4219,25 @@
                 if (ed) ed.style.fontSize = _textFontSize2 + 'px';
                 topnLabel.textContent = _textFontSize2 + 'px';
             });
+        } else if (isMetricTile) {
+            // Up/Down controls font size of the metric-value display
+            const _mVal = tile.querySelector('.metric-value');
+            let _metricFontSize = _mVal ? (parseFloat(_mVal.style.fontSize) || parseFloat(getComputedStyle(_mVal).fontSize) || 42) : 42;
+            topnLabel.textContent = Math.round(_metricFontSize) + 'px';
+            topnDown.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _metricFontSize = Math.max(16, _metricFontSize - 4);
+                const v = tile.querySelector('.metric-value');
+                if (v) v.style.fontSize = _metricFontSize + 'px';
+                topnLabel.textContent = Math.round(_metricFontSize) + 'px';
+            });
+            topnUp.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                _metricFontSize = Math.min(120, _metricFontSize + 4);
+                const v = tile.querySelector('.metric-value');
+                if (v) v.style.fontSize = _metricFontSize + 'px';
+                topnLabel.textContent = Math.round(_metricFontSize) + 'px';
+            });
         } else {
             topnDown.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, -1); });
             topnUp.addEventListener('click', (ev) => { ev.stopPropagation(); adjustTileTopN(tile, topnLabel, 1); });
@@ -4223,8 +4245,8 @@
         topnDiv.appendChild(topnDown);
         topnDiv.appendChild(topnLabel);
         topnDiv.appendChild(topnUp);
-        // Text alignment buttons (only for text tiles)
-        if (isTextTile) {
+        // Text/metric alignment buttons
+        if (isTextTile || isMetricTile) {
             const alignDiv = document.createElement('span');
             alignDiv.className = 'tile-align-btns';
             alignDiv.style.cssText = 'display:inline-flex;gap:2px;margin-left:4px;';
@@ -4236,8 +4258,16 @@
                 btn.style.fontSize = '10px';
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
-                    const ed = tile.querySelector('.text-tile-editor');
-                    if (ed) ed.style.textAlign = align;
+                    if (isMetricTile) {
+                        // Apply alignment to all text elements in the metric tile
+                        tile.style.textAlign = align;
+                        tile.querySelectorAll('h3, .metric-value, .metric-label').forEach(el => {
+                            el.style.textAlign = align;
+                        });
+                    } else {
+                        const ed = tile.querySelector('.text-tile-editor');
+                        if (ed) ed.style.textAlign = align;
+                    }
                 });
                 alignDiv.appendChild(btn);
             });
@@ -5739,9 +5769,11 @@
                         // Text tile: persist font size and alignment for reload
                         textFontSize: tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.fontSize || '') : null,
                         textAlign:    tileType === 'text' ? (el.querySelector('.text-tile-editor')?.style.textAlign || '') : null,
-                        // Metric tile: persist displayed value + label for reload
-                        metricValue: tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
-                        metricLabel: tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
+                        // Metric tile: persist displayed value + label, font size and alignment for reload
+                        metricValue:    tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
+                        metricLabel:    tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
+                        metricFontSize: tileType === 'metric' ? (el.querySelector('.metric-value')?.style.fontSize || '') : null,
+                        metricAlign:    tileType === 'metric' ? (el.querySelector('.metric-value')?.style.textAlign || el.style.textAlign || '') : null,
                         // Org-chart tile: persist static HTML snapshot + selected company filter for reload
                         orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
                         orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
@@ -5863,6 +5895,12 @@
                         mLbl.contentEditable = 'true';
                         mLbl.spellcheck = false;
                         mLbl.textContent = cfg.metricLabel || '';
+                        // Restore font size and alignment if persisted
+                        if (cfg.metricFontSize) mVal.style.fontSize = cfg.metricFontSize;
+                        if (cfg.metricAlign) {
+                            tile.style.textAlign = cfg.metricAlign;
+                            [mH3, mVal, mLbl].forEach(e => { e.style.textAlign = cfg.metricAlign; });
+                        }
                         tile.append(mH3, mVal, mLbl);
                     } else if (tileType === 'org-chart') {
                         // Restore static org-chart snapshot with company filter
@@ -6067,10 +6105,32 @@
             for (let i = 0; i < slides.length; i++) {
                 currentSlideIndex = i;
                 renderCurrentSlide();
-                // Brief paint pause so charts redraw
-                await new Promise(resolve => setTimeout(resolve, 200));
+                // Check if this slide has any map tiles; maps need more time to load tiles
+                const slideGrid = getSlideGrid();
+                const hasMap = slideGrid && slideGrid.querySelector('[data-chart-type="map"]') !== null;
+                const paintDelay = hasMap ? 1200 : 300;
+                await new Promise(resolve => setTimeout(resolve, paintDelay));
+                // For map slides, ensure Leaflet maps are fully re-rendered before capture
+                if (hasMap) {
+                    const mapTiles = slideGrid.querySelectorAll('[data-chart-type="map"]');
+                    mapTiles.forEach(t => {
+                        const mapDiv = t.querySelector('[id^="tilemap-"]');
+                        if (mapDiv && mapDiv._leafletMap) {
+                            try { mapDiv._leafletMap.invalidateSize(true); } catch (e) { /* ignore */ }
+                        }
+                    });
+                    // Extra paint pause after invalidateSize
+                    await new Promise(resolve => setTimeout(resolve, 400));
+                }
 
-                const canvas = await html2canvas(content, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                const canvas = await html2canvas(content, {
+                    scale: 2,
+                    useCORS: true,
+                    allowTaint: true,      // allow map tile images from external CDN (e.g. OpenStreetMap)
+                    backgroundColor: '#ffffff',
+                    logging: false,
+                    imageTimeout: 15000    // map tile images can take longer to load over slow connections
+                });
                 const imgData = canvas.toDataURL('image/png');
 
                 const pptSlide = pptx.addSlide();
