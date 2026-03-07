@@ -406,6 +406,7 @@
             flex: 1;
             padding: 24px;
             overflow-y: auto;
+            min-height: 0;
             display: grid;
             grid-template-columns: repeat(12, 1fr);
             gap: 24px;
@@ -1029,7 +1030,7 @@
         }
 
         /* Hide tabs by default */
-        .tab-content { display: none; width: 100%; height: 100%; flex-direction: column; }
+        .tab-content { display: none; width: 100%; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; }
         .tab-content.active { display: flex; }
 
         /* Template Grid */
@@ -1253,7 +1254,9 @@
             overflow: auto;
             min-width: 120px;
             min-height: 80px;
+            cursor: grab;
         }
+        #slideGrid.slide-layout-freeform .card:active { cursor: grabbing; }
         /* Theme overrides scoped to the slide grid */
         #slideGrid.slide-theme-light { background: #ffffff; color: #1e293b; --bg-card:#ffffff; --text-main:#1e293b; --border:#e2e8f0; }
         #slideGrid.slide-theme-dark { background: #1e293b; color: #f1f5f9; --bg-card:#334155; --text-main:#f1f5f9; --border:#475569; }
@@ -1442,8 +1445,8 @@
     <!-- Nav-sidebar base styles (embedded for self-contained rendering) -->
     <style>
       /* Page shell */
-      html:has(.page-shell), body:has(.page-shell) { margin: 0; padding: 0; height: 100%; }
-      .page-shell { display: flex; min-height: 100vh; }
+      html:has(.page-shell), body:has(.page-shell) { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+      .page-shell { display: flex; height: 100vh; overflow: hidden; }
 
       /* Sidebar */
       .nav-sidebar {
@@ -1531,7 +1534,7 @@
       .nav-sidebar__divider { height: 1px; background: rgba(255,255,255,0.06); margin: 6px 12px; }
 
       /* Main content area */
-      .page-main { flex: 1; min-width: 0; overflow-x: hidden; display: flex; flex-direction: column; min-height: 100vh; }
+      .page-main { flex: 1; min-width: 0; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
     </style>
     <!-- Hover-triggered sidebar overrides (LookerDashboard only) -->
     <style>
@@ -1647,7 +1650,7 @@
 <!-- ===== End Sidebar ===== -->
 
 <!-- ===== Main Content ===== -->
-<div class="page-main" style="padding: 24px; box-sizing: border-box; overflow-x: hidden;">
+<div class="page-main" style="padding: 24px; box-sizing: border-box;">
 
 <div class="loader-overlay" id="globalLoader"><div class="spinner"></div></div>
 
@@ -1671,7 +1674,7 @@
 </div>
 
 <!-- === AUTHENTICATED CONTENT === -->
-<div id="appContent" style="display: none; width: 100%; height: 100vh; flex-direction: column;">
+<div id="appContent" style="display: none; width: 100%; height: 100%; flex-direction: column; overflow: hidden; min-height: 0;">
 
     <!-- Navigation (Replaces Standard Nav when logged in to match App.js) -->
     <div class="session-banner">
@@ -5278,6 +5281,22 @@
         // so L.map() had 0×0 dimensions and fitBounds/markers were never placed).
         // Map-type chart tiles get a full re-render; all other tiles just get invalidateSize.
         setTimeout(() => {
+            // In freeform mode, initialize positions for any newly-visible tiles
+            if (slideGrid && slideGrid.classList.contains('slide-layout-freeform')) {
+                const gridRect = slideGrid.getBoundingClientRect();
+                slide.tileIds.forEach(tileId => {
+                    const card = slideGrid.querySelector(`[data-tile-id="${tileId}"]`);
+                    if (!card || card.style.display === 'none') return;
+                    if (!card.style.left && !card.style.top) {
+                        const r = card.getBoundingClientRect();
+                        card.style.left   = Math.max(0, r.left - gridRect.left) + 'px';
+                        card.style.top    = Math.max(0, r.top  - gridRect.top)  + 'px';
+                        card.style.width  = r.width  + 'px';
+                        card.style.height = r.height + 'px';
+                    }
+                    _addFreeformDragHandle(card, slideGrid);
+                });
+            }
             slide.tileIds.forEach(tileId => {
                 const card = slideGrid && slideGrid.querySelector(`[data-tile-id="${tileId}"]`);
                 if (!card || card.style.display === 'none') return;
@@ -5498,11 +5517,31 @@
     function _applySlideDesign(slide) {
         const slideGrid = getSlideGrid();
         if (!slideGrid) return;
+        const prevLayout = slideGrid.classList.contains('slide-layout-freeform') ? 'freeform' : 'other';
         const layout = slide.layout || 'auto';
         const theme  = slide.theme  || 'match';
         // Clear all layout classes
         slideGrid.classList.remove('slide-layout-2col', 'slide-layout-3col', 'slide-layout-4col', 'slide-layout-freeform');
         if (layout !== 'auto') slideGrid.classList.add(`slide-layout-${layout}`);
+
+        // Freeform: snapshot current visual positions → absolute, or restore grid positions
+        if (layout === 'freeform' && prevLayout !== 'freeform') {
+            _enterFreeformLayout(slideGrid);
+        } else if (layout !== 'freeform' && prevLayout === 'freeform') {
+            _exitFreeformLayout(slideGrid);
+        } else if (layout === 'freeform') {
+            // Stayed in freeform — wire newly added tiles that aren't yet positioned
+            slideGrid.querySelectorAll('.card').forEach(card => {
+                if (card.style.display !== 'none' && !card.dataset.freeformDrag) {
+                    if (!card.style.top && !card.style.left) {
+                        card.style.left = '0px';
+                        card.style.top  = '0px';
+                    }
+                    _addFreeformDragHandle(card, slideGrid);
+                }
+            });
+        }
+
         // Clear all theme classes
         slideGrid.classList.remove('slide-theme-light', 'slide-theme-dark', 'slide-theme-cyberpunk');
         if (theme !== 'match') slideGrid.classList.add(`slide-theme-${theme}`);
@@ -5511,6 +5550,76 @@
         const themeSel  = document.getElementById('slideThemeSelect');
         if (layoutSel) layoutSel.value = layout;
         if (themeSel)  themeSel.value  = theme;
+    }
+
+    // Snapshot current visual tile positions then add pointer-drag handlers
+    function _enterFreeformLayout(slideGrid) {
+        const gridRect = slideGrid.getBoundingClientRect();
+        slideGrid.querySelectorAll('.card').forEach(card => {
+            if (card.style.display === 'none') return;
+            const r = card.getBoundingClientRect();
+            card.style.left   = (r.left - gridRect.left) + 'px';
+            card.style.top    = (r.top  - gridRect.top)  + 'px';
+            card.style.width  = r.width  + 'px';
+            card.style.height = r.height + 'px';
+            _addFreeformDragHandle(card, slideGrid);
+        });
+    }
+
+    // Remove absolute position styles so grid layout resumes
+    function _exitFreeformLayout(slideGrid) {
+        slideGrid.querySelectorAll('.card').forEach(card => {
+            card.style.left = '';
+            card.style.top  = '';
+            if (card.dataset.freeformDrag === '1') {
+                card.removeEventListener('pointerdown', _freeformPointerDown, false);
+            }
+            delete card.dataset.freeformDrag;
+        });
+    }
+
+    // Add pointer-drag-to-move to a freeform tile (idempotent via dataset flag)
+    function _addFreeformDragHandle(card, slideGrid) {
+        if (card.dataset.freeformDrag === '1') return;
+        card.dataset.freeformDrag = '1';
+        card.addEventListener('pointerdown', _freeformPointerDown, false);
+    }
+
+    function _freeformPointerDown(e) {
+        const card = e.currentTarget;
+        const tgt = e.target;
+        if (tgt.closest('.tile-controls') || tgt.closest('.resize-handle') ||
+            tgt.tagName === 'SELECT' || tgt.tagName === 'BUTTON' ||
+            tgt.tagName === 'INPUT'  || tgt.tagName === 'TEXTAREA' ||
+            tgt.isContentEditable) return;
+        const slideGrid = card.closest('#slideGrid.slide-layout-freeform');
+        if (!slideGrid) return;
+
+        e.preventDefault();
+        card.setPointerCapture(e.pointerId);
+
+        const gridRect = slideGrid.getBoundingClientRect();
+        const origLeft = parseFloat(card.style.left) || 0;
+        const origTop  = parseFloat(card.style.top)  || 0;
+        const offsetX  = (e.clientX - gridRect.left) - origLeft;
+        const offsetY  = (e.clientY - gridRect.top)  - origTop;
+
+        card.style.zIndex = '500';
+        card.style.cursor = 'grabbing';
+
+        function onMove(ev) {
+            const gr = slideGrid.getBoundingClientRect();
+            card.style.left = Math.max(0, ev.clientX - gr.left - offsetX) + 'px';
+            card.style.top  = Math.max(0, ev.clientY - gr.top  - offsetY) + 'px';
+        }
+        function onUp() {
+            card.style.zIndex = '';
+            card.style.cursor = '';
+            card.removeEventListener('pointermove', onMove);
+            card.removeEventListener('pointerup',   onUp);
+        }
+        card.addEventListener('pointermove', onMove);
+        card.addEventListener('pointerup',   onUp);
     }
 
     // Called when user changes the Layout dropdown in slide toolbar
