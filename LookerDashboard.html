@@ -484,7 +484,7 @@
             position: relative;
         }
         .chart-card.full-width { grid-column: span 12; }
-        .chart-container { position: relative; flex: 1; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+        .chart-container { position: relative; flex: 1; width: 100%; height: 100%; min-height: 0; overflow: hidden; z-index: 0; }
 
         /* Map Card */
         /* Updated: Ensuring Map and Org Chart share identical height sizing */
@@ -1108,7 +1108,7 @@
         #slideshowViewer {
             position: fixed;
             inset: 0;
-            z-index: 900;
+            z-index: 9000;
             background: var(--bg-body, #f8f9fa);
             display: none;
             flex-direction: column;
@@ -4774,6 +4774,7 @@
     const _slideCharts = new Map();           // tileId → Chart instance
     let _tileDroppedOnTab = false;            // set by slide-tab drop handler, cleared in makeDraggable dragend
     let _autofitEnabled = false;              // when true, renderCurrentSlide auto-fits all tiles
+    let _preFitSizes = null;                  // tile sizes saved just before autofit is applied; restored when autofit is turned OFF
 
     // Helper: returns the dedicated slide grid (always inside the slideshow overlay)
     function getSlideGrid() { return document.getElementById('slideGrid'); }
@@ -5117,6 +5118,7 @@
     // Autofit toggle: when enabled, tiles are auto-fitted on each slide render.
     // Calling with no argument toggles; calling with true/false sets explicitly.
     function toggleAutofit(force) {
+        const wasEnabled = _autofitEnabled;
         _autofitEnabled = (force !== undefined) ? Boolean(force) : !_autofitEnabled;
         const btn = document.getElementById('autofitBtn');
         if (btn) {
@@ -5127,7 +5129,55 @@
                 ? 'Autofit is ON — tiles resize automatically. Click to disable.'
                 : 'Autofit is OFF — tiles keep manual sizes. Click to enable.';
         }
-        if (_autofitEnabled) autofitTiles();
+        if (_autofitEnabled && !wasEnabled) {
+            // Turning ON: capture current manual sizes so they can be restored when turned OFF
+            _preFitSizes = _captureSlideGridSizes();
+            autofitTiles();
+        } else if (!_autofitEnabled && wasEnabled) {
+            // Turning OFF: restore the sizes that were in place before autofit was applied
+            if (_preFitSizes) { _restoreSlideGridSizes(_preFitSizes); _preFitSizes = null; }
+        }
+    }
+
+    // Capture the current inline sizes of all tiles in #slideGrid
+    function _captureSlideGridSizes() {
+        const slideGrid = getSlideGrid();
+        if (!slideGrid) return {};
+        const sizes = {};
+        slideGrid.querySelectorAll('.card').forEach(card => {
+            const id = card.dataset.tileId;
+            if (id) {
+                sizes[id] = {
+                    gridColumn: card.style.gridColumn || '',
+                    width:      card.style.width || '',
+                    height:     card.style.height || '',
+                    minHeight:  card.style.minHeight || '',
+                    span:       card.dataset.span || card.dataset.baseSpan || '12'
+                };
+            }
+        });
+        return sizes;
+    }
+
+    // Restore previously captured inline sizes to #slideGrid tiles
+    function _restoreSlideGridSizes(sizes) {
+        const slideGrid = getSlideGrid();
+        if (!slideGrid) return;
+        slideGrid.querySelectorAll('.card').forEach(card => {
+            const id = card.dataset.tileId;
+            if (id && sizes[id]) {
+                const s = sizes[id];
+                card.style.gridColumn = s.gridColumn;
+                card.style.width      = s.width;
+                card.style.height     = s.height;
+                card.style.minHeight  = s.minHeight;
+                card.dataset.span     = s.span;
+                const canvas = card.querySelector('canvas');
+                if (canvas && charts[canvas.id]) {
+                    try { charts[canvas.id].resize(); } catch(e) { console.warn('Chart resize failed:', e); }
+                }
+            }
+        });
     }
 
     // Autofit: reset all tiles in the current view to their base span and natural height.
