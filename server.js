@@ -3698,6 +3698,76 @@ app.get('/api/events', (req, res) => {
   });
 });
 
+// ========== Dashboard Save / Load / Delete State ==========
+// Files are stored in SAVE_STATE_DIR (env var) or a 'save state' sub-directory of __dirname.
+// The target Windows path can be configured via: SAVE_STATE_DIR=F:\Recruiting Tools\...
+const SAVE_STATE_DIR = process.env.SAVE_STATE_DIR
+    ? path.resolve(process.env.SAVE_STATE_DIR)
+    : path.join(__dirname, 'save state');
+
+function getSaveStatePath(username) {
+    // Sanitise: only allow alphanumeric, dash and underscore to prevent path traversal
+    const safe = String(username).replace(/[^a-zA-Z0-9_\-]/g, '_');
+    return path.join(SAVE_STATE_DIR, `${safe}.json`);
+}
+
+// POST /dashboard/save-state  –  save dashboard + slide state as JSON
+app.post('/dashboard/save-state', requireLogin, (req, res) => {
+    try {
+        const { dashboard, slide } = req.body || {};
+        const username = req.user.username;
+
+        // Ensure directory exists
+        try { fs.mkdirSync(SAVE_STATE_DIR, { recursive: true }); } catch (e) {
+            if (e.code !== 'EEXIST') console.error('Failed to create save-state directory:', e.message);
+        }
+
+        const filepath = getSaveStatePath(username);
+        const payload = {
+            username,
+            savedAt: new Date().toISOString(),
+            dashboard: dashboard || null,
+            slide: slide || null
+        };
+
+        fs.writeFileSync(filepath, JSON.stringify(payload, null, 2), 'utf8');
+        res.json({ ok: true, message: 'State saved', file: path.basename(filepath) });
+    } catch (e) {
+        console.error('/dashboard/save-state error:', e);
+        res.status(500).json({ ok: false, error: 'Failed to save state' });
+    }
+});
+
+// GET /dashboard/load-state  –  load state for the logged-in user
+app.get('/dashboard/load-state', requireLogin, (req, res) => {
+    try {
+        const filepath = getSaveStatePath(req.user.username);
+        if (!fs.existsSync(filepath)) {
+            return res.json({ ok: true, found: false });
+        }
+        const raw = fs.readFileSync(filepath, 'utf8');
+        const payload = JSON.parse(raw);
+        res.json({ ok: true, found: true, data: payload });
+    } catch (e) {
+        console.error('/dashboard/load-state error:', e);
+        res.status(500).json({ ok: false, error: 'Failed to load state' });
+    }
+});
+
+// DELETE /dashboard/delete-state  –  delete the logged-in user's state file
+app.delete('/dashboard/delete-state', requireLogin, (req, res) => {
+    try {
+        const filepath = getSaveStatePath(req.user.username);
+        if (fs.existsSync(filepath)) {
+            fs.unlinkSync(filepath);
+        }
+        res.json({ ok: true, message: 'State deleted' });
+    } catch (e) {
+        console.error('/dashboard/delete-state error:', e);
+        res.status(500).json({ ok: false, error: 'Failed to delete state' });
+    }
+});
+
 // Create HTTP server
 const server = http.createServer(app);
 

@@ -1218,6 +1218,9 @@
             min-width: 28px;
             text-align: center;
         }
+        .tile-metric-select {
+            max-width: 90px;
+        }
 
         .slideshow-content {
             flex: 1;
@@ -2749,29 +2752,111 @@
         });
     }
 
-    function aggregateData(dimension) {
+    function aggregateData(dimension, metric) {
         const data = getFilteredData();
         const counts = {};
+        const numericValues = {}; // for avg/sum/stddev/median
+        // For distinct count: track unique raw values per group label
+        const distinctSets = {};
         const dataKey = FIELD_MAPPING[dimension] || dimension;
-        
+        const isArrayField = ['skillset', 'product', 'lskillset', 'jskillset'].includes(dataKey);
+
         data.forEach(row => {
             let val = row[dataKey];
-            // Updated: use jskillset
-            if (['skillset', 'product', 'lskillset', 'jskillset'].includes(dataKey)) {
+            const numVal = parseFloat(val);
+            const isNumeric = !isNaN(numVal) && val !== '' && val !== null;
+
+            if (isArrayField) {
                 if (val) {
                     // Remove [, ], " before splitting
-                    String(val).replace(/[\[\]"]/g, '').split(/[,;]/).forEach(v => {
+                    const rawStr = String(val).replace(/[\[\]"]/g, '');
+                    rawStr.split(/[,;]/).forEach(v => {
                         const t = v.trim();
-                        if(t) counts[t] = (counts[t]||0) + 1;
+                        if(t) {
+                            counts[t] = (counts[t]||0) + 1;
+                            // For array fields each occurrence contributes 1 to numeric aggregations
+                            (numericValues[t] = numericValues[t] || []).push(1);
+                            // Track distinct token occurrences (each row is one distinct entry per token)
+                            (distinctSets[t] = distinctSets[t] || new Set()).add(row);
+                        }
                     });
                 }
             } else {
                 if (!val) val = 'Unknown';
                 counts[val] = (counts[val]||0) + 1;
+                if (isNumeric) {
+                    (numericValues[val] = numericValues[val] || []).push(numVal);
+                } else {
+                    (numericValues[val] = numericValues[val] || []).push(1);
+                }
+                // For non-array fields, distinct count = count of unique non-null raw values per group
+                (distinctSets[val] = distinctSets[val] || new Set()).add(val);
             }
         });
 
-        const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+        const activeMetric = metric || 'count';
+
+        function _median(arr) {
+            if (!arr.length) return 0;
+            const s = arr.slice().sort((a, b) => a - b);
+            const mid = Math.floor(s.length / 2);
+            return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+        }
+        function _stddev(arr) {
+            if (arr.length < 2) return 0;
+            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+            return Math.sqrt(arr.reduce((s, x) => s + (x - mean) ** 2, 0) / arr.length);
+        }
+
+        // First pass: compute raw values per label
+        let computedValues = {};
+        Object.keys(counts).forEach(label => {
+            const nums = numericValues[label] || [counts[label]];
+            switch (activeMetric) {
+                case 'distinct':
+                    // Distinct count: number of distinct records that contain this label
+                    computedValues[label] = (distinctSets[label] && distinctSets[label].size) || counts[label];
+                    break;
+                case 'average':
+                    computedValues[label] = nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0;
+                    break;
+                case 'sum':
+                    computedValues[label] = +nums.reduce((a, b) => a + b, 0).toFixed(2);
+                    break;
+                case 'stddev':
+                    computedValues[label] = +_stddev(nums).toFixed(2);
+                    break;
+                case 'percent': {
+                    // Defer total computation to after all labels are processed
+                    computedValues[label] = counts[label]; // placeholder
+                    break;
+                }
+                case 'median':
+                    computedValues[label] = +_median(nums).toFixed(2);
+                    break;
+                default: // 'count' and 'rank'
+                    computedValues[label] = counts[label];
+            }
+        });
+
+        // Second pass for percent: compute total of the base metric (count), then convert
+        if (activeMetric === 'percent') {
+            const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
+            Object.keys(computedValues).forEach(label => {
+                computedValues[label] = +(counts[label] / total * 100).toFixed(1);
+            });
+        }
+
+        const sorted = Object.entries(computedValues).sort((a, b) => b[1] - a[1]);
+
+        if (activeMetric === 'rank') {
+            // Replace values with ordinal rank
+            return {
+                labels: sorted.map(x => x[0]),
+                values: sorted.map((_, i) => i + 1)
+            };
+        }
+
         return {
             labels: sorted.map(x => x[0]),
             values: sorted.map(x => x[1])
@@ -2829,10 +2914,14 @@
 
     // Country centroids for tile-level Leaflet map charts (extends the COUNTRY_COORDS defined above)
     // Render a Leaflet bubble map inside a tile's chart-container for 'map' chart type
-    function renderLeafletMapForTile(canvasId, dimension) {
+    function renderLeafletMapForTile(canvasId, dimension, metric) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
         const container = canvas.parentElement;
+        if (!metric) {
+            const card = canvas.closest('.card');
+            metric = (card && card.dataset.tileMetric) || 'count';
+        }
         if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
         canvas.style.display = 'none';
         let mapDiv = container.querySelector(`#tilemap-${canvasId}`);
@@ -2843,7 +2932,7 @@
             mapDiv.style.cssText = 'width:100%;height:100%;min-height:250px;';
             container.appendChild(mapDiv);
         }
-        const agg = aggregateData(dimension);
+        const agg = aggregateData(dimension, metric);
         const labels = agg.labels; const values = agg.values;
         const maxVal = Math.max(...values, 1);
         const map = L.map(mapDiv, { zoomControl: true });
@@ -2864,9 +2953,30 @@
         setTimeout(() => map.invalidateSize(), 120);
     }
 
-    function updateChart(canvasId, dimension, type) {
+    // Returns a human-readable label for the selected metric key
+    function _metricLabel(metric) {
+        const map = {
+            count:    'Count',
+            distinct: 'Distinct Count',
+            average:  'Average',
+            sum:      'Sum',
+            stddev:   'Std Dev',
+            percent:  '% of Total',
+            median:   'Median',
+            rank:     'Rank'
+        };
+        return map[metric] || 'Count';
+    }
+
+    function updateChart(canvasId, dimension, type, metric) {
         // Handle map type with Leaflet
-        if (type === 'map') { renderLeafletMapForTile(canvasId, dimension); return; }
+        if (type === 'map') { renderLeafletMapForTile(canvasId, dimension, metric); return; }
+        // If no metric given, try to read from tile's dataset
+        if (!metric) {
+            const canvas = document.getElementById(canvasId);
+            const card = canvas && canvas.closest('.card');
+            metric = (card && card.dataset.tileMetric) || 'count';
+        }
         const canvasEl = document.getElementById(canvasId);
         // Handle table type
         if (type === 'table') {
@@ -2877,10 +2987,11 @@
                 canvasEl.style.display = 'none';
                 const existing = canvasEl.parentElement.querySelector('.chart-data-table');
                 if (existing) existing.remove();
-                const agg = aggregateData(dimension);
+                const agg = aggregateData(dimension, metric);
+                const metricLabel = _metricLabel(metric);
                 const tableDiv = document.createElement('div');
                 tableDiv.className = 'chart-data-table table-wrapper';
-                tableDiv.innerHTML = `<table><thead><tr><th>${formatLabel(dimension)}</th><th>Count</th></tr></thead><tbody>${agg.labels.slice(0, 50).map((l, i) => `<tr><td>${l}</td><td>${agg.values[i]}</td></tr>`).join('')}</tbody></table>`;
+                tableDiv.innerHTML = `<table><thead><tr><th>${formatLabel(dimension)}</th><th>${metricLabel}</th></tr></thead><tbody>${agg.labels.slice(0, 50).map((l, i) => `<tr><td>${l}</td><td>${agg.values[i]}</td></tr>`).join('')}</tbody></table>`;
                 canvasEl.after(tableDiv);
             }
             return;
@@ -2894,7 +3005,7 @@
             canvasEl.style.display = '';
         }
 
-        const agg = aggregateData(dimension);
+        const agg = aggregateData(dimension, metric);
         const labels = agg.labels.slice(0, 15);
         const values = agg.values.slice(0, 15);
         if (!canvasEl) return;
@@ -2934,7 +3045,7 @@
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Count',
+                    label: _metricLabel(metric),
                     data: datasetData,
                     // Hex colors are all 6-digit so +cc gives valid 8-digit hex alpha (80%)
                     backgroundColor: useMultiColor ? colors.map(c => c + 'cc') : (isCyber ? '#0ea5e9' : '#1a73e8'),
@@ -2978,7 +3089,7 @@
         } else if (chartJsType === 'scatter' || chartJsType === 'bubble') {
             config.options.scales = {
                 x: { type: 'linear', title: { display: true, text: 'Rank', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } },
-                y: { title: { display: true, text: 'Count', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } }
+                y: { title: { display: true, text: _metricLabel(metric), color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } }
             };
         } else {
             config.options.scales = {
@@ -3523,6 +3634,43 @@
                 controls.appendChild(alignDiv);
             } else {
                 controls.appendChild(topnDiv);
+                // Metric dropdown for non-text tiles
+                const metricSel = document.createElement('select');
+                metricSel.className = 'tile-metric-select';
+                metricSel.title = 'Aggregation metric';
+                metricSel.style.cssText = 'font-size:10px;padding:1px 2px;margin-left:4px;border-radius:3px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;';
+                [
+                    ['count',    'Count'],
+                    ['distinct', 'Distinct Count'],
+                    ['average',  'Average'],
+                    ['sum',      'Sum'],
+                    ['stddev',   'Std Dev'],
+                    ['percent',  '% of Total'],
+                    ['median',   'Median'],
+                    ['rank',     'Rank']
+                ].forEach(([val, label]) => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = label;
+                    if ((card.dataset.tileMetric || 'count') === val) opt.selected = true;
+                    metricSel.appendChild(opt);
+                });
+                metricSel.addEventListener('mousedown', e => e.stopPropagation());
+                metricSel.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    card.dataset.tileMetric = metricSel.value;
+                    card.querySelectorAll('canvas').forEach(cv => {
+                        const chart = charts[cv.id];
+                        if (!chart) return;
+                        const fields = JSON.parse(card.dataset.fields || '[]');
+                        const dimension = fields.length ? fields[fields.length - 1] : null;
+                        if (dimension) {
+                            const chartType = card.dataset.chartType || 'bar';
+                            updateChart(cv.id, dimension, chartType, metricSel.value);
+                        }
+                    });
+                });
+                controls.appendChild(metricSel);
             }
             const removeBtn = document.createElement('button');
             removeBtn.style.color = 'red';
@@ -3851,13 +3999,13 @@
         persistOrder();
         
         setTimeout(() => {
-            updateChart(canvasId, dimension, chartType);
+            updateChart(canvasId, dimension, chartType, tile.dataset.tileMetric || 'count');
         }, 0);
     }
 
     // Helper for custom chart updates that also saves state
     window.updateCustomChart = function(canvasId, dimension, type, card) {
-        updateChart(canvasId, dimension, type);
+        updateChart(canvasId, dimension, type, (card && card.dataset.tileMetric) || 'count');
         card.dataset.chartType = type;
         persistOrder();
     }
@@ -3932,6 +4080,44 @@
             controls.appendChild(alignDiv);
         } else {
             controls.appendChild(topnDiv);
+            // Metric dropdown for non-text tiles
+            const metricSel = document.createElement('select');
+            metricSel.className = 'tile-metric-select';
+            metricSel.title = 'Aggregation metric';
+            metricSel.style.cssText = 'font-size:10px;padding:1px 2px;margin-left:4px;border-radius:3px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;';
+            [
+                ['count',    'Count'],
+                ['distinct', 'Distinct Count'],
+                ['average',  'Average'],
+                ['sum',      'Sum'],
+                ['stddev',   'Std Dev'],
+                ['percent',  '% of Total'],
+                ['median',   'Median'],
+                ['rank',     'Rank']
+            ].forEach(([val, label]) => {
+                const opt = document.createElement('option');
+                opt.value = val;
+                opt.textContent = label;
+                if ((tile.dataset.tileMetric || 'count') === val) opt.selected = true;
+                metricSel.appendChild(opt);
+            });
+            metricSel.addEventListener('mousedown', e => e.stopPropagation());
+            metricSel.addEventListener('change', (ev) => {
+                ev.stopPropagation();
+                tile.dataset.tileMetric = metricSel.value;
+                // Re-render chart(s) within this tile using new metric
+                tile.querySelectorAll('canvas').forEach(cv => {
+                    const chart = charts[cv.id];
+                    if (!chart) return;
+                    const fields = JSON.parse(tile.dataset.fields || '[]');
+                    const dimension = fields.length ? fields[fields.length - 1] : null;
+                    if (dimension) {
+                        const chartType = tile.dataset.chartType || 'bar';
+                        updateChart(cv.id, dimension, chartType, metricSel.value);
+                    }
+                });
+            });
+            controls.appendChild(metricSel);
         }
         const removeBtn = document.createElement('button');
         removeBtn.style.color = 'red';
@@ -4170,6 +4356,7 @@
                         type = 'custom-chart';
                         data.fields = JSON.parse(el.dataset.fields || '[]');
                         data.chartType = el.dataset.chartType || 'bar';
+                        data.tileMetric = el.dataset.tileMetric || 'count';
                     } else {
                         type = 'custom-metric';
                         data.title = el.querySelector('h3').innerText;
@@ -4278,6 +4465,7 @@
                 tile.dataset.tileId = id;
                 tile.dataset.fields = JSON.stringify(data.fields || []);
                 tile.dataset.chartType = data.chartType || 'bar';
+                tile.dataset.tileMetric = data.tileMetric || 'count';
                 
                 const dimension = (data.fields && data.fields.length > 0) ? data.fields[data.fields.length-1] : 'Unknown';
                 const canvasId = `chart-${id}`;
@@ -4315,7 +4503,7 @@
                 setupDropZone(tile); 
                 
                 setTimeout(() => {
-                    updateChart(canvasId, dimension, data.chartType);
+                    updateChart(canvasId, dimension, data.chartType, data.tileMetric || 'count');
                 }, 0);
             }
         });
@@ -4391,57 +4579,109 @@
             localStorage.setItem('dashboard:orgFilter', orgFilter.value);
         }
 
-        alert('Dashboard state saved successfully!');
+        // Build JSON payload for server-side persistence
+        const dashboardPayload = {
+            order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
+            sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
+            config:    localStorage.getItem('dashboard:config'),
+            filters:   localStorage.getItem('dashboard:filters'),
+            map:       localStorage.getItem('dashboard:map'),
+            orgFilter: localStorage.getItem('dashboard:orgFilter')
+        };
+        const slidePayload = slides.length > 0
+            ? slides.map(s => ({ name: s.name, tileIds: s.tileIds.slice(), topN: s.topN }))
+            : null;
+
+        fetch(`${API_BASE}/dashboard/save-state`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'include',
+            body: JSON.stringify({ dashboard: dashboardPayload, slide: slidePayload })
+        }).then(r => r.json()).then(data => {
+            if (data.ok) {
+                alert('Dashboard state saved successfully!');
+            } else {
+                alert('State saved locally. Server save failed: ' + (data.error || 'Unknown error'));
+            }
+        }).catch(() => {
+            alert('State saved locally. Could not reach server.');
+        });
     }
 
     // NEW: Load Dashboard State Function
     function loadDashboardState(autoLoad=false) {
         if(!autoLoad && !confirm('This will reload the dashboard from the last saved state. Unsaved changes will be lost. Continue?')) return;
-        
-        // Restore Layout and Sizes
-        restoreSavedLayout();
-        applySavedSizes();
-        
-        // Restore Filters
-        restoreFilters();
-        
-        // Restore Theme and Chart Configs
-        try {
-            const configRaw = localStorage.getItem('dashboard:config');
-            if(configRaw) {
-                const config = JSON.parse(configRaw);
-                // Restore Theme
-                if(config.theme) changeTheme(config.theme);
-                // Restore Chart Types
-                if(config.charts) {
-                    Object.entries(config.charts).forEach(([id, val]) => {
-                        const sel = document.getElementById(id);
-                        if(sel) sel.value = val;
-                    });
+
+        // Helper that restores all in-memory state from localStorage
+        function _applyLocalState() {
+            // Restore Layout and Sizes
+            restoreSavedLayout();
+            applySavedSizes();
+
+            // Restore Filters
+            restoreFilters();
+
+            // Restore Theme and Chart Configs
+            try {
+                const configRaw = localStorage.getItem('dashboard:config');
+                if(configRaw) {
+                    const config = JSON.parse(configRaw);
+                    if(config.theme) changeTheme(config.theme);
+                    if(config.charts) {
+                        Object.entries(config.charts).forEach(([id, val]) => {
+                            const sel = document.getElementById(id);
+                            if(sel) sel.value = val;
+                        });
+                    }
+                }
+            } catch(e) { console.error('Error restoring config', e); }
+
+            // Restore Org Chart Filter
+            const savedOrgFilter = localStorage.getItem('dashboard:orgFilter');
+            if (savedOrgFilter) {
+                const orgFilter = document.getElementById('orgChartCompanyFilter');
+                if(orgFilter) {
+                    orgFilter.value = savedOrgFilter;
+                    buildOrgChart();
                 }
             }
-        } catch(e) { console.error('Error restoring config', e); }
-        
-        // Restore Org Chart Filter
-        const savedOrgFilter = localStorage.getItem('dashboard:orgFilter');
-        if (savedOrgFilter) {
-            const orgFilter = document.getElementById('orgChartCompanyFilter');
-            if(orgFilter) {
-                orgFilter.value = savedOrgFilter;
-                buildOrgChart(); // Rebuild chart
+
+            // Restore Map
+            const savedMap = localStorage.getItem('dashboard:map');
+            if (savedMap && mapInstance) {
+                try {
+                    const p = JSON.parse(savedMap);
+                    mapInstance.setView(p.center, p.zoom);
+                } catch(e) {}
             }
+
+            updateAllVisuals();
         }
 
-        // Restore Map
-        const savedMap = localStorage.getItem('dashboard:map');
-        if (savedMap && mapInstance) {
-            try {
-                const p = JSON.parse(savedMap);
-                mapInstance.setView(p.center, p.zoom);
-            } catch(e) {}
+        if (autoLoad) {
+            // Try server first; fall back to localStorage silently
+            fetch(`${API_BASE}/dashboard/load-state`, { credentials: 'include' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok && data.found && data.data) {
+                        const d = data.data.dashboard || {};
+                        if (d.order)     localStorage.setItem(DASHBOARD_ORDER_KEY, d.order);
+                        if (d.sizes)     localStorage.setItem(DASHBOARD_SIZE_KEY,  d.sizes);
+                        if (d.config)    localStorage.setItem('dashboard:config',   d.config);
+                        if (d.filters)   localStorage.setItem('dashboard:filters',  d.filters);
+                        if (d.map)       localStorage.setItem('dashboard:map',      d.map);
+                        if (d.orgFilter) localStorage.setItem('dashboard:orgFilter', d.orgFilter);
+                        // Restore slides from server if present
+                        if (data.data.slide) {
+                            localStorage.setItem('dashboard:slides', JSON.stringify(data.data.slide));
+                        }
+                    }
+                })
+                .catch(() => { /* server unavailable – use localStorage */ })
+                .finally(() => { _applyLocalState(); });
+        } else {
+            _applyLocalState();
         }
-        
-        updateAllVisuals();
     }
 
     function restoreFilters() {
@@ -4789,6 +5029,21 @@
                 btn.style.background = '#22c55e';
                 setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 1500);
             }
+            // Also persist to server (create/update the user's JSON file with latest slide state)
+            const dashboardPayload = {
+                order:     localStorage.getItem(DASHBOARD_ORDER_KEY),
+                sizes:     localStorage.getItem(DASHBOARD_SIZE_KEY),
+                config:    localStorage.getItem('dashboard:config'),
+                filters:   localStorage.getItem('dashboard:filters'),
+                map:       localStorage.getItem('dashboard:map'),
+                orgFilter: localStorage.getItem('dashboard:orgFilter')
+            };
+            fetch(`${API_BASE}/dashboard/save-state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'include',
+                body: JSON.stringify({ dashboard: dashboardPayload, slide: payload })
+            }).catch(e => console.warn('Could not sync slides to server:', e));
         } catch(err) {
             console.warn('Failed to save slides:', err);
             alert('Could not save slides: ' + err.message);
@@ -4872,6 +5127,12 @@
         localStorage.removeItem('dashboard:slides');
         closeSlideshowViewer();
         updateSlidesTabVisibility();
+        // Also remove the server-side state file for this user
+        fetch(`${API_BASE}/dashboard/delete-state`, {
+            method: 'DELETE',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'include'
+        }).catch(e => console.warn('Could not delete server state:', e));
     };
 
     // Export the current slide content as a PNG image download
