@@ -3712,7 +3712,7 @@ function getSaveStatePath(username) {
 }
 
 // POST /dashboard/save-state  –  save dashboard + slide state as JSON
-app.post('/dashboard/save-state', requireLogin, (req, res) => {
+app.post('/dashboard/save-state', dashboardRateLimit, requireLogin, (req, res) => {
     try {
         const { dashboard, slide } = req.body || {};
         const username = req.user.username;
@@ -3739,7 +3739,7 @@ app.post('/dashboard/save-state', requireLogin, (req, res) => {
 });
 
 // GET /dashboard/load-state  –  load state for the logged-in user
-app.get('/dashboard/load-state', requireLogin, (req, res) => {
+app.get('/dashboard/load-state', dashboardRateLimit, requireLogin, (req, res) => {
     try {
         const filepath = getSaveStatePath(req.user.username);
         if (!fs.existsSync(filepath)) {
@@ -3755,7 +3755,7 @@ app.get('/dashboard/load-state', requireLogin, (req, res) => {
 });
 
 // DELETE /dashboard/delete-state  –  delete the logged-in user's state file
-app.delete('/dashboard/delete-state', requireLogin, (req, res) => {
+app.delete('/dashboard/delete-state', dashboardRateLimit, requireLogin, (req, res) => {
     try {
         const filepath = getSaveStatePath(req.user.username);
         if (fs.existsSync(filepath)) {
