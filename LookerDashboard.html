@@ -849,6 +849,10 @@
         }
 
         .card.dragging { opacity: .5; }
+        /* Map/org-chart tiles contain canvas/DOM elements that look washed-out at 0.5 opacity.
+           Keep them visually solid while dragging — the drag ghost is a browser-rendered snapshot. */
+        .map-card.dragging,
+        .org-chart-card.dragging { opacity: 0.85; }
         .card-placeholder {
             border: 2px dashed var(--border);
             background: var(--hover);
@@ -1081,7 +1085,7 @@
             top: 8px;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 20;
+            z-index: 1010;
             background: rgba(0,0,0,0.55);
             color: #fff;
             padding: 4px 10px;
@@ -1251,6 +1255,47 @@
         #slideGrid.slide-theme-light { background: #ffffff; color: #1e293b; --bg-card:#ffffff; --text-main:#1e293b; --border:#e2e8f0; }
         #slideGrid.slide-theme-dark { background: #1e293b; color: #f1f5f9; --bg-card:#334155; --text-main:#f1f5f9; --border:#475569; }
         #slideGrid.slide-theme-cyberpunk { background: #0f172a; color: #e2e8f0; --bg-card:#1e293b; --text-main:#94a3b8; --border:#334155; font-family:'Orbitron',sans-serif; }
+
+        /* Dark theme: enforce light text on dark card backgrounds */
+        #slideGrid.slide-theme-dark .card,
+        #slideGrid.slide-theme-cyberpunk .card {
+            background: var(--bg-card);
+            border-color: var(--border);
+            color: var(--text-main);
+        }
+        #slideGrid.slide-theme-dark .card h3,
+        #slideGrid.slide-theme-dark .card .metric-value,
+        #slideGrid.slide-theme-dark .card .metric-label,
+        #slideGrid.slide-theme-dark .card p,
+        #slideGrid.slide-theme-dark .card span,
+        #slideGrid.slide-theme-dark .card label {
+            color: var(--text-main) !important;
+        }
+        #slideGrid.slide-theme-cyberpunk .card h3,
+        #slideGrid.slide-theme-cyberpunk .card .metric-value,
+        #slideGrid.slide-theme-cyberpunk .card .metric-label,
+        #slideGrid.slide-theme-cyberpunk .card p,
+        #slideGrid.slide-theme-cyberpunk .card span,
+        #slideGrid.slide-theme-cyberpunk .card label {
+            color: var(--text-main) !important;
+        }
+        /* Light theme: enforce dark text on light card backgrounds */
+        #slideGrid.slide-theme-light .card {
+            background: var(--bg-card);
+            border-color: var(--border);
+            color: var(--text-main);
+        }
+        #slideGrid.slide-theme-light .card h3,
+        #slideGrid.slide-theme-light .card .metric-value,
+        #slideGrid.slide-theme-light .card .metric-label {
+            color: var(--text-main) !important;
+        }
+        /* Chart canvas + text-tile contrast in dark/cyberpunk themes */
+        #slideGrid.slide-theme-dark .text-tile-editor,
+        #slideGrid.slide-theme-cyberpunk .text-tile-editor {
+            background: var(--bg-card);
+            color: var(--text-main);
+        }
 
         .slideshow-nav {
             flex-shrink: 0;
@@ -4822,6 +4867,35 @@
         }
     }
 
+    // Build a <select> for org-chart company filter from a list of company strings.
+    // Uses DOM API (not innerHTML) to avoid XSS.
+    function _buildOrgCompanySelect(companies, selectedCompany) {
+        const sel = document.createElement('select');
+        sel.className = 'chart-type-select';
+        sel.title = 'Filter by company';
+        const allOpt = document.createElement('option');
+        allOpt.value = '';
+        allOpt.textContent = 'All Companies';
+        sel.appendChild(allOpt);
+        companies.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            if (c === selectedCompany) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        return sel;
+    }
+
+    // Apply company filter to org-group-container divs inside a content div.
+    function _applyOrgCompanyFilter(contentDiv, selectedCompany) {
+        contentDiv.querySelectorAll('.org-group-container').forEach(grp => {
+            const titleEl = grp.querySelector('.org-group-title');
+            const grpCompany = titleEl ? titleEl.textContent.split(' - ')[0] : '';
+            grp.style.display = (!selectedCompany || grpCompany === selectedCompany) ? '' : 'none';
+        });
+    }
+
     // Clone a dashboard tile's config into a new independent slide tile in #slideGrid
     function _cloneTileToSlideGrid(srcCard) {
         const slideGrid = getSlideGrid();
@@ -4937,21 +5011,26 @@
             lblDiv.textContent = srcLabel ? srcLabel.textContent.trim() : '';
             tile.append(h3, valDiv, lblDiv);
         } else if (isOrgChart) {
-            // Organisational Hierarchy tile: render a static snapshot of the current org chart HTML
+            // Organisational Hierarchy tile: render a snapshot with a live company filter
             tile.className = 'card org-chart-card';
             tile.dataset.tileType = 'org-chart';
             tile.dataset.baseHeight = '500';
             const srcH3 = srcCard.querySelector('h3');
             const tileTitle = srcH3 ? srcH3.textContent.trim() : 'Organizational Hierarchy';
             const srcContent = document.getElementById('orgChartContent');
-            // Build header with editable title
+            // Collect unique companies for the filter dropdown
+            const orgData = typeof getFilteredData === 'function' ? getFilteredData() : [];
+            const orgCompanies = Array.from(new Set(orgData.map(d => d.company).filter(Boolean))).sort();
+            // Build header with editable title and company filter dropdown (using DOM API for safety)
             const headerDiv = document.createElement('div');
             headerDiv.className = 'card-header';
             const h3El = document.createElement('h3');
             h3El.contentEditable = 'true';
             h3El.spellcheck = false;
             h3El.textContent = tileTitle;
+            const orgFilterSel = _buildOrgCompanySelect(orgCompanies, '');
             headerDiv.appendChild(h3El);
+            headerDiv.appendChild(orgFilterSel);
             tile.appendChild(headerDiv);
             // Clone org chart content as a read-only static snapshot
             const scrollDiv = document.createElement('div');
@@ -4963,6 +5042,10 @@
                 : '<div style="padding:20px;color:var(--text-sub);">No hierarchy data available.</div>';
             scrollDiv.appendChild(contentDiv);
             tile.appendChild(scrollDiv);
+            // Wire up company filter: show/hide .org-group-container elements
+            orgFilterSel.addEventListener('change', function() {
+                _applyOrgCompanyFilter(contentDiv, this.value);
+            });
         } else {
             // Generic empty tile — placeholder for unsupported tile types
             tile.className = 'card empty-tile';
@@ -5347,8 +5430,9 @@
                         // Metric tile: persist displayed value + label for reload
                         metricValue: tileType === 'metric' ? (el.querySelector('.metric-value')?.textContent || '') : null,
                         metricLabel: tileType === 'metric' ? (el.querySelector('.metric-label')?.textContent || '') : null,
-                        // Org-chart tile: persist static HTML snapshot for reload
+                        // Org-chart tile: persist static HTML snapshot + selected company filter for reload
                         orgChartHtml: tileType === 'org-chart' ? (el.querySelector('.org-chart-scroll > div')?.innerHTML || '') : null,
+                        orgCompany:   tileType === 'org-chart' ? (el.querySelector('select.chart-type-select')?.value || '') : null,
                         height:      el.style.height || '',
                         width:       el.style.width  || '',
                         span:        el.dataset.span  || ''
@@ -5465,7 +5549,7 @@
                         mLbl.textContent = cfg.metricLabel || '';
                         tile.append(mH3, mVal, mLbl);
                     } else if (tileType === 'org-chart') {
-                        // Restore static org-chart snapshot
+                        // Restore static org-chart snapshot with company filter
                         tile.className = 'card org-chart-card';
                         tile.dataset.tileType = 'org-chart';
                         tile.dataset.baseHeight = '500';
@@ -5474,7 +5558,12 @@
                         const ocH3 = document.createElement('h3');
                         ocH3.contentEditable = 'true'; ocH3.spellcheck = false;
                         ocH3.textContent = cfg.title || 'Organizational Hierarchy';
+                        // Rebuild company filter dropdown from live data (using helper for XSS safety)
+                        const ocOrgData = typeof getFilteredData === 'function' ? getFilteredData() : [];
+                        const ocCompanies = Array.from(new Set(ocOrgData.map(d => d.company).filter(Boolean))).sort();
+                        const ocFilterSel = _buildOrgCompanySelect(ocCompanies, cfg.orgCompany || '');
                         ocHeader.appendChild(ocH3);
+                        ocHeader.appendChild(ocFilterSel);
                         tile.appendChild(ocHeader);
                         const ocScroll = document.createElement('div');
                         ocScroll.className = 'org-chart-scroll';
@@ -5483,6 +5572,14 @@
                         ocContent.innerHTML = cfg.orgChartHtml || '<div style="padding:20px;color:var(--text-sub);">No hierarchy data available.</div>';
                         ocScroll.appendChild(ocContent);
                         tile.appendChild(ocScroll);
+                        // Apply saved company filter to content immediately
+                        if (cfg.orgCompany) {
+                            _applyOrgCompanyFilter(ocContent, cfg.orgCompany);
+                        }
+                        // Wire live filter
+                        ocFilterSel.addEventListener('change', function() {
+                            _applyOrgCompanyFilter(ocContent, this.value);
+                        });
                     } else if (fields.length > 0) {
                         const dimension = fields[fields.length - 1];
                         const canvasId = `slideChart-${tileId}`;
