@@ -4773,6 +4773,7 @@
     let _slideIdCounter = 0;                  // monotonic counter for unique tile IDs
     const _slideCharts = new Map();           // tileId → Chart instance
     let _tileDroppedOnTab = false;            // set by slide-tab drop handler, cleared in makeDraggable dragend
+    let _autofitEnabled = false;              // when true, renderCurrentSlide auto-fits all tiles
 
     // Helper: returns the dedicated slide grid (always inside the slideshow overlay)
     function getSlideGrid() { return document.getElementById('slideGrid'); }
@@ -4833,6 +4834,7 @@
         }
 
         const isChart = srcCard.classList.contains('chart-card') && fields.length > 0;
+        const isMetric = srcCard.classList.contains('metric-card');
 
         const tile = document.createElement('div');
         tile.dataset.tileId = tileId;
@@ -4878,8 +4880,30 @@
             _initSlideTile(tile);
             setTimeout(() => updateChart(canvasId, dimension, chartType, tileMetric), 0);
             return tileId;
+        } else if (isMetric) {
+            // Metric/KPI tile: clone the displayed title, value, and label as a static slide tile.
+            // Elements are built programmatically (textContent) to avoid XSS from content values.
+            tile.className = 'card metric-card';
+            tile.dataset.baseSpan = '6';
+            tile.dataset.span = '6';
+            tile.dataset.baseHeight = '200';
+            tile.style.gridColumn = 'span 6';
+            const srcTitle = srcCard.querySelector('h3');
+            const srcValue = srcCard.querySelector('.metric-value');
+            const srcLabel = srcCard.querySelector('.metric-label');
+            const h3 = document.createElement('h3');
+            h3.contentEditable = 'true';
+            h3.spellcheck = false;
+            h3.textContent = srcTitle ? srcTitle.textContent.trim() : 'Metric';
+            const valDiv = document.createElement('div');
+            valDiv.className = 'metric-value';
+            valDiv.textContent = srcValue ? srcValue.textContent.trim() : '—';
+            const lblDiv = document.createElement('div');
+            lblDiv.className = 'metric-label';
+            lblDiv.textContent = srcLabel ? srcLabel.textContent.trim() : '';
+            tile.append(h3, valDiv, lblDiv);
         } else {
-            // Generic empty / metric tile — still useful as a placeholder
+            // Generic empty tile — placeholder for unsupported tile types
             tile.className = 'card empty-tile';
             tile.dataset.baseHeight = '200';
             tile.innerHTML = `<h3>Slide Tile</h3><div class="empty-tile-content">Drag filter tags here to build a chart</div>`;
@@ -4983,6 +5007,9 @@
         // Apply slide-specific design (layout + theme)
         _applySlideDesign(slide);
 
+        // Apply autofit if enabled
+        if (_autofitEnabled) setTimeout(autofitTiles, 0);
+
         renderSlideTabs();
     }
 
@@ -5085,6 +5112,22 @@
         const labelEl = document.getElementById('slideTitleFontSizeLabel');
         if (titleEl) titleEl.style.fontSize = value + 'px';
         if (labelEl) labelEl.textContent = value + 'px';
+    }
+
+    // Autofit toggle: when enabled, tiles are auto-fitted on each slide render.
+    // Calling with no argument toggles; calling with true/false sets explicitly.
+    function toggleAutofit(force) {
+        _autofitEnabled = (force !== undefined) ? Boolean(force) : !_autofitEnabled;
+        const btn = document.getElementById('autofitBtn');
+        if (btn) {
+            btn.textContent = _autofitEnabled ? '⊞ Autofit: ON' : '⊞ Autofit: OFF';
+            btn.style.background = _autofitEnabled ? '#16a34a' : '#6366f1';
+            btn.setAttribute('aria-pressed', String(_autofitEnabled));
+            btn.title = _autofitEnabled
+                ? 'Autofit is ON — tiles resize automatically. Click to disable.'
+                : 'Autofit is OFF — tiles keep manual sizes. Click to enable.';
+        }
+        if (_autofitEnabled) autofitTiles();
     }
 
     // Autofit: reset all tiles in the current view to their base span and natural height.
@@ -5674,8 +5717,8 @@
                 tab.classList.remove('drop-target');
                 const tileId = e.dataTransfer.getData('application/x-slide-tile-id');
                 if (!tileId) return;
-                // Copy tile to target slide (keep it in source slide too)
-                copyTileToSlide(tileId, idx);
+                // Move tile to target slide (removes from source slide)
+                moveTileToSlide(tileId, idx);
             });
 
             tabsEl.appendChild(tab);
@@ -5864,7 +5907,7 @@
             <button class="add-tile-btn" onclick="addTileToCurrentSlide()" title="Add a new empty tile to the current slide">+ Add Tile</button>
             <button class="add-tile-btn" onclick="addTextTileToCurrentSlide()" title="Add a text tile for notes or descriptions">+ Add Text</button>
             <button class="add-tile-btn" onclick="addBlankSlide()" title="Add a new blank slide with an empty tile you can populate">+ Add Slide</button>
-            <button class="add-tile-btn" onclick="autofitTiles()" title="Reset all tiles to their default size for a clean, balanced layout" style="background:#6366f1;">⊞ Autofit</button>
+            <button class="add-tile-btn" id="autofitBtn" onclick="toggleAutofit()" title="Autofit is OFF — tiles keep manual sizes. Click to enable." style="background:#6366f1;">⊞ Autofit: OFF</button>
             <button class="add-tile-btn" id="saveSlidesBtn" onclick="saveSlides()" title="Save current slides to local storage" style="background:#16a34a;">💾 Save</button>
             <button class="add-tile-btn" id="exportSlidePngBtn" onclick="exportSlideAsPNG()" title="Export current slide as PNG image">📷 Export PNG</button>
             <button class="add-tile-btn" id="exportPptxBtn" onclick="exportSlidesAsPPTX()" title="Export all slides as a PPTX file">📊 Export PPTX</button>
