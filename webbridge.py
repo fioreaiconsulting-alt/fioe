@@ -5493,6 +5493,213 @@ def _startup_backfill_role_tag_session():
 
 _startup_backfill_role_tag_session()
 
+# ── API Porting routes ─────────────────────────────────────────────────────────
+import re as _re
+
+_PORTING_INPUT_DIR = os.path.normpath(
+    os.getenv("PORTING_INPUT_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "porting_input"))
+)
+_PORTING_MAPPINGS_DIR = os.path.normpath(
+    os.getenv("PORTING_MAPPINGS_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "porting_mappings"))
+)
+_PROCESS_TABLE_FIELDS = [
+    'id','name','company','jobtitle','country','linkedinurl','username','userid',
+    'product','sector','jobfamily','geographic','seniority','skillset',
+    'sourcingstatus','email','mobile','office','role_tag','experience','cv',
+    'education','exp','rating','pic','tenure','comment','vskillset',
+    'compensation','lskillset','jskillset',
+]
+
+def _porting_safe_name(s):
+    return _re.sub(r'[^a-zA-Z0-9_\-]', '_', str(s))
+
+def _porting_encrypt(data: bytes) -> bytes:
+    """AES-256-GCM encrypt.  Returns nonce(12) + ciphertext + tag(16)."""
+    secret = os.getenv("PORTING_SECRET", "")
+    if not secret:
+        raise ValueError("PORTING_SECRET environment variable is not set.")
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key = (secret + "!" * 32)[:32].encode()[:32]
+    nonce = os.urandom(12)
+    ct = AESGCM(key).encrypt(nonce, data, None)
+    return nonce + ct
+
+def _porting_login_required():
+    """Return (username, None) or (None, error_response)."""
+    username = (request.cookies.get("username") or "").strip()
+    if not username:
+        return None, (jsonify({"error": "Authentication required"}), 401)
+    return username, None
+
+@app.post("/api/porting/upload")
+def porting_upload():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        body = request.get_json(silent=True) or {}
+        upload_type = body.get("type", "")
+        content = body.get("content", "")
+        filename = body.get("filename", "")
+        if not upload_type or not content:
+            return jsonify({"error": "Missing type or content"}), 400
+        if upload_type not in ("file", "text"):
+            return jsonify({"error": 'type must be "file" or "text"'}), 400
+        import base64
+        if upload_type == "file":
+            raw = base64.b64decode(content)
+        else:
+            raw = content.encode("utf-8")
+        if len(raw) > 1024 * 1024:
+            return jsonify({"error": "Content too large (max 1 MB)"}), 413
+        safe_fname = os.path.basename(str(filename)).replace(" ", "_") if filename else (
+            "upload.env" if upload_type == "file" else "api_keys.txt"
+        )
+        safe_fname = _re.sub(r'[^a-zA-Z0-9_\-\.]', '_', safe_fname)
+        safe_fname = f"{_porting_safe_name(username)}_{int(__import__('time').time()*1000)}_{safe_fname}"
+        os.makedirs(_PORTING_INPUT_DIR, exist_ok=True)
+        encrypted = _porting_encrypt(raw)
+        dest = os.path.join(_PORTING_INPUT_DIR, safe_fname + ".enc")
+        with open(dest, "wb") as fh:
+            fh.write(encrypted)
+        return jsonify({"ok": True, "stored": safe_fname + ".enc"})
+    except Exception as exc:
+        logger.exception("[porting/upload]")
+        return jsonify({"error": "Upload failed", "detail": str(exc)}), 500
+
+@app.post("/api/porting/map")
+def porting_map():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        body = request.get_json(silent=True) or {}
+        names = body.get("names", [])
+        if not isinstance(names, list) or not names:
+            return jsonify({"error": "names must be a non-empty array"}), 400
+        if not genai:
+            return jsonify({"error": "Gemini API key not configured."}), 500
+        fields_str = ", ".join(_PROCESS_TABLE_FIELDS)
+        names_str = ", ".join(f'"{str(n)}"' for n in names)
+        prompt = (
+            f'You are a database field mapping assistant.\n'
+            f'Available target fields (PostgreSQL "process" table): {fields_str}\n\n'
+            f'Map each of the following external API field names to the SINGLE best-matching target field.\n'
+            f'If there is no reasonable match, use null.\n'
+            f'Return ONLY a JSON object (no markdown, no explanation) where each key is the input name and '
+            f'each value is the matching target field name or null.\n\n'
+            f'Input names: {names_str}'
+        )
+        model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+        result = model.generate_content(prompt)
+        raw = result.text.strip()
+        raw = _re.sub(r'^```(?:json)?\s*', '', raw, flags=_re.IGNORECASE)
+        raw = _re.sub(r'\s*```$', '', raw).strip()
+        try:
+            mapping = json.loads(raw)
+        except Exception:
+            return jsonify({"error": "Gemini returned invalid JSON", "raw": raw}), 500
+        cleaned = {k: (v if v and v in _PROCESS_TABLE_FIELDS else None) for k, v in mapping.items()}
+        return jsonify({"ok": True, "mapping": cleaned})
+    except Exception as exc:
+        logger.exception("[porting/map]")
+        return jsonify({"error": "Mapping failed", "detail": str(exc)}), 500
+
+@app.post("/api/porting/confirm")
+def porting_confirm():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        body = request.get_json(silent=True) or {}
+        mapping = body.get("mapping")
+        if not mapping or not isinstance(mapping, dict):
+            return jsonify({"error": "mapping is required"}), 400
+        for k, v in mapping.items():
+            if v is not None and v not in _PROCESS_TABLE_FIELDS:
+                return jsonify({"error": f"Invalid target field: {v}"}), 400
+        os.makedirs(_PORTING_MAPPINGS_DIR, exist_ok=True)
+        path_out = os.path.join(_PORTING_MAPPINGS_DIR, _porting_safe_name(username) + ".json")
+        with open(path_out, "w", encoding="utf-8") as fh:
+            json.dump({"username": username, "mapping": mapping}, fh, indent=2)
+        return jsonify({"ok": True})
+    except Exception as exc:
+        logger.exception("[porting/confirm]")
+        return jsonify({"error": "Confirm failed", "detail": str(exc)}), 500
+
+@app.get("/api/porting/mapping")
+def porting_get_mapping():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        path_in = os.path.join(_PORTING_MAPPINGS_DIR, _porting_safe_name(username) + ".json")
+        if not os.path.isfile(path_in):
+            return jsonify({"mapping": None})
+        with open(path_in, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return jsonify({"mapping": data.get("mapping")})
+    except Exception as exc:
+        logger.exception("[porting/mapping]")
+        return jsonify({"error": "Could not load mapping", "detail": str(exc)}), 500
+
+@app.post("/api/porting/export")
+def porting_export():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        path_map = os.path.join(_PORTING_MAPPINGS_DIR, _porting_safe_name(username) + ".json")
+        if not os.path.isfile(path_map):
+            return jsonify({"error": "No confirmed mapping found. Please complete the mapping step first."}), 400
+        with open(path_map, encoding="utf-8") as fh:
+            mapping = json.load(fh).get("mapping", {})
+        cols = [c for c in _PROCESS_TABLE_FIELDS if c not in ("cv", "pic")]
+        conn = _pg_connect()
+        try:
+            cur = conn.cursor()
+            col_sql = ", ".join(f'"{c}"' for c in cols)
+            cur.execute(f'SELECT {col_sql} FROM "process" WHERE username = %s', (username,))
+            rows = cur.fetchall()
+            cur.close()
+        finally:
+            conn.close()
+        if not rows:
+            return jsonify({"error": "No data found for this user in the process table."}), 404
+        reverse_map = {proc: ext for ext, proc in mapping.items() if proc}
+        exported = [
+            {reverse_map.get(col, col): (row[i] if row[i] is not None else None) for i, col in enumerate(cols)}
+            for row in rows
+        ]
+        json_str = json.dumps(exported, indent=2, default=str)
+        body_req = request.get_json(silent=True) or {}
+        target_url = body_req.get("targetUrl", "")
+        if target_url:
+            try:
+                import urllib.parse as _up
+                import urllib.request as _ur
+                parsed = _up.urlparse(target_url)
+                if parsed.scheme not in ("http", "https"):
+                    raise ValueError("targetUrl must use http or https scheme")
+                req_obj = _ur.Request(
+                    target_url,
+                    data=json_str.encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with _ur.urlopen(req_obj, timeout=15):
+                    pass
+            except Exception as push_err:
+                logger.warning(f"[porting/export] push to {target_url} failed: {push_err}")
+        from flask import make_response
+        resp = make_response(json_str)
+        resp.headers["Content-Type"] = "application/json"
+        resp.headers["Content-Disposition"] = f'attachment; filename="porting_export_{_porting_safe_name(username)}.json"'
+        return resp
+    except Exception as exc:
+        logger.exception("[porting/export]")
+        return jsonify({"error": "Export failed", "detail": str(exc)}), 500
+
 
 if __name__ == '__main__':
     port=int(os.getenv("PORT","8091"))

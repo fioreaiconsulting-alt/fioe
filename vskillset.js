@@ -365,4 +365,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // expose globally for inline use in SourcingVerify UI
 window.vskillset = vskillset;
-export default vskillset;
