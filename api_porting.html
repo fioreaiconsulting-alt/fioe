@@ -21,25 +21,27 @@
       min-width: 0;
       overflow-y: auto;
       background: var(--bg);
+      display: flex;
+      flex-direction: column;
     }
 
     .page-header {
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-      padding: 14px 28px;
+      background: var(--azure-dragon);
+      padding: 0 28px;
+      height: 54px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 10px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(7,54,121,.35);
     }
     .page-header h1 {
       margin: 0;
-      font-size: 20px;
+      font-size: 17px;
       font-weight: 700;
-      color: var(--azure-dragon);
+      color: #fff;
       font-family: "Orbitron", "Roboto Condensed", sans-serif;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -48,11 +50,22 @@
       width: 9px; height: 9px; border-radius: 50%;
       background: var(--robins-egg); flex-shrink: 0;
     }
+    .page-header .header-admin {
+      color: rgba(255,255,255,.8);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: "Roboto Condensed", sans-serif;
+      transition: color .15s;
+    }
+    .page-header .header-admin:hover { color: var(--robins-egg); }
 
     .page-content {
       max-width: 820px;
       margin: 28px auto;
-      padding: 0 20px 40px;
+      padding: 0 24px 48px;
+      width: 100%;
+      box-sizing: border-box;
     }
 
     /* ── Tabs (matches sourcing_verify.css tab style) ── */
@@ -437,7 +450,7 @@
       <span class="header-dot"></span>
       API Porting
     </h1>
-    <a href="/admin_rate_limits.html" style="font-size:13px; color:var(--cool-blue); text-decoration:none; font-weight:700; font-family:'Roboto Condensed',sans-serif;">⚙️ Admin</a>
+    <a href="/admin_rate_limits.html" class="header-admin">⚙️ Admin</a>
   </div>
 
   <div class="page-content">
