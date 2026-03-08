@@ -2010,11 +2010,15 @@
         'product', 'sector', 'jobfamily', 'geographic', 'seniority', 
         'skillset', 'sourcingstatus', 'email', 'mobile', 'office', 
         'role_tag', 'jskillset', 'rating', 'lskill',
-        'education', 'compensation', 'tenure', 'experience'
+        'education', 'compensation', 'tenure', 'exp'
     ];
 
     const FIELD_MAPPING = {
         'lskill': 'lskillset' 
+    };
+
+    const LABEL_OVERRIDES = {
+        'exp': 'Total Experience'
     };
     
     // State
@@ -5043,6 +5047,7 @@
 
     // ================= UTILS =================
     function formatLabel(str) {
+        if (LABEL_OVERRIDES[str]) return LABEL_OVERRIDES[str];
         return str.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     }
 

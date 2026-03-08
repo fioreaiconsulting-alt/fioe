@@ -18,13 +18,16 @@
 html, body {
   margin: 0;
   padding: 0;
-  height: 100%;
+  height: 100vh;
   overflow: hidden;
 }
 
-/* page-main scrolls internally */
+/* page-main is the scroll container — constrained to viewport height */
 .page-main {
+  height: 100vh;
+  min-height: unset !important;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* Professional iOS-style toggle switch for L1/L2 mode */
