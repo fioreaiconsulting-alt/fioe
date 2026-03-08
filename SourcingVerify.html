@@ -14,17 +14,22 @@
 <script src="nav-sidebar.js" defer></script>
 
 <style>
-/* Reset body margin/padding so page-shell sidebar sits flush to the viewport */
+/* Override sourcing_verify.css body margin so page-shell sidebar sits flush to the viewport */
 html, body {
-  margin: 0;
-  padding: 0;
-  height: 100vh;
-  overflow: hidden;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 100%;
 }
 
-/* page-main is the scroll container — constrained to viewport height */
+/* page-shell owns the viewport — sidebar stays fixed-width, main scrolls */
+.page-shell {
+  height: 100vh !important;
+  overflow: hidden !important;
+}
+
+/* page-main is the scroll container */
 .page-main {
-  height: 100vh;
+  height: 100vh !important;
   min-height: unset !important;
   overflow-y: auto;
   overflow-x: hidden;
@@ -59,6 +64,28 @@ html, body {
 /* small style for assessment badge updated by JS */
 .assessment-badge { font-weight:600; color:#064e3b; }
 .assessment-placeholder { color:#9ca3af; }
+
+/* Action button spinner animation (shown during analyzing/processing states) */
+@keyframes sv-spin {
+  to { transform: rotate(360deg); }
+}
+.btn-spinning {
+  position: relative;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.btn-spinning::before {
+  content: '';
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(10,102,194,0.35);
+  border-top-color: #0a66c2;
+  border-radius: 50%;
+  animation: sv-spin 0.75s linear infinite;
+  margin-right: 5px;
+  vertical-align: middle;
+}
 
 /* Extend toolbar width for better readability */
 #toolbar {
@@ -998,13 +1025,17 @@ function animateButtonDuringBulkAssessment(linkedinurl, state) {
             case 'analyzing':
                 uploadBtn.textContent = 'Analyzing...';
                 uploadBtn.disabled = true;
-                uploadBtn.style.opacity = '0.7';
+                uploadBtn.style.opacity = '0.85';
+                uploadBtn.classList.add('btn-spinning');
                 break;
             case 'processing':
                 uploadBtn.textContent = 'Processing...';
-                uploadBtn.style.opacity = '0.7';
+                uploadBtn.style.opacity = '0.85';
+                uploadBtn.classList.add('btn-spinning');
                 break;
             case 'view':
+                // Remove spinner before transitioning to View button
+                uploadBtn.classList.remove('btn-spinning');
                 // Transition to View button
                 updateUploadButtonToView(linkedinurl);
                 break;
@@ -1894,6 +1925,7 @@ async function runBulkAssessmentFromSearch() {
                                                         uploadBtn.textContent = 'Upload CV';
                                                         uploadBtn.disabled = false;
                                                         uploadBtn.style.opacity = '1';
+                                                        uploadBtn.classList.remove('btn-spinning');
                                                     }
                                                 }
                                             }
@@ -3356,6 +3388,7 @@ function buildRow(row) {
 
                     browseBtn.textContent = '...';
                     browseBtn.disabled = true;
+                    browseBtn.classList.add('btn-spinning');
 
                     const fd = new FormData();
                     fd.append('cv', file); 
@@ -3436,6 +3469,7 @@ function buildRow(row) {
                             } else {
                                 browseBtn.textContent = 'Upload CV';
                                 browseBtn.disabled = false;
+                                browseBtn.classList.remove('btn-spinning');
                                 alert('Analysis failed: ' + analyzeData.error);
                             }
                         } else {
@@ -3444,6 +3478,7 @@ function buildRow(row) {
                                 alert(errData.error || MSG_CV_NAME_MISMATCH);
                                 browseBtn.textContent = 'Upload CV';
                                 browseBtn.disabled = false;
+                                browseBtn.classList.remove('btn-spinning');
                                 fileInput.value = '';
                                 return;
                             }
@@ -3453,6 +3488,7 @@ function buildRow(row) {
                         console.error("Row upload failed", e);
                         browseBtn.textContent = 'Upload CV';
                         browseBtn.disabled = false;
+                        browseBtn.classList.remove('btn-spinning');
                         alert("Upload failed.");
                     }
                     fileInput.value = '';
