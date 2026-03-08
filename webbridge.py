@@ -5513,13 +5513,53 @@ _PROCESS_TABLE_FIELDS = [
 def _porting_safe_name(s):
     return _re.sub(r'[^a-zA-Z0-9_\-]', '_', str(s))
 
+def _porting_get_key() -> bytes:
+    """Return a stable 32-byte encryption key.
+
+    Priority:
+    1. PORTING_SECRET env var (set by the operator for production use).
+    2. Persisted key file  <porting_input>/porting.key  (auto-created on first run).
+    """
+    secret = os.getenv("PORTING_SECRET", "").strip()
+    if secret:
+        return (secret + "!" * 32)[:32].encode()[:32]
+    # Auto-generate / reuse a persistent random key so restarts stay compatible.
+    key_path = os.path.join(_PORTING_INPUT_DIR, "porting.key")
+    os.makedirs(_PORTING_INPUT_DIR, exist_ok=True)
+    if os.path.exists(key_path):
+        with open(key_path, "rb") as fh:
+            raw = fh.read()
+        if len(raw) >= 32:
+            return raw[:32]
+        logger.warning("[porting] porting.key is shorter than 32 bytes — regenerating.")
+    raw = os.urandom(32)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(dir=_PORTING_INPUT_DIR)
+    try:
+        os.write(fd, raw)
+        os.close(fd)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, key_path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return raw
+
+
 def _porting_encrypt(data: bytes) -> bytes:
     """AES-256-GCM encrypt.  Returns nonce(12) + ciphertext + tag(16)."""
-    secret = os.getenv("PORTING_SECRET", "")
-    if not secret:
-        raise ValueError("PORTING_SECRET environment variable is not set.")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    key = (secret + "!" * 32)[:32].encode()[:32]
+    key = _porting_get_key()
     nonce = os.urandom(12)
     ct = AESGCM(key).encrypt(nonce, data, None)
     return nonce + ct
