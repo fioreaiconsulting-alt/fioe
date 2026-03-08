@@ -2,116 +2,318 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>API Data Porting</title>
+  <title>API Porting</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
+    /* ── Color palette ─────────────────────────────────────────────────────────
+       Desired Dawn  #d8d8d8   Robin's Egg  #6deaf9   Argent     #87888a
+       Cool Blue     #4c82b8   Azure Dragon #073679   Black Beauty #222529
+    ── */
     :root {
-      --bg:#f0f4f8; --panel:#ffffff; --primary:#0b62c0; --danger:#b00020;
-      --success:#1f8a45; --border:#d1dde9; --muted:#5c6d7c; --warn:#b25f00;
-    }
-    *, *::before, *::after { box-sizing:border-box; }
-    html, body { margin:0; background:var(--bg); color:#182230;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-      font-size:14px; line-height:1.5; min-height:100vh; }
+      --desired-dawn: #d8d8d8;
+      --robins-egg:   #6deaf9;
+      --argent:       #87888a;
+      --cool-blue:    #4c82b8;
+      --azure-dragon: #073679;
+      --black-beauty: #222529;
 
+      --bg:      #eef2f7;
+      --panel:   #ffffff;
+      --primary: var(--azure-dragon);
+      --accent:  var(--cool-blue);
+      --highlight: var(--robins-egg);
+      --border:  var(--desired-dawn);
+      --muted:   var(--argent);
+      --text:    var(--black-beauty);
+      --danger:  #b00020;
+      --success: #1a7a40;
+      --warn:    #b25f00;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      font-size: 14px; line-height: 1.5; min-height: 100vh;
+    }
+
+    /* ── Header ── */
     header {
-      background:var(--primary); color:#fff; padding:0 24px;
-      display:flex; align-items:center; justify-content:space-between; height:52px;
+      background: var(--azure-dragon); color: #fff;
+      padding: 0 28px;
+      display: flex; align-items: center; justify-content: space-between; height: 56px;
+      box-shadow: 0 2px 8px rgba(7,54,121,.35);
     }
-    header h1 { margin:0; font-size:17px; font-weight:700; }
-    header nav a { color:rgba(255,255,255,.85); text-decoration:none; font-size:13px;
-      margin-left:16px; font-weight:600; }
-    header nav a:hover { color:#fff; }
-
-    main { max-width:800px; margin:40px auto; padding:0 16px; }
-
-    .card { background:var(--panel); border:1px solid var(--border);
-      border-radius:12px; padding:28px 32px; margin-bottom:24px; }
-    .card h2 { margin:0 0 4px; font-size:16px; color:var(--primary); }
-    .card .subtitle { color:var(--muted); font-size:13px; margin:0 0 20px; }
-
-    .section-title { font-weight:700; font-size:13px; text-transform:uppercase;
-      letter-spacing:.5px; color:var(--muted); margin:0 0 10px; }
-
-    .mapping-preview { background:#f5f7fa; border:1px solid var(--border);
-      border-radius:8px; padding:14px 16px; font-family:monospace; font-size:12px;
-      max-height:200px; overflow-y:auto; white-space:pre-wrap; margin-bottom:16px; }
-    .no-mapping { color:var(--muted); font-style:italic; }
-
-    label { display:block; font-weight:600; font-size:12px; text-transform:uppercase;
-      letter-spacing:.5px; margin-bottom:4px; }
-    input[type=url], input[type=text] {
-      width:100%; padding:10px 12px; border:1px solid var(--border);
-      border-radius:7px; font-size:13px; margin-bottom:4px;
+    .header-brand { display: flex; align-items: center; gap: 10px; }
+    .header-brand .brand-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--robins-egg); flex-shrink: 0;
     }
-    input:focus { outline:none; border-color:var(--primary);
-      box-shadow:0 0 0 2px rgba(11,98,192,.12); }
-    .hint { font-size:12px; color:var(--muted); margin-bottom:16px; }
+    header h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+    header nav a {
+      color: rgba(255,255,255,.8); text-decoration: none; font-size: 13px;
+      margin-left: 18px; font-weight: 600; transition: color .15s;
+    }
+    header nav a:hover { color: var(--robins-egg); }
 
-    .btn { padding:10px 24px; border:none; border-radius:7px; cursor:pointer;
-      font-size:14px; font-weight:600; transition:background .18s; }
-    .btn-primary { background:var(--primary); color:#fff; }
-    .btn-primary:hover { background:#084d94; }
-    .btn-primary:disabled { background:#9bb8d9; cursor:not-allowed; }
-    .btn-secondary { background:#eef2f6; color:#333; border:1px solid var(--border); }
-    .btn-secondary:hover { background:#e0e7ef; }
+    /* ── Main ── */
+    main { max-width: 780px; margin: 36px auto; padding: 0 16px; }
 
-    .action-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    /* ── Tabs ── */
+    .tabs {
+      display: flex; gap: 0; margin-bottom: 0;
+      border-bottom: 2px solid var(--desired-dawn);
+    }
+    .tab-btn {
+      padding: 11px 28px; border: 1px solid transparent;
+      background: transparent; cursor: pointer; font-weight: 700; color: var(--argent);
+      font-size: 14px; border-radius: 8px 8px 0 0; border-bottom: none;
+      transition: background .15s, color .15s;
+    }
+    .tab-btn:hover { background: rgba(76,130,184,.08); color: var(--cool-blue); }
+    .tab-btn.active {
+      background: #fff; border-color: var(--desired-dawn);
+      border-bottom: 2px solid #fff; color: var(--azure-dragon);
+      margin-bottom: -2px;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
-    #statusMsg { margin-top:14px; padding:12px 16px; border-radius:8px; font-size:13px;
-      display:none; }
-    #statusMsg.success { background:#e8f5ee; color:var(--success);
-      border:1px solid #b7dfc7; display:block; }
-    #statusMsg.error   { background:#fdf0f2; color:var(--danger);
-      border:1px solid #f5c2c9; display:block; }
-    #statusMsg.warn    { background:#fff8ec; color:var(--warn);
-      border:1px solid #eed6a0; display:block; }
+    /* ── Card ── */
+    .card {
+      background: var(--panel); border: 1px solid var(--desired-dawn);
+      border-radius: 0 12px 12px 12px;
+      padding: 28px 32px; margin-bottom: 22px;
+      box-shadow: 0 2px 10px rgba(7,54,121,.06);
+    }
+    .card h2 {
+      margin: 0 0 5px; font-size: 16px; color: var(--azure-dragon);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card h2 .badge {
+      background: var(--robins-egg); color: var(--azure-dragon);
+      font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 20px; letter-spacing: .4px; text-transform: uppercase;
+    }
+    .card .subtitle { color: var(--argent); font-size: 13px; margin: 0 0 20px; }
 
-    .spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,.4);
-      border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; margin-right:6px; }
-    @keyframes spin { to { transform:rotate(360deg); } }
+    /* ── Section label ── */
+    .section-label {
+      font-weight: 700; font-size: 12px; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--cool-blue); margin: 0 0 9px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .section-label::after {
+      content: ''; flex: 1; height: 1px;
+      background: linear-gradient(to right, var(--desired-dawn), transparent);
+    }
+
+    /* ── Upload zone ── */
+    .upload-zone {
+      border: 2px dashed var(--cool-blue); border-radius: 10px; padding: 30px 20px;
+      text-align: center; cursor: pointer;
+      transition: border-color .2s, background .2s;
+      background: rgba(110,234,249,.05);
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--robins-egg);
+      background: rgba(110,234,249,.12);
+    }
+    .upload-zone input[type=file] { display: none; }
+    .upload-zone .uz-icon { font-size: 34px; margin-bottom: 9px; }
+    .upload-zone .uz-label { font-size: 14px; font-weight: 600; color: var(--azure-dragon); }
+    .upload-zone .uz-hint { color: var(--argent); font-size: 12px; margin-top: 4px; }
+    .file-chosen {
+      margin-top: 10px; font-size: 13px; color: var(--success); font-weight: 700;
+      background: rgba(26,122,64,.07); padding: 6px 12px; border-radius: 6px;
+      display: inline-block;
+    }
+
+    /* ── Divider ── */
+    .or-divider {
+      display: flex; align-items: center; gap: 12px; margin: 20px 0;
+      color: var(--argent); font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .6px;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--desired-dawn);
+    }
+
+    /* ── Inputs ── */
+    textarea, input[type=url], input[type=text] {
+      width: 100%; padding: 10px 13px; border: 1px solid var(--desired-dawn);
+      border-radius: 8px; font-size: 13px; background: #fafcff;
+      line-height: 1.5; transition: border-color .15s, box-shadow .15s;
+    }
+    textarea { font-family: monospace; resize: vertical; min-height: 120px; }
+    textarea:focus, input[type=url]:focus, input[type=text]:focus {
+      outline: none; border-color: var(--cool-blue);
+      box-shadow: 0 0 0 3px rgba(76,130,184,.15);
+    }
+    .field-hint { font-size: 12px; color: var(--argent); margin: 5px 0 0; }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer;
+      font-size: 14px; font-weight: 700; transition: background .18s, transform .1s, box-shadow .18s;
+      display: inline-flex; align-items: center; gap: 7px;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: var(--azure-dragon); color: #fff;
+      box-shadow: 0 2px 8px rgba(7,54,121,.25);
+    }
+    .btn-primary:hover { background: #052a5a; box-shadow: 0 4px 12px rgba(7,54,121,.35); }
+    .btn-primary:disabled { background: var(--argent); box-shadow: none; cursor: not-allowed; }
+    .btn-accent {
+      background: var(--cool-blue); color: #fff;
+      box-shadow: 0 2px 8px rgba(76,130,184,.25);
+    }
+    .btn-accent:hover { background: #3a6c9e; }
+    .btn-block { width: 100%; justify-content: center; margin-top: 16px; }
+
+    /* ── Mapping preview ── */
+    .mapping-preview {
+      background: rgba(7,54,121,.03); border: 1px solid var(--desired-dawn);
+      border-left: 3px solid var(--cool-blue);
+      border-radius: 8px; padding: 14px 16px;
+      font-family: monospace; font-size: 12px;
+      max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin-bottom: 18px;
+      line-height: 1.7;
+    }
+    .no-mapping { color: var(--argent); font-style: italic; font-family: inherit; }
+
+    /* ── Status ── */
+    .status-msg {
+      margin-top: 14px; padding: 12px 16px; border-radius: 8px;
+      font-size: 13px; display: none; font-weight: 500;
+    }
+    .status-msg.success {
+      background: rgba(26,122,64,.08); color: var(--success);
+      border: 1px solid rgba(26,122,64,.25); display: block;
+    }
+    .status-msg.error {
+      background: rgba(176,0,32,.07); color: var(--danger);
+      border: 1px solid rgba(176,0,32,.22); display: block;
+    }
+    .status-msg.warn {
+      background: rgba(178,95,0,.07); color: var(--warn);
+      border: 1px solid rgba(178,95,0,.22); display: block;
+    }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: inline-block; width: 15px; height: 15px;
+      border: 2px solid rgba(255,255,255,.35);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Info strip ── */
+    .info-strip {
+      background: rgba(110,234,249,.12); border: 1px solid rgba(110,234,249,.4);
+      border-radius: 8px; padding: 12px 16px; font-size: 13px;
+      color: var(--azure-dragon); margin-bottom: 20px;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .info-strip .info-icon { flex-shrink: 0; font-size: 16px; }
+
+    code {
+      background: rgba(7,54,121,.07); color: var(--azure-dragon);
+      padding: 1px 5px; border-radius: 4px; font-size: .92em; font-family: monospace;
+    }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>🔄 API Data Porting</h1>
+  <div class="header-brand">
+    <div class="brand-dot"></div>
+    <h1>API Porting</h1>
+  </div>
   <nav>
-    <a href="upload.html">🔑 Upload Keys</a>
     <a href="admin_rate_limits.html">⚙️ Admin</a>
   </nav>
 </header>
 
 <main>
-  <!-- Current Mapping Summary -->
-  <div class="card">
-    <h2>Active Field Mapping</h2>
-    <p class="subtitle">
-      This is the confirmed field mapping that will be applied when exporting your data.
-      To change it, go to the <a href="admin_rate_limits.html">Admin → Porting tab</a>.
-    </p>
-    <p class="section-title">Mapping preview</p>
-    <div class="mapping-preview" id="mappingPreview">
-      <span class="no-mapping">Loading…</span>
+  <!-- Tab bar -->
+  <div class="tabs" id="tabBar">
+    <button class="tab-btn active" data-tab="tab-upload">🔑 Upload Credentials</button>
+    <button class="tab-btn" data-tab="tab-port">🚀 Port Data</button>
+  </div>
+
+  <!-- ══ TAB 1: Upload ══════════════════════════════════════════════════════ -->
+  <div class="tab-panel active" id="tab-upload">
+    <div class="card">
+      <h2>Submit API Credentials <span class="badge">Step 1</span></h2>
+      <p class="subtitle">
+        Upload your encrypted <code>.env</code> file or paste your API keys directly.
+        All data is AES-256-GCM encrypted before storage.
+      </p>
+
+      <!-- File upload -->
+      <p class="section-label">Option A — Upload .env file</p>
+      <div class="upload-zone" id="dropZone">
+        <input type="file" id="envFile" accept=".env,.txt,.cfg,.ini">
+        <div class="uz-icon">📂</div>
+        <div class="uz-label">Drag &amp; drop your <code>.env</code> file here, or <strong>click to browse</strong></div>
+        <div class="uz-hint">Accepted: .env · .txt · .cfg · .ini &nbsp;·&nbsp; Max 1 MB</div>
+      </div>
+      <div class="file-chosen" id="chosenName" style="display:none"></div>
+
+      <div class="or-divider">or</div>
+
+      <!-- Text paste -->
+      <p class="section-label">Option B — Paste API keys</p>
+      <textarea id="apiKeyText" placeholder="Paste your API keys here, one per line&#10;e.g.&#10;GOOGLE_API_KEY=AIza...&#10;OPENAI_API_KEY=sk-..."></textarea>
+      <p class="field-hint">Each line should follow the format <code>KEY_NAME=value</code>.</p>
+
+      <button class="btn btn-primary btn-block" id="submitBtn">🔒 Encrypt &amp; Submit</button>
+      <div class="status-msg" id="uploadStatus"></div>
     </div>
   </div>
 
-  <!-- Export / Port -->
-  <div class="card">
-    <h2>Export &amp; Port Data</h2>
-    <p class="subtitle">
-      Click <strong>Port Data</strong> to convert your records from the process table into a
-      JSON file using the active field mapping.  Optionally provide a target URL to push the
-      JSON directly to your destination system.
-    </p>
+  <!-- ══ TAB 2: Port Data ═══════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-port">
+    <!-- Mapping preview -->
+    <div class="card">
+      <h2>Active Field Mapping <span class="badge">Step 2</span></h2>
+      <p class="subtitle">
+        The mapping below is applied when exporting your data. To set or change it, use the
+        <a href="admin_rate_limits.html" style="color:var(--cool-blue);font-weight:600">Admin → Porting tab</a>.
+      </p>
 
-    <label for="targetUrl">Target URL <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-    <input type="url" id="targetUrl" placeholder="https://your-system.example.com/api/import">
-    <p class="hint">If provided, the JSON payload will be POST-ed to this URL in addition to being downloaded.</p>
+      <div class="info-strip" id="mappingInfoStrip" style="display:none">
+        <span class="info-icon">ℹ️</span>
+        <span id="mappingInfoText"></span>
+      </div>
 
-    <div class="action-row">
-      <button class="btn btn-primary" id="portBtn">🚀 Port Data</button>
-      <span id="statusMsg"></span>
+      <p class="section-label">Mapping preview</p>
+      <div class="mapping-preview" id="mappingPreview">
+        <span class="no-mapping">Loading…</span>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="card">
+      <h2>Export &amp; Port <span class="badge">Step 3</span></h2>
+      <p class="subtitle">
+        Click <strong>Port Data</strong> to convert your process-table records into a JSON file
+        using the active field mapping. Optionally provide a target URL to push the data directly.
+      </p>
+
+      <p class="section-label">Target URL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--argent)">(optional)</span></p>
+      <input type="url" id="targetUrl" placeholder="https://your-system.example.com/api/import">
+      <p class="field-hint">If provided, the JSON payload will be POST-ed to this URL in addition to being downloaded.</p>
+
+      <button class="btn btn-primary" id="portBtn" style="margin-top:16px">
+        <span class="spinner" id="portSpinner" style="display:none"></span>
+        🚀 Port Data
+      </button>
+      <div class="status-msg" id="portStatus"></div>
     </div>
   </div>
 </main>
@@ -119,25 +321,108 @@
 <script>
 'use strict';
 
-const mappingPreview = document.getElementById('mappingPreview');
-const portBtn        = document.getElementById('portBtn');
-const targetUrlInput = document.getElementById('targetUrl');
-const statusMsg      = document.getElementById('statusMsg');
+// ── Tab switching ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
 
-// ── Load mapping on page load ───────────────────────────────────────────────
+// ── Upload tab ────────────────────────────────────────────────────────────────
+const dropZone     = document.getElementById('dropZone');
+const fileInput    = document.getElementById('envFile');
+const chosenName   = document.getElementById('chosenName');
+const apiKeyText   = document.getElementById('apiKeyText');
+const submitBtn    = document.getElementById('submitBtn');
+const uploadStatus = document.getElementById('uploadStatus');
+
+let selectedFile = null;
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0]; if (f) setFile(f);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+
+function setFile(file) {
+  selectedFile = file;
+  chosenName.textContent = '✓ ' + file.name;
+  chosenName.style.display = '';
+  apiKeyText.value = '';
+}
+
+submitBtn.addEventListener('click', async () => {
+  showStatus(uploadStatus, '');
+  const textVal = apiKeyText.value.trim();
+  if (!selectedFile && !textVal) {
+    showStatus(uploadStatus, 'Please upload a file or paste your API keys before submitting.', 'error');
+    return;
+  }
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<span class="spinner"></span> Uploading…';
+  try {
+    let body;
+    if (selectedFile) {
+      const b64 = await readFileAsBase64(selectedFile);
+      body = { type: 'file', filename: selectedFile.name, content: b64 };
+    } else {
+      body = { type: 'text', filename: 'api_keys.txt', content: textVal };
+    }
+    const r = await fetch('/api/porting/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) { showStatus(uploadStatus, data.error || 'Upload failed.', 'error'); return; }
+    showStatus(uploadStatus, '✓ Credentials encrypted and submitted successfully.', 'success');
+    selectedFile = null; fileInput.value = ''; chosenName.style.display = 'none'; apiKeyText.value = '';
+  } catch (err) {
+    showStatus(uploadStatus, 'Network error: ' + err.message, 'error');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = '🔒 Encrypt & Submit';
+  }
+});
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── Porting tab ───────────────────────────────────────────────────────────────
+const mappingPreview  = document.getElementById('mappingPreview');
+const mappingInfoStrip = document.getElementById('mappingInfoStrip');
+const mappingInfoText  = document.getElementById('mappingInfoText');
+const portBtn          = document.getElementById('portBtn');
+const portSpinner      = document.getElementById('portSpinner');
+const targetUrlInput   = document.getElementById('targetUrl');
+const portStatus       = document.getElementById('portStatus');
+
 (async () => {
   try {
     const r = await fetch('/api/porting/mapping', { credentials: 'same-origin' });
     if (r.status === 401) {
       mappingPreview.innerHTML = '<span class="no-mapping">Not logged in — please <a href="login.html">sign in</a>.</span>';
-      portBtn.disabled = true;
-      return;
+      portBtn.disabled = true; return;
     }
     const data = await r.json();
     if (!data.mapping) {
-      mappingPreview.innerHTML = '<span class="no-mapping">No mapping confirmed yet. Visit Admin → Porting tab to set one up.</span>';
-      portBtn.disabled = true;
-      return;
+      mappingPreview.innerHTML = '<span class="no-mapping">No mapping confirmed yet.</span>';
+      mappingInfoStrip.style.display = 'flex';
+      mappingInfoText.textContent = 'No field mapping has been confirmed. Go to Admin → Porting tab to set one up before porting.';
+      portBtn.disabled = true; return;
     }
     const lines = Object.entries(data.mapping)
       .map(([ext, proc]) => `${ext}  →  ${proc ?? '(skip)'}`)
@@ -148,65 +433,51 @@ const statusMsg      = document.getElementById('statusMsg');
   }
 })();
 
-// ── Port button ─────────────────────────────────────────────────────────────
 portBtn.addEventListener('click', async () => {
-  showStatus('');
+  showStatus(portStatus, '');
   portBtn.disabled = true;
-  portBtn.innerHTML = '<span class="spinner"></span>Exporting…';
-
+  portSpinner.style.display = 'inline-block';
+  portBtn.childNodes[portBtn.childNodes.length - 1].textContent = ' Exporting…';
   try {
     const body = {};
     const tv = targetUrlInput.value.trim();
     if (tv) body.targetUrl = tv;
-
     const r = await fetch('/api/porting/export', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       credentials: 'same-origin',
       body: JSON.stringify(body),
     });
-
     if (!r.ok) {
       const err = await r.json().catch(() => ({ error: r.statusText }));
-      showStatus(err.error || 'Export failed.', 'error');
+      showStatus(portStatus, err.error || 'Export failed.', 'error');
       return;
     }
-
-    // Trigger download
     const blob = await r.blob();
     const fname = (r.headers.get('Content-Disposition') || '')
       .match(/filename="([^"]+)"/)?.[1] || 'porting_export.json';
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-
-    showStatus('✓ Data exported successfully' + (tv ? ' and pushed to target URL.' : '.'), 'success');
+    const a = document.createElement('a'); a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    showStatus(portStatus, '✓ Data exported successfully' + (tv ? ' and pushed to target URL.' : '.'), 'success');
   } catch (err) {
-    showStatus('Network error: ' + err.message, 'error');
+    showStatus(portStatus, 'Network error: ' + err.message, 'error');
   } finally {
     portBtn.disabled = false;
-    portBtn.textContent = '🚀 Port Data';
+    portSpinner.style.display = 'none';
+    portBtn.childNodes[portBtn.childNodes.length - 1].textContent = ' Port Data';
   }
 });
 
-function showStatus(msg, type = '') {
-  if (!msg) { statusMsg.style.display = 'none'; return; }
-  statusMsg.textContent = msg;
-  statusMsg.className = type;
-  statusMsg.style.display = 'block';
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function showStatus(el, msg, type = '') {
+  if (!msg) { el.style.display = 'none'; return; }
+  el.textContent = msg; el.className = 'status-msg ' + type;
 }
-
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 </script>
 </body>
 </html>
+

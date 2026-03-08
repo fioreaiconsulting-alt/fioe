@@ -72,11 +72,12 @@ app.get('/LookerDashboard', dashboardRateLimit, (req, res) => {
 });
 
 // Serve porting HTML pages from this directory
-app.get('/upload.html', dashboardRateLimit, (req, res) => {
-  res.sendFile(path.join(__dirname, 'upload.html'));
-});
 app.get('/api_porting.html', dashboardRateLimit, (req, res) => {
   res.sendFile(path.join(__dirname, 'api_porting.html'));
+});
+// Redirect old upload.html URL to the combined porting page
+app.get('/upload.html', dashboardRateLimit, (req, res) => {
+  res.redirect(301, '/api_porting.html');
 });
 app.get('/admin_rate_limits.html', dashboardRateLimit, (req, res) => {
   res.sendFile(path.join(__dirname, 'admin_rate_limits.html'));
