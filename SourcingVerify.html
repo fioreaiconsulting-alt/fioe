@@ -14,6 +14,19 @@
 <script src="nav-sidebar.js" defer></script>
 
 <style>
+/* Reset body margin/padding so page-shell sidebar sits flush to the viewport */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* page-main scrolls internally */
+.page-main {
+  overflow-y: auto;
+}
+
 /* Professional iOS-style toggle switch for L1/L2 mode */
 .toggle-switch .toggle-slider:before {
   content: "";
