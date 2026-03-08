@@ -253,7 +253,10 @@ const webbridge = {
 
   /**
    * Start a sourcing/search job.
-   * @param {{ queries: string[], jobTitles?: string[], [key: string]: any }} data
+   * @param {{ queries: string[], jobTitles?: string[], userTarget?: number, [key: string]: any }} data
+   *   `userTarget` – explicit result-count cap that dynamically overrides the global
+   *   SEARCH_RESULTS_TARGET for this job.  Populated from the user's stored
+   *   target_limit setting; omit to let the server compute a target automatically.
    * @returns {{ job_id: string }}
    */
   startJob: (data) => _post('/start_job', data),

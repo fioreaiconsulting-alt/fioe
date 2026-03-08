@@ -1,0 +1,32 @@
+# Normalise line endings to LF in the repository; checked-out files follow
+# the platform convention (CRLF on Windows, LF on Linux/macOS).
+# This prevents the "doubled CRLF → SyntaxError" problem that occurs when
+# git checks out a file that was already committed with CRLF line endings
+# on a machine whose git is configured with core.autocrlf=true.
+
+* text=auto
+
+# Python source – always LF in working copy (Python parser is happy with LF)
+*.py text eol=lf
+
+# Web source files
+*.js  text eol=lf
+*.ts  text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.json text eol=lf
+
+# Data / config files
+*.md   text eol=lf
+*.txt  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Binaries – never touch
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
