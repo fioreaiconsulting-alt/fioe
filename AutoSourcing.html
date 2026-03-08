@@ -92,34 +92,39 @@ html, body {
 }
 
 body {
-  display: flex;
-  flex-direction: column;
   box-sizing: border-box;
 }
 
-/* Header: Fixed height, does not scroll */
+/* Full-frame page-main: fills all space right of sidebar */
+.page-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100vh;
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+
+/* Compact session header — no extra top/side whitespace */
 #sessionBanner {
   flex: 0 0 auto;
-  margin: 24px 24px 16px 16px !important; /* Margins inside body flex */
+  margin: 10px 0 8px !important;
   border: 1px solid var(--neutral-border) !important;
   box-shadow: var(--shadow) !important;
-  /* Constraint width */
-  width: calc(100% - 40px);
-  max-width: 1380px; 
-  margin-left: 16px !important;
-  margin-right: auto !important;
+  width: 100%;
   box-sizing: border-box;
   z-index: 10;
 }
 
-/* Main Panel: Flex item that grows and scrolls internally */
+/* Main Panel: grows to fill all remaining height */
 .panel {
   flex: 1 1 auto; /* Grow to fill space */
   display: flex;
   flex-direction: column;
-  width: calc(100% - 40px);
-  max-width: 1380px; 
-  margin: 0 auto 24px 16px; /* Left-aligned close to sidebar */
+  width: 100%;
+  margin: 0 0 16px;
   padding: 24px;
   background: var(--panel);
   border-radius: var(--radius);
@@ -505,7 +510,7 @@ pre {
         <li><a href="http://localhost:8091/AutoSourcing.html" class="nav-sidebar__submenu-link active" role="menuitem">Autosourcing</a></li>
         <li><a href="http://localhost:8091/SourcingVerify.html" class="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
         <li><a href="http://localhost:3000/" class="nav-sidebar__submenu-link" role="menuitem">Candidate Management</a></li>
-        <li><a href="http://localhost:4000/LookerDashboard.html" class="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+        <li><a href="http://localhost:8091/LookerDashboard.html" class="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
       </ul>
     </li>
 
@@ -515,6 +520,13 @@ pre {
       <a href="#ai-agent" class="nav-sidebar__link">
         <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         <span>AI Agent</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="/api_porting.html" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+        <span>API Porting</span>
       </a>
     </li>
 

@@ -14,6 +14,27 @@
 <script src="nav-sidebar.js" defer></script>
 
 <style>
+/* Override sourcing_verify.css body margin so page-shell sidebar sits flush to the viewport */
+html, body {
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 100%;
+}
+
+/* page-shell owns the viewport — sidebar stays fixed-width, main scrolls */
+.page-shell {
+  height: 100vh !important;
+  overflow: hidden !important;
+}
+
+/* page-main is the scroll container */
+.page-main {
+  height: 100vh !important;
+  min-height: unset !important;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 /* Professional iOS-style toggle switch for L1/L2 mode */
 .toggle-switch .toggle-slider:before {
   content: "";
@@ -43,6 +64,28 @@
 /* small style for assessment badge updated by JS */
 .assessment-badge { font-weight:600; color:#064e3b; }
 .assessment-placeholder { color:#9ca3af; }
+
+/* Action button spinner animation (shown during analyzing/processing states) */
+@keyframes sv-spin {
+  to { transform: rotate(360deg); }
+}
+.btn-spinning {
+  position: relative;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.btn-spinning::before {
+  content: '';
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(10,102,194,0.35);
+  border-top-color: #0a66c2;
+  border-radius: 50%;
+  animation: sv-spin 0.75s linear infinite;
+  margin-right: 5px;
+  vertical-align: middle;
+}
 
 /* Extend toolbar width for better readability */
 #toolbar {
@@ -110,7 +153,7 @@
         <li><a href="AutoSourcing.html" class="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
         <li><a href="SourcingVerify.html" class="nav-sidebar__submenu-link active" role="menuitem">Talent Evaluation</a></li>
         <li><a href="http://localhost:3000/" class="nav-sidebar__submenu-link" role="menuitem">Candidate Management</a></li>
-        <li><a href="http://localhost:4000/LookerDashboard.html" class="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
+        <li><a href="http://localhost:8091/LookerDashboard.html" class="nav-sidebar__submenu-link" role="menuitem">Consulting Dashboard</a></li>
       </ul>
     </li>
 
@@ -120,6 +163,13 @@
       <a href="#ai-agent" class="nav-sidebar__link">
         <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         <span>AI Agent</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="/api_porting.html" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+        <span>API Porting</span>
       </a>
     </li>
 
@@ -975,13 +1025,17 @@ function animateButtonDuringBulkAssessment(linkedinurl, state) {
             case 'analyzing':
                 uploadBtn.textContent = 'Analyzing...';
                 uploadBtn.disabled = true;
-                uploadBtn.style.opacity = '0.7';
+                uploadBtn.style.opacity = '0.85';
+                uploadBtn.classList.add('btn-spinning');
                 break;
             case 'processing':
                 uploadBtn.textContent = 'Processing...';
-                uploadBtn.style.opacity = '0.7';
+                uploadBtn.style.opacity = '0.85';
+                uploadBtn.classList.add('btn-spinning');
                 break;
             case 'view':
+                // Remove spinner before transitioning to View button
+                uploadBtn.classList.remove('btn-spinning');
                 // Transition to View button
                 updateUploadButtonToView(linkedinurl);
                 break;
@@ -1871,6 +1925,7 @@ async function runBulkAssessmentFromSearch() {
                                                         uploadBtn.textContent = 'Upload CV';
                                                         uploadBtn.disabled = false;
                                                         uploadBtn.style.opacity = '1';
+                                                        uploadBtn.classList.remove('btn-spinning');
                                                     }
                                                 }
                                             }
@@ -3333,6 +3388,7 @@ function buildRow(row) {
 
                     browseBtn.textContent = '...';
                     browseBtn.disabled = true;
+                    browseBtn.classList.add('btn-spinning');
 
                     const fd = new FormData();
                     fd.append('cv', file); 
@@ -3413,6 +3469,7 @@ function buildRow(row) {
                             } else {
                                 browseBtn.textContent = 'Upload CV';
                                 browseBtn.disabled = false;
+                                browseBtn.classList.remove('btn-spinning');
                                 alert('Analysis failed: ' + analyzeData.error);
                             }
                         } else {
@@ -3421,6 +3478,7 @@ function buildRow(row) {
                                 alert(errData.error || MSG_CV_NAME_MISMATCH);
                                 browseBtn.textContent = 'Upload CV';
                                 browseBtn.disabled = false;
+                                browseBtn.classList.remove('btn-spinning');
                                 fileInput.value = '';
                                 return;
                             }
@@ -3430,6 +3488,7 @@ function buildRow(row) {
                         console.error("Row upload failed", e);
                         browseBtn.textContent = 'Upload CV';
                         browseBtn.disabled = false;
+                        browseBtn.classList.remove('btn-spinning');
                         alert("Upload failed.");
                     }
                     fileInput.value = '';

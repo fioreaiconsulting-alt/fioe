@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const http = require('http'); // added for socket server
+const https = require('https');
 const crypto = require('crypto'); // Built-in node crypto for password hashing
 const dns = require('dns').promises; // Built-in DNS for MX checks
 const net = require('net'); // Built-in Net for SMTP handshake
@@ -68,6 +69,18 @@ app.get('/LookerDashboard.html', dashboardRateLimit, (req, res) => {
 });
 app.get('/LookerDashboard', dashboardRateLimit, (req, res) => {
   res.sendFile(lookerDashboardFile);
+});
+
+// Serve porting HTML pages from this directory
+app.get('/api_porting.html', dashboardRateLimit, (req, res) => {
+  res.sendFile(path.join(__dirname, 'api_porting.html'));
+});
+// Redirect old upload.html URL to the combined porting page
+app.get('/upload.html', dashboardRateLimit, (req, res) => {
+  res.redirect(301, '/api_porting.html');
+});
+app.get('/admin_rate_limits.html', dashboardRateLimit, (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin_rate_limits.html'));
 });
 
 // ── Per-user rate limiter ─────────────────────────────────────────────────────
@@ -3696,6 +3709,273 @@ app.get('/api/events', (req, res) => {
     sseConnections.delete(res);
     console.log('[SSE] client disconnected, total:', sseConnections.size);
   });
+});
+
+// ========== API Porting System ==========
+// Storage directory for uploaded env / API-key files.
+// Defaults to  <project>/porting_input  but can be overridden in .env:
+//   PORTING_INPUT_DIR="F:\Recruiting Tools\Autosourcing\input"
+const PORTING_INPUT_DIR = process.env.PORTING_INPUT_DIR
+  ? path.resolve(process.env.PORTING_INPUT_DIR)
+  : path.join(__dirname, 'porting_input');
+
+// Confirmed field-mappings per user, persisted as JSON on disk.
+const PORTING_MAPPINGS_DIR = process.env.PORTING_MAPPINGS_DIR
+  ? path.resolve(process.env.PORTING_MAPPINGS_DIR)
+  : path.join(__dirname, 'porting_mappings');
+
+// All columns present in the `process` table – used for Gemini mapping.
+const PROCESS_TABLE_FIELDS = [
+  'id','name','company','jobtitle','country','linkedinurl','username','userid',
+  'product','sector','jobfamily','geographic','seniority','skillset',
+  'sourcingstatus','email','mobile','office','role_tag','experience','cv',
+  'education','exp','rating','pic','tenure','comment','vskillset',
+  'compensation','lskillset','jskillset',
+];
+
+/** Encrypt a buffer with AES-256-GCM.  Returns a single Buffer:
+ *  [16 bytes IV][16 bytes authTag][ciphertext] */
+function encryptBuffer(buf) {
+  const secret = process.env.PORTING_SECRET;
+  if (!secret) {
+    throw new Error('PORTING_SECRET environment variable is not set. Cannot encrypt data.');
+  }
+  const key = Buffer.from(secret.padEnd(32, '!').slice(0, 32));
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(buf), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]);
+}
+
+/** Sanitise a username to safe filename characters. */
+function safeName(s) {
+  return String(s).replace(/[^a-zA-Z0-9_\-]/g, '_');
+}
+
+// POST /api/porting/upload
+// Accepts JSON body: { type: 'file'|'text', filename?: string, content: <base64|plain text> }
+// Encrypts the payload and stores it in PORTING_INPUT_DIR.
+app.post('/api/porting/upload', requireLogin, dashboardRateLimit, async (req, res) => {
+  try {
+    const { type, filename, content } = req.body || {};
+    if (!type || !content) {
+      return res.status(400).json({ error: 'Missing type or content' });
+    }
+    if (!['file', 'text'].includes(type)) {
+      return res.status(400).json({ error: 'type must be "file" or "text"' });
+    }
+
+    // Determine raw buffer to encrypt
+    let rawBuf;
+    if (type === 'file') {
+      // content is expected to be base64-encoded file data
+      rawBuf = Buffer.from(content, 'base64');
+    } else {
+      rawBuf = Buffer.from(content, 'utf8');
+    }
+
+    // Enforce a reasonable size limit (1 MB)
+    if (rawBuf.length > 1024 * 1024) {
+      return res.status(413).json({ error: 'Content too large (max 1 MB)' });
+    }
+
+    // Sanitise filename
+    let safeFname = filename
+      ? path.basename(String(filename)).replace(/[^a-zA-Z0-9_\-\.]/g, '_')
+      : (type === 'file' ? 'upload.env' : 'api_keys.txt');
+    // Prepend username + timestamp to avoid collisions
+    safeFname = `${safeName(req.user.username)}_${Date.now()}_${safeFname}`;
+
+    // Ensure directory exists
+    if (!fs.existsSync(PORTING_INPUT_DIR)) {
+      fs.mkdirSync(PORTING_INPUT_DIR, { recursive: true });
+    }
+
+    const encrypted = encryptBuffer(rawBuf);
+    const destPath = path.join(PORTING_INPUT_DIR, safeFname + '.enc');
+    fs.writeFileSync(destPath, encrypted);
+
+    res.json({ ok: true, stored: safeFname + '.enc' });
+  } catch (err) {
+    console.error('[porting/upload]', err);
+    res.status(500).json({ error: 'Upload failed', detail: err.message });
+  }
+});
+
+// POST /api/porting/map
+// Body: { names: string[] }  – list of external API field names to map.
+// Uses Gemini to return a mapping object { externalName: processTableField }.
+app.post('/api/porting/map', requireLogin, dashboardRateLimit, async (req, res) => {
+  try {
+    const { names } = req.body || {};
+    if (!Array.isArray(names) || !names.length) {
+      return res.status(400).json({ error: 'names must be a non-empty array' });
+    }
+
+    if (!GoogleGenerativeAIClass) {
+      return res.status(500).json({ error: 'Gemini SDK not installed.' });
+    }
+    const apiKey = process.env.GOOGLE_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured.' });
+
+    const fieldsStr = PROCESS_TABLE_FIELDS.join(', ');
+    const namesStr  = names.map(n => `"${String(n).replace(/"/g, '')}"` ).join(', ');
+
+    const prompt = `You are a database field mapping assistant.
+Available target fields (PostgreSQL "process" table): ${fieldsStr}
+
+Map each of the following external API field names to the SINGLE best-matching target field.
+If there is no reasonable match, use null.
+Return ONLY a JSON object (no markdown, no explanation) where each key is the input name and
+each value is the matching target field name or null.
+
+Input names: ${namesStr}`;
+
+    const genAI = new GoogleGenerativeAIClass(apiKey);
+    const model  = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+    const result = await model.generateContent(prompt);
+    let raw = result.response.text().trim();
+
+    // Strip markdown code fences if present
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+    let mapping;
+    try {
+      mapping = JSON.parse(raw);
+    } catch (_) {
+      return res.status(500).json({ error: 'Gemini returned invalid JSON', raw });
+    }
+
+    // Validate: ensure all values are valid field names or null
+    const cleaned = {};
+    for (const [k, v] of Object.entries(mapping)) {
+      cleaned[k] = (v && PROCESS_TABLE_FIELDS.includes(v)) ? v : null;
+    }
+
+    res.json({ ok: true, mapping: cleaned });
+  } catch (err) {
+    console.error('[porting/map]', err);
+    res.status(500).json({ error: 'Mapping failed', detail: err.message });
+  }
+});
+
+// POST /api/porting/confirm
+// Body: { mapping: { externalName: processField|null } }
+// Saves the confirmed mapping for the current user to disk.
+app.post('/api/porting/confirm', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const { mapping } = req.body || {};
+    if (!mapping || typeof mapping !== 'object') {
+      return res.status(400).json({ error: 'mapping is required' });
+    }
+
+    // Validate all values
+    for (const [k, v] of Object.entries(mapping)) {
+      if (v !== null && !PROCESS_TABLE_FIELDS.includes(v)) {
+        return res.status(400).json({ error: `Invalid target field: ${v}` });
+      }
+    }
+
+    if (!fs.existsSync(PORTING_MAPPINGS_DIR)) {
+      fs.mkdirSync(PORTING_MAPPINGS_DIR, { recursive: true });
+    }
+    const filePath = path.join(PORTING_MAPPINGS_DIR, `${safeName(req.user.username)}.json`);
+    fs.writeFileSync(filePath, JSON.stringify({ username: req.user.username, mapping }, null, 2));
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[porting/confirm]', err);
+    res.status(500).json({ error: 'Confirm failed', detail: err.message });
+  }
+});
+
+// GET /api/porting/mapping
+// Returns the saved mapping for the current user (or null if none).
+app.get('/api/porting/mapping', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const filePath = path.join(PORTING_MAPPINGS_DIR, `${safeName(req.user.username)}.json`);
+    if (!fs.existsSync(filePath)) return res.json({ mapping: null });
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    res.json({ mapping: data.mapping || null });
+  } catch (err) {
+    console.error('[porting/mapping]', err);
+    res.status(500).json({ error: 'Could not load mapping', detail: err.message });
+  }
+});
+
+// POST /api/porting/export
+// Reads all process-table rows for the current user, applies their saved mapping,
+// and returns a JSON file for download (or pushes to a configured target URL).
+app.post('/api/porting/export', requireLogin, dashboardRateLimit, async (req, res) => {
+  try {
+    const username = req.user.username;
+
+    // Load saved mapping
+    const mapFile = path.join(PORTING_MAPPINGS_DIR, `${safeName(username)}.json`);
+    if (!fs.existsSync(mapFile)) {
+      return res.status(400).json({ error: 'No confirmed mapping found. Please complete the mapping step first.' });
+    }
+    const { mapping } = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
+
+    // Fetch all process rows for this user (exclude binary columns for JSON export)
+    const cols = PROCESS_TABLE_FIELDS.filter(c => !['cv','pic'].includes(c));
+    const dbRes = await pool.query(
+      `SELECT ${cols.map(c => `"${c}"`).join(',')} FROM "process" WHERE username = $1`,
+      [username]
+    );
+
+    if (!dbRes.rows.length) {
+      return res.status(404).json({ error: 'No data found for this user in the process table.' });
+    }
+
+    // Apply mapping: rename process-table keys to external names
+    const reverseMap = {};
+    for (const [ext, proc] of Object.entries(mapping)) {
+      if (proc) reverseMap[proc] = ext;
+    }
+
+    const exported = dbRes.rows.map(row => {
+      const out = {};
+      for (const col of cols) {
+        const extName = reverseMap[col] || col;
+        out[extName] = row[col] ?? null;
+      }
+      return out;
+    });
+
+    const jsonStr = JSON.stringify(exported, null, 2);
+
+    // Optional: push to target URL if configured in request
+    const { targetUrl } = req.body || {};
+    if (targetUrl) {
+      try {
+        const urlObj = new URL(targetUrl);
+        const lib = urlObj.protocol === 'https:' ? https : http;
+        await new Promise((resolve, reject) => {
+          const postReq = lib.request(
+            { hostname: urlObj.hostname, port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+              path: urlObj.pathname + urlObj.search, method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(jsonStr) } },
+            (r) => { r.resume(); r.on('end', resolve); }
+          );
+          postReq.on('error', reject);
+          postReq.write(jsonStr);
+          postReq.end();
+        });
+      } catch (pushErr) {
+        console.warn('[porting/export] push to targetUrl failed:', pushErr.message);
+        // Non-fatal; still return the JSON
+      }
+    }
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="export_${safeName(username)}_${Date.now()}.json"`);
+    res.send(jsonStr);
+  } catch (err) {
+    console.error('[porting/export]', err);
+    res.status(500).json({ error: 'Export failed', detail: err.message });
+  }
 });
 
 // ========== Dashboard Save / Load / Delete State ==========
