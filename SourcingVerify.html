@@ -2331,7 +2331,12 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
       right.appendChild(logoutBtn);
       bar.appendChild(left);
       bar.appendChild(right);
-      document.body.insertBefore(bar, document.body.firstChild);
+      var pageMain = document.querySelector('.page-main');
+      if (pageMain) {
+        pageMain.insertBefore(bar, pageMain.firstChild);
+      } else {
+        document.body.insertBefore(bar, document.body.firstChild);
+      }
     }
 
     function processUserResolve(data){
