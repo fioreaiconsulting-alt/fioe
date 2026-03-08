@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>API Key Upload</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg:#f0f4f8; --panel:#ffffff; --primary:#0b62c0; --danger:#b00020;
+      --success:#1f8a45; --border:#d1dde9; --muted:#5c6d7c;
+    }
+    *, *::before, *::after { box-sizing:border-box; }
+    html, body { margin:0; background:var(--bg); color:#182230;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      font-size:14px; line-height:1.5; min-height:100vh; }
+
+    header {
+      background:var(--primary); color:#fff; padding:0 24px;
+      display:flex; align-items:center; height:52px;
+    }
+    header h1 { margin:0; font-size:17px; font-weight:700; }
+
+    main { max-width:680px; margin:40px auto; padding:0 16px; }
+
+    .card { background:var(--panel); border:1px solid var(--border);
+      border-radius:12px; padding:28px 32px; margin-bottom:24px; }
+    .card h2 { margin:0 0 4px; font-size:16px; color:var(--primary); }
+    .card .subtitle { color:var(--muted); font-size:13px; margin:0 0 20px; }
+
+    .section-title { font-weight:700; font-size:13px; text-transform:uppercase;
+      letter-spacing:.5px; color:var(--muted); margin:0 0 10px; }
+
+    .upload-zone {
+      border:2px dashed var(--border); border-radius:8px; padding:28px 16px;
+      text-align:center; cursor:pointer; transition:border-color .2s, background .2s;
+      background:#fafcff;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color:var(--primary); background:#eef4ff;
+    }
+    .upload-zone input[type=file] { display:none; }
+    .upload-zone .icon { font-size:32px; margin-bottom:8px; }
+    .upload-zone .hint { color:var(--muted); font-size:13px; }
+    .file-chosen { margin-top:10px; font-size:13px; color:var(--success); font-weight:600; }
+
+    .or-divider { display:flex; align-items:center; gap:12px; margin:20px 0; color:var(--muted);
+      font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; }
+    .or-divider::before, .or-divider::after {
+      content:''; flex:1; height:1px; background:var(--border);
+    }
+
+    textarea {
+      width:100%; min-height:120px; padding:10px 12px; border:1px solid var(--border);
+      border-radius:8px; font-size:13px; font-family:monospace; resize:vertical;
+      line-height:1.5;
+    }
+    textarea:focus { outline:none; border-color:var(--primary);
+      box-shadow:0 0 0 2px rgba(11,98,192,.12); }
+
+    .note { font-size:12px; color:var(--muted); margin-top:6px; }
+
+    .btn { padding:10px 24px; border:none; border-radius:7px; cursor:pointer;
+      font-size:14px; font-weight:600; transition:background .18s; }
+    .btn-primary { background:var(--primary); color:#fff; width:100%; margin-top:16px; }
+    .btn-primary:hover { background:#084d94; }
+    .btn-primary:disabled { background:#9bb8d9; cursor:not-allowed; }
+
+    #statusMsg { margin-top:14px; padding:12px 16px; border-radius:8px; font-size:13px;
+      display:none; }
+    #statusMsg.success { background:#e8f5ee; color:var(--success);
+      border:1px solid #b7dfc7; display:block; }
+    #statusMsg.error   { background:#fdf0f2; color:var(--danger);
+      border:1px solid #f5c2c9; display:block; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🔑 API Key Upload</h1>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Submit Your API Credentials</h2>
+    <p class="subtitle">
+      Upload your encrypted <code>.env</code> file <em>or</em> paste your API keys directly.
+      All data is encrypted before storage.
+    </p>
+
+    <!-- File upload -->
+    <p class="section-title">Option 1 — Upload .env file</p>
+    <div class="upload-zone" id="dropZone">
+      <input type="file" id="envFile" accept=".env,.txt,.cfg,.ini">
+      <div class="icon">📂</div>
+      <div>Drag &amp; drop your <strong>.env</strong> file here, or <strong>click to browse</strong></div>
+      <div class="hint">Accepted: .env, .txt, .cfg, .ini · Max 1 MB</div>
+      <div class="file-chosen" id="chosenName" style="display:none"></div>
+    </div>
+
+    <div class="or-divider">or</div>
+
+    <!-- Text paste -->
+    <p class="section-title">Option 2 — Paste API keys</p>
+    <textarea id="apiKeyText" placeholder="Paste your API keys here, one per line&#10;e.g.&#10;GOOGLE_API_KEY=AIza...&#10;OPENAI_API_KEY=sk-..."></textarea>
+    <p class="note">Each line should follow the format <code>KEY_NAME=value</code>.</p>
+
+    <button class="btn btn-primary" id="submitBtn">🔒 Encrypt &amp; Submit</button>
+    <div id="statusMsg"></div>
+  </div>
+</main>
+
+<script>
+'use strict';
+
+const dropZone   = document.getElementById('dropZone');
+const fileInput  = document.getElementById('envFile');
+const chosenName = document.getElementById('chosenName');
+const apiKeyText = document.getElementById('apiKeyText');
+const submitBtn  = document.getElementById('submitBtn');
+const statusMsg  = document.getElementById('statusMsg');
+
+let selectedFile = null;
+
+// ── Drop zone interactions ──────────────────────────────────────────────────
+dropZone.addEventListener('click', () => fileInput.click());
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) setFile(fileInput.files[0]);
+});
+
+function setFile(file) {
+  selectedFile = file;
+  chosenName.textContent = '✓ ' + file.name;
+  chosenName.style.display = '';
+  apiKeyText.value = '';
+}
+
+// ── Submit ──────────────────────────────────────────────────────────────────
+submitBtn.addEventListener('click', async () => {
+  showStatus('');
+
+  const textVal = apiKeyText.value.trim();
+  if (!selectedFile && !textVal) {
+    showStatus('Please upload a file or paste your API keys before submitting.', 'error');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = '⏳ Uploading…';
+
+  try {
+    let body;
+    if (selectedFile) {
+      const b64 = await readFileAsBase64(selectedFile);
+      body = { type: 'file', filename: selectedFile.name, content: b64 };
+    } else {
+      body = { type: 'text', filename: 'api_keys.txt', content: textVal };
+    }
+
+    const r = await fetch('/api/porting/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+
+    const data = await r.json();
+    if (!r.ok) {
+      showStatus(data.error || 'Upload failed.', 'error');
+      return;
+    }
+
+    showStatus('✓ Credentials encrypted and submitted successfully. You can now close this page.', 'success');
+    selectedFile = null;
+    fileInput.value = '';
+    chosenName.style.display = 'none';
+    apiKeyText.value = '';
+  } catch (err) {
+    showStatus('Network error: ' + err.message, 'error');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = '🔒 Encrypt & Submit';
+  }
+});
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => {
+      const dataUrl = reader.result;
+      resolve(dataUrl.split(',')[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function showStatus(msg, type = '') {
+  if (!msg) { statusMsg.style.display = 'none'; return; }
+  statusMsg.textContent = msg;
+  statusMsg.className = type;
+  statusMsg.style.display = 'block';
+}
+</script>
+</body>
+</html>

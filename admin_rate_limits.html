@@ -118,6 +118,30 @@
     /* truncated link in appeals table */
     .appeal-url { max-width:140px; display:inline-block; overflow:hidden;
       text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
+
+    /* ── porting tab ── */
+    .porting-section { margin-bottom:24px; }
+    .porting-section h3 { margin:0 0 10px; font-size:14px; color:var(--primary); }
+    .porting-section textarea {
+      width:100%; min-height:100px; padding:10px 12px;
+      border:1px solid var(--border); border-radius:8px;
+      font-size:13px; font-family:monospace; resize:vertical; line-height:1.5;
+    }
+    .porting-section textarea:focus { outline:none; border-color:var(--primary);
+      box-shadow:0 0 0 2px rgba(11,98,192,.12); }
+    .porting-hint { font-size:12px; color:var(--muted); margin:4px 0 10px; }
+    .mapping-table { width:100%; border-collapse:collapse; margin-top:8px; }
+    .mapping-table th { background:#f5f7fa; padding:7px 10px; font-size:12px;
+      text-transform:uppercase; letter-spacing:.5px; color:var(--muted);
+      border-bottom:2px solid var(--border); text-align:left; }
+    .mapping-table td { padding:7px 10px; border-bottom:1px solid #eaedf1;
+      vertical-align:middle; font-size:13px; }
+    .mapping-table tr:last-child td { border-bottom:none; }
+    .mapping-table select { padding:4px 8px; border:1px solid var(--border);
+      border-radius:6px; font-size:13px; background:#fff; }
+    .mapping-table select:focus { outline:none; border-color:var(--primary); }
+    .porting-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px; }
+    #portingVerifySection { display:none; }
   </style>
 </head>
 <body>
@@ -271,6 +295,7 @@ function renderPage(container) {
     { id: 'tab-rl',      label: '⚡ Rate Limits'  },
     { id: 'tab-users',   label: '👥 Users'        },
     { id: 'tab-appeals', label: `📋 Appeals${_appeals.length ? ' (' + _appeals.length + ')' : ''}` },
+    { id: 'tab-porting', label: '🔄 Porting'      },
   ];
   tabDefs.forEach((t, i) => {
     const btn = document.createElement('button');
@@ -323,6 +348,13 @@ function renderPage(container) {
   appealsPanel.className = 'tab-panel';
   appealsPanel.appendChild(renderAppealsCard());
   container.appendChild(appealsPanel);
+
+  // ── Tab: Porting ──────────────────────────────────────────────────────────
+  const portingPanel = document.createElement('div');
+  portingPanel.id = 'tab-porting';
+  portingPanel.className = 'tab-panel';
+  portingPanel.appendChild(renderPortingCard());
+  container.appendChild(portingPanel);
 }
 
 // ── Rate Limits cards ────────────────────────────────────────────────────────
@@ -738,6 +770,215 @@ async function handleAppeal(ap, action, tr) {
   } catch (err) {
     toast('Network error: ' + err.message, 'error');
   }
+}
+
+// ── Porting tab ──────────────────────────────────────────────────────────────
+const PROCESS_TABLE_FIELDS = [
+  'id','name','company','jobtitle','country','linkedinurl','username','userid',
+  'product','sector','jobfamily','geographic','seniority','skillset',
+  'sourcingstatus','email','mobile','office','role_tag','experience','cv',
+  'education','exp','rating','pic','tenure','comment','vskillset',
+  'compensation','lskillset','jskillset',
+];
+
+let _portingMapping = {}; // { externalName: processField | null }
+
+function renderPortingCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<h2>API Field Mapping &amp; Porting</h2>';
+
+  // ── Step 1: Input names ──────────────────────────────────────────────────
+  const inputSection = document.createElement('div');
+  inputSection.className = 'porting-section';
+  inputSection.innerHTML = `
+    <h3>Step 1 — Paste API Mapping Names</h3>
+    <textarea id="portingNamesInput" placeholder="Enter external API field names, one per line&#10;e.g.&#10;full_name&#10;job_position&#10;company_name&#10;email_address"></textarea>
+    <p class="porting-hint">Enter the field names from the external system you want to map against the process table.</p>
+    <div class="porting-actions">
+      <button class="btn btn-primary" id="portingMapBtn">✨ Map with Gemini</button>
+      <span id="portingMapStatus" style="font-size:13px;color:var(--muted)"></span>
+    </div>`;
+  card.appendChild(inputSection);
+
+  // ── Step 2 + 3: Verification & Editing ───────────────────────────────────
+  const verifySection = document.createElement('div');
+  verifySection.id = 'portingVerifySection';
+  verifySection.className = 'porting-section';
+  verifySection.style.marginTop = '24px';
+  verifySection.innerHTML = `
+    <h3>Step 2 — Verify &amp; Edit Mapping</h3>
+    <p class="porting-hint">Review the auto-mapped fields below. Use the dropdowns to correct any mapping, then click <strong>Confirm Mapping</strong>.</p>
+    <div class="tbl-wrap">
+      <table class="mapping-table" id="portingMappingTable">
+        <thead><tr><th>External Field Name</th><th>→ Process Table Field</th></tr></thead>
+        <tbody id="portingMappingBody"></tbody>
+      </table>
+    </div>
+    <div class="porting-actions" style="margin-top:12px">
+      <button class="btn btn-success" id="portingConfirmBtn">✅ Confirm Mapping</button>
+      <button class="btn btn-secondary" id="portingResetBtn">↩ Reset</button>
+      <span id="portingConfirmStatus" style="font-size:13px;color:var(--muted)"></span>
+    </div>`;
+  card.appendChild(verifySection);
+
+  // ── Step 3 link to porting page ─────────────────────────────────────────
+  const linkSection = document.createElement('div');
+  linkSection.id = 'portingLinkSection';
+  linkSection.className = 'porting-section';
+  linkSection.style.cssText = 'margin-top:20px;display:none';
+  linkSection.innerHTML = `
+    <h3>Step 3 — Port Data</h3>
+    <p style="font-size:13px;color:var(--muted)">Mapping confirmed! You can now export and port your data.</p>
+    <a href="api_porting.html" class="btn btn-primary" style="display:inline-block;text-decoration:none">🚀 Go to Porting Page</a>`;
+  card.appendChild(linkSection);
+
+  // Wire up events after DOM is attached
+  setTimeout(() => {
+    document.getElementById('portingMapBtn').addEventListener('click', runGeminiMapping);
+    document.getElementById('portingConfirmBtn').addEventListener('click', confirmMapping);
+    document.getElementById('portingResetBtn').addEventListener('click', resetPortingUI);
+
+    // Load any previously confirmed mapping
+    loadExistingMapping();
+  }, 0);
+
+  return card;
+}
+
+async function loadExistingMapping() {
+  try {
+    const r = await fetch(`${API}/api/porting/mapping`, { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.mapping && Object.keys(data.mapping).length) {
+      _portingMapping = data.mapping;
+      populateMappingTable(_portingMapping);
+      document.getElementById('portingVerifySection').style.display = '';
+      document.getElementById('portingLinkSection').style.display = '';
+    }
+  } catch (_) {}
+}
+
+async function runGeminiMapping() {
+  const textarea = document.getElementById('portingNamesInput');
+  const statusEl = document.getElementById('portingMapStatus');
+  const mapBtn   = document.getElementById('portingMapBtn');
+
+  const raw = textarea.value.trim();
+  if (!raw) { toast('Enter at least one field name', 'error'); return; }
+
+  const names = raw.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!names.length) { toast('No valid names found', 'error'); return; }
+
+  mapBtn.disabled = true;
+  mapBtn.textContent = '⏳ Mapping…';
+  statusEl.textContent = 'Calling Gemini…';
+
+  try {
+    const r = await fetch(`${API}/api/porting/map`, {
+      method: 'POST',
+      headers: csrfHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify({ names }),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Mapping failed', 'error'); statusEl.textContent = ''; return; }
+
+    _portingMapping = data.mapping;
+    populateMappingTable(_portingMapping);
+    document.getElementById('portingVerifySection').style.display = '';
+    document.getElementById('portingLinkSection').style.display = 'none';
+    statusEl.textContent = `Mapped ${Object.keys(_portingMapping).length} field(s).`;
+  } catch (err) {
+    toast('Network error: ' + err.message, 'error');
+    statusEl.textContent = '';
+  } finally {
+    mapBtn.disabled = false;
+    mapBtn.textContent = '✨ Map with Gemini';
+  }
+}
+
+function populateMappingTable(mapping) {
+  const tbody = document.getElementById('portingMappingBody');
+  tbody.innerHTML = '';
+  Object.entries(mapping).forEach(([ext, proc]) => {
+    const tr = document.createElement('tr');
+
+    const tdExt = document.createElement('td');
+    tdExt.textContent = ext;
+    tr.appendChild(tdExt);
+
+    const tdProc = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.dataset.ext = ext;
+
+    const nullOpt = document.createElement('option');
+    nullOpt.value = '';
+    nullOpt.textContent = '— skip —';
+    sel.appendChild(nullOpt);
+
+    PROCESS_TABLE_FIELDS.forEach(field => {
+      const opt = document.createElement('option');
+      opt.value = field;
+      opt.textContent = field;
+      if (field === proc) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (!proc) sel.value = '';
+
+    sel.addEventListener('change', () => {
+      _portingMapping[ext] = sel.value || null;
+    });
+
+    tdProc.appendChild(sel);
+    tr.appendChild(tdProc);
+    tbody.appendChild(tr);
+  });
+}
+
+async function confirmMapping() {
+  const confirmBtn  = document.getElementById('portingConfirmBtn');
+  const confirmStat = document.getElementById('portingConfirmStatus');
+
+  // Read current dropdown values
+  document.querySelectorAll('#portingMappingBody select').forEach(sel => {
+    _portingMapping[sel.dataset.ext] = sel.value || null;
+  });
+
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = '⏳ Saving…';
+  confirmStat.textContent = '';
+
+  try {
+    const r = await fetch(`${API}/api/porting/confirm`, {
+      method: 'POST',
+      headers: csrfHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify({ mapping: _portingMapping }),
+    });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || 'Confirm failed', 'error'); return; }
+
+    toast('Mapping confirmed ✓', 'success');
+    confirmStat.textContent = 'Saved!';
+    document.getElementById('portingLinkSection').style.display = '';
+  } catch (err) {
+    toast('Network error: ' + err.message, 'error');
+  } finally {
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = '✅ Confirm Mapping';
+  }
+}
+
+function resetPortingUI() {
+  _portingMapping = {};
+  document.getElementById('portingNamesInput').value = '';
+  document.getElementById('portingMappingBody').innerHTML = '';
+  document.getElementById('portingVerifySection').style.display = 'none';
+  document.getElementById('portingLinkSection').style.display = 'none';
+  document.getElementById('portingMapStatus').textContent = '';
+  document.getElementById('portingConfirmStatus').textContent = '';
 }
 
 // ── Auto-redirect if already logged in ───────────────────────────────────────
