@@ -5557,8 +5557,25 @@ def _porting_get_key() -> bytes:
 
 
 def _porting_encrypt(data: bytes) -> bytes:
-    """AES-256-GCM encrypt.  Returns nonce(12) + ciphertext + tag(16)."""
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    """AES-256-GCM encrypt.  Returns nonce(12) + ciphertext + tag(16).
+    Auto-installs the 'cryptography' package if it is not already present."""
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        import subprocess
+        import sys as _sys
+        logger.info("[porting] 'cryptography' not found — installing…")
+        result = subprocess.run(
+            [_sys.executable, "-m", "pip", "install", "cryptography"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            logger.error("[porting] pip install cryptography failed: %s", result.stderr)
+            raise RuntimeError(
+                "The 'cryptography' package is required for encryption. "
+                "Install it with: pip install cryptography"
+            ) from None
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     key = _porting_get_key()
     nonce = os.urandom(12)
     ct = AESGCM(key).encrypt(nonce, data, None)
