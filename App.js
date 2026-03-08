@@ -3186,6 +3186,16 @@ function NavSidebar({ activePage = 'candidate-management' }) {
         </li>
 
         <li className="nav-sidebar__item">
+          <a href="http://localhost:8091/api_porting.html" className="nav-sidebar__link">
+            <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+              <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
+            </svg>
+            <span>API Port</span>
+          </a>
+        </li>
+
+        <li className="nav-sidebar__item">
           <a href="#community" className="nav-sidebar__link">
             <svg className="nav-sidebar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>

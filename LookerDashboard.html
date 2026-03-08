@@ -1636,7 +1636,7 @@
         <li><a href="http://localhost:8091/AutoSourcing.html" class="nav-sidebar__submenu-link" role="menuitem">Autosourcing</a></li>
         <li><a href="http://localhost:8091/SourcingVerify.html" class="nav-sidebar__submenu-link" role="menuitem">Talent Evaluation</a></li>
         <li><a href="http://localhost:3000/" class="nav-sidebar__submenu-link" role="menuitem">Candidate Management</a></li>
-        <li><a href="http://localhost:5000/LookerDashboard.html" class="nav-sidebar__submenu-link active" role="menuitem">Consulting Dashboard</a></li>
+        <li><a href="http://localhost:4000/LookerDashboard.html" class="nav-sidebar__submenu-link active" role="menuitem">Consulting Dashboard</a></li>
       </ul>
     </li>
 
@@ -1646,6 +1646,13 @@
       <a href="#ai-agent" class="nav-sidebar__link">
         <svg class="nav-sidebar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         <span>AI Agent</span>
+      </a>
+    </li>
+
+    <li class="nav-sidebar__item">
+      <a href="http://localhost:8091/api_porting.html" class="nav-sidebar__link">
+        <svg class="nav-sidebar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+        <span>API Porting</span>
       </a>
     </li>
 
@@ -2003,11 +2010,15 @@
         'product', 'sector', 'jobfamily', 'geographic', 'seniority', 
         'skillset', 'sourcingstatus', 'email', 'mobile', 'office', 
         'role_tag', 'jskillset', 'rating', 'lskill',
-        'education', 'compensation', 'tenure', 'experience'
+        'education', 'compensation', 'tenure', 'exp'
     ];
 
     const FIELD_MAPPING = {
         'lskill': 'lskillset' 
+    };
+
+    const LABEL_OVERRIDES = {
+        'exp': 'Total Experience'
     };
     
     // State
@@ -5036,6 +5047,7 @@
 
     // ================= UTILS =================
     function formatLabel(str) {
+        if (LABEL_OVERRIDES[str]) return LABEL_OVERRIDES[str];
         return str.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     }
 
