@@ -319,7 +319,7 @@ html, body {
       </div>
   </div>
 
-  <div id="tableContainer" style="overflow:auto; max-height:65vh; border:1px solid #d0d7de; border-radius:8px; background:#fff;">
+  <div id="tableContainer" style="overflow-x:auto; border:1px solid #d0d7de; border-radius:8px; background:#fff;">
       <table id="sourcingTable">
           <thead>
               <tr>
@@ -2331,7 +2331,12 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
       right.appendChild(logoutBtn);
       bar.appendChild(left);
       bar.appendChild(right);
-      document.body.insertBefore(bar, document.body.firstChild);
+      var pageMain = document.querySelector('.page-main');
+      if (pageMain) {
+        pageMain.insertBefore(bar, pageMain.firstChild);
+      } else {
+        document.body.insertBefore(bar, document.body.firstChild);
+      }
     }
 
     function processUserResolve(data){
@@ -3185,7 +3190,7 @@ function buildRow(row) {
 
   // Profile Picture Cell
   const picCell = document.createElement('td');
-  picCell.style.cssText = 'width:55px; text-align:center; padding:4px;';
+  picCell.style.cssText = 'width:55px; text-align:center; padding:4px; vertical-align:middle;';
   
   // Handle profile picture - check if it's bytea data or URL
   let picSrc = null;
@@ -3208,7 +3213,7 @@ function buildRow(row) {
     const img = document.createElement('img');
     img.src = picSrc;
     img.alt = row.name || 'Profile';
-    img.style.cssText = 'width:50px; height:50px; border-radius:50%; object-fit:cover; border:2px solid #e5e7eb; cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;';
+    img.style.cssText = 'display:block; margin:0 auto; width:50px; height:50px; border-radius:50%; object-fit:cover; border:2px solid #e5e7eb; cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;';
     img.title = 'Click to view details';
     img.onclick = (e) => {
       e.stopPropagation();
@@ -3226,7 +3231,7 @@ function buildRow(row) {
       // Fallback to placeholder if image fails to load
       this.style.display = 'none';
       const placeholder = document.createElement('div');
-      placeholder.style.cssText = 'width:50px; height:50px; border-radius:50%; background:#f3f4f6; display:flex; align-items:center; justify-content:center; color:#9ca3af; font-weight:600; font-size:18px; border:2px solid #e5e7eb; cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;';
+      placeholder.style.cssText = 'width:50px; height:50px; border-radius:50%; background:#f3f4f6; display:flex; align-items:center; justify-content:center; color:#9ca3af; font-weight:600; font-size:18px; margin:0 auto; border:2px solid #e5e7eb; cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;';
       placeholder.textContent = (row.name || '?').charAt(0).toUpperCase();
       placeholder.title = 'Click to view details';
       placeholder.onclick = (e) => {

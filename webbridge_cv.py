@@ -69,9 +69,12 @@ from webbridge import (
 )
 
 def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, search_results_only, country, dynamic_target, job_titles):
+    global SEARCH_RESULTS_TARGET
     add_message(job_id, "Starting search pipeline...")
     rows=[]; urls=[]
-    target_limit=dynamic_target if (isinstance(dynamic_target,int) and dynamic_target>0) else SEARCH_RESULTS_TARGET
+    if isinstance(dynamic_target, int) and dynamic_target > 0:
+        SEARCH_RESULTS_TARGET = dynamic_target
+    target_limit = SEARCH_RESULTS_TARGET
     primary_job_title=_infer_primary_job_title(job_titles)
     try:
         executed_primary=False
@@ -425,7 +428,13 @@ def start_job():
             dynamic_target = int(user_target_raw)
         except Exception:
             dynamic_target = 0
-    
+
+    # Dynamically adjust the global SEARCH_RESULTS_TARGET to reflect the user's Target Limit
+    if dynamic_target > 0:
+        _wb_mod = sys.modules.get('webbridge') or sys.modules.get('__main__')
+        if _wb_mod is not None:
+            _wb_mod.SEARCH_RESULTS_TARGET = dynamic_target
+
     if dynamic_target <= 0:
         dynamic_target=_compute_search_target(job_titles, country, user_companies, auto_suggest_companies,
                                               selected_sectors, languages, current_role, seniority or None,

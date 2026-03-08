@@ -593,7 +593,7 @@ else:
     logger.info("GOOGLE_CSE_API_KEY=NOT_SET")
 logger.info("GOOGLE_CSE_CX=%s", GOOGLE_CSE_CX or "NOT_SET")
 
-SEARCH_RESULTS_TARGET = int(os.getenv("SEARCH_RESULTS_TARGET", "50"))
+SEARCH_RESULTS_TARGET = int(os.getenv("SEARCH_RESULTS_TARGET") or 0)
 CSE_PAGE_SIZE = min(int(os.getenv("CSE_PAGE_SIZE", "10")), 10)
 CSE_PAGE_DELAY = float(os.getenv("CSE_PAGE_DELAY", "0.5"))
 
