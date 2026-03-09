@@ -297,32 +297,42 @@ html, body {
       <button id="marketAnalysisBtn" title="Transfer sourcing data to admin table &amp; open Data Sorter">Run Market Analysis</button>
   </div>
 
-  <!-- Full-text / fuzzy candidate search bar -->
-  <div id="candidateSearchBar" style="margin:8px 0; display:flex; align-items:center; gap:8px; position:relative;">
-      <div style="position:relative; flex:1; max-width:480px;">
-          <input type="search" id="candidateSearchInput"
-                 placeholder="Search by name, job title, company, skills…"
-                 autocomplete="off"
-                 style="width:100%; padding:7px 36px 7px 12px; border:1px solid #d0d7de; border-radius:6px;
-                        font-size:14px; box-sizing:border-box; outline:none;"
-                 aria-label="Search candidates" />
-          <span id="candidateSearchClear"
-                style="position:absolute; right:10px; top:50%; transform:translateY(-50%);
-                       cursor:pointer; color:#57606a; font-size:16px; display:none;"
-                title="Clear search">✕</span>
-          <!-- Autocomplete dropdown -->
-          <ul id="candidateSearchDropdown"
-              style="display:none; position:absolute; top:100%; left:0; right:0; z-index:200;
-                     margin:0; padding:0; list-style:none; background:#fff;
-                     border:1px solid #d0d7de; border-radius:0 0 6px 6px;
-                     box-shadow:0 4px 12px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto;">
-          </ul>
+  <!-- Collapsible candidate search panel (hidden by default, like Assessment Weightage Configuration) -->
+  <div class="weight-config-panel" id="candidateSearchPanel">
+      <div class="weight-config-header" id="candidateSearchPanelHeader"
+           onclick="toggleCandidateSearch()" style="cursor:pointer;">
+          <span>🔍 Candidate Search</span>
+          <span id="candidateSearchArrow">▼</span>
       </div>
-      <button id="candidateSearchBtn"
-              style="padding:7px 16px; background:#0969da; color:#fff; border:none;
-                     border-radius:6px; cursor:pointer; font-size:14px; white-space:nowrap;"
-              title="Search candidates">Search</button>
-      <span id="candidateSearchStatus" style="font-size:12px; color:#57606a;"></span>
+      <!-- Full-text / fuzzy candidate search bar (hidden by default) -->
+      <div class="weight-config-content" id="candidateSearchContent">
+          <div id="candidateSearchBar" style="display:flex; align-items:center; gap:8px; position:relative; padding:4px 0;">
+              <div style="position:relative; flex:1; max-width:480px;">
+                  <input type="search" id="candidateSearchInput"
+                         placeholder="Search by name, job title, company, skills…"
+                         autocomplete="off"
+                         style="width:100%; padding:7px 36px 7px 12px; border:1px solid #d0d7de; border-radius:6px;
+                                font-size:14px; box-sizing:border-box; outline:none;"
+                         aria-label="Search candidates" />
+                  <span id="candidateSearchClear"
+                        style="position:absolute; right:10px; top:50%; transform:translateY(-50%);
+                               cursor:pointer; color:#57606a; font-size:16px; display:none;"
+                        title="Clear search">✕</span>
+                  <!-- Autocomplete dropdown -->
+                  <ul id="candidateSearchDropdown"
+                      style="display:none; position:absolute; top:100%; left:0; right:0; z-index:200;
+                             margin:0; padding:0; list-style:none; background:#fff;
+                             border:1px solid #d0d7de; border-radius:0 0 6px 6px;
+                             box-shadow:0 4px 12px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto;">
+                  </ul>
+              </div>
+              <button id="candidateSearchBtn"
+                      style="padding:7px 16px; background:#0969da; color:#fff; border:none;
+                             border-radius:6px; cursor:pointer; font-size:14px; white-space:nowrap;"
+                      title="Search candidates">Search</button>
+              <span id="candidateSearchStatus" style="font-size:12px; color:#57606a;"></span>
+          </div>
+      </div>
   </div>
 
   <!-- Bulk Assessment Progress Indicator (from Assessment Review) -->
@@ -679,6 +689,18 @@ function toggleWeightConfig() {
   const arrow = document.getElementById('weightConfigArrow');
   content.classList.toggle('open');
   arrow.textContent = content.classList.contains('open') ? '▲' : '▼';
+}
+
+function toggleCandidateSearch() {
+  const content = document.getElementById('candidateSearchContent');
+  const arrow   = document.getElementById('candidateSearchArrow');
+  content.classList.toggle('open');
+  arrow.textContent = content.classList.contains('open') ? '▲' : '▼';
+  // Auto-focus the search input when the panel is opened
+  if (content.classList.contains('open')) {
+    const input = document.getElementById('candidateSearchInput');
+    if (input) setTimeout(() => input.focus(), 50);
+  }
 }
 
 // Assessment Weightage Configuration — click only (no hover)
@@ -7095,6 +7117,10 @@ function _resetAndReload() {
   _activeSearchQuery = '';
   const si = document.getElementById('candidateSearchInput');
   if (si) si.value = '';
+  const ss = document.getElementById('candidateSearchStatus');
+  if (ss) ss.textContent = '';
+  const sc = document.getElementById('candidateSearchClear');
+  if (sc) sc.style.display = 'none';
 }
 
 const pagerEl = document.getElementById('pager');

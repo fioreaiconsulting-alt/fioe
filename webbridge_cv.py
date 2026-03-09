@@ -731,8 +731,17 @@ def sourcing_list():
         # When a search query is active, default sort is by relevance DESC.
         # When sort_by=rating_score, sort using a numeric cast of the JSON field.
         if sort_by == "rating_score":
-            # Sort by the numeric portion of process.rating->>'total_score'
-            _rating_score_expr = "NULLIF(regexp_replace(p.rating::text, '.*\"total_score\":\\s*\"?(\\d+)%?\"?.*', '\\1'), '')::int"
+            # Sort by the numeric portion of process.rating total_score.
+            # NOTE: avoid '%' in the regex string — psycopg2 treats '%' in the
+            # query template as a format-specifier, causing IndexError when the
+            # query is executed with a parameter list.  Use [0-9] instead of \d
+            # and [[:space:]] instead of \s, and omit the '%?' quantifier that
+            # was previously used to match an optional percent sign.
+            _rating_score_expr = (
+                "NULLIF(regexp_replace(COALESCE(p.rating::text, ''), "
+                "'.*\"total_score\":[[:space:]]*\"?([0-9]+).*', "
+                "'\\\\1'), '')::int"
+            )
             _dir = "DESC" if sort_dir_raw != "asc" else "ASC"
             order_sql = f"{_rating_score_expr} {_dir} NULLS LAST"
         elif sort_by == "company":
