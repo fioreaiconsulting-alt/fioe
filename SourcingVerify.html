@@ -120,11 +120,13 @@ html, body {
 </style>
 
 <!-- Leaflet for country map visualization in Market Analytic -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 
-<script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 
 <!-- VSkillset Integration -->
 <script src="vskillset.js"></script>
@@ -1484,12 +1486,12 @@ function renderAssessmentReviewTable(rows) {
             dummyTr.dataset.linkedinurl = r.linkedinurl || '';
             dummyTr.innerHTML = `
                 <td></td>
-                <td>${r.name||''}</td>
-                <td>${r.company||''}</td>
-                <td>${r.jobtitle||''}</td>
-                <td>${r.country||''}</td>
-                <td>${r.linkedinurl||''}</td>
-                <td data-field="experience" data-experience="${(r.experience||'').replace(/"/g,'&quot;')}"></td>
+                <td>${escapeHtml(r.name||'')}</td>
+                <td>${escapeHtml(r.company||'')}</td>
+                <td>${escapeHtml(r.jobtitle||'')}</td>
+                <td>${escapeHtml(r.country||'')}</td>
+                <td>${escapeHtml(r.linkedinurl||'')}</td>
+                <td data-field="experience" data-experience="${escapeHtml(r.experience||'')}"></td>
             `;
             if (window.__sv_namecard && typeof window.__sv_namecard.renderNameCardToTab === 'function') {
                 try { 

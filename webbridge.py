@@ -63,8 +63,21 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 
 # Set a secret key for session security (shared with data_sorter if integrated)
 _flask_secret = os.getenv("FLASK_SECRET_KEY", "")
+_is_production = os.getenv("FLASK_ENV", "").lower() in ("production", "prod") or \
+                 os.getenv("PRODUCTION", "0") == "1"
 if not _flask_secret or _flask_secret == "change-me-in-production-webbridge":
     _flask_secret = secrets.token_hex(32)
+    if _is_production:
+        # In production, a missing secret key is a critical security failure —
+        # sessions will not survive restarts and HMAC signatures will change.
+        # Set FLASK_SECRET_KEY in your environment before starting the server:
+        #   python -c "import secrets; print(secrets.token_hex(32))"
+        logging.critical(
+            "FATAL: FLASK_SECRET_KEY is not set in a production environment. "
+            "Refusing to start with an ephemeral key. "
+            "Set FLASK_SECRET_KEY to a persistent strong random value and restart."
+        )
+        raise SystemExit(1)
     logging.warning(
         "FLASK_SECRET_KEY is not set (or is the default placeholder). "
         "A random key has been generated for this session — sessions will not "
@@ -74,10 +87,12 @@ if not _flask_secret or _flask_secret == "change-me-in-production-webbridge":
     )
 app.secret_key = _flask_secret
 
-# Session cookie security flags
+# Session cookie security flags.
+# SESSION_COOKIE_SECURE is True by default (required for HTTPS deployments).
+# Set DISABLE_SECURE_COOKIES=1 only in a local HTTP development environment.
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
+app.config['SESSION_COOKIE_SECURE'] = os.getenv("DISABLE_SECURE_COOKIES", "0") != "1"
 
 # Global upload limit raised to 80 MB to support bulk CV uploads.
 # Single-file endpoints enforce their own 6 MB per-file check below.
@@ -586,7 +601,9 @@ def admin_appeal_action():
         return jsonify({"error": str(e)}), 500
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# Affected section: lightweight CORS support for local development
+# Credentialed CORS is only granted to origins in the allowlist.
+# Non-allowlisted origins receive no ACAO header (browser blocks the request).
+# A wildcard ACAO is never sent — that would bypass credential isolation.
 def _apply_cors_headers(response):
     try:
         origin = request.headers.get('Origin', '')
@@ -594,21 +611,57 @@ def _apply_cors_headers(response):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Vary'] = 'Origin'
-        else:
-            response.headers['Access-Control-Allow-Origin'] = '*'
+        # Non-allowlisted origins: deliberately omit ACAO so the browser blocks
+        # the cross-origin read.  Do NOT fall back to '*'.
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PATCH, PUT, DELETE'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
     except Exception:
         pass
     return response
 
+# ── Security response headers ───────────────────────────────────────────────
+# Note: 'unsafe-inline' and 'unsafe-eval' are required because the current
+# HTML files use extensive inline <script> blocks and eval-adjacent patterns
+# (e.g. Chart.js).  Removing them requires migrating all inline JS to external
+# files — tracked as a follow-up hardening task.  This CSP still provides
+# meaningful protection by locking down allowed external script/style sources
+# and blocking clickjacking via frame-ancestors.
+_CSP = (
+    "default-src 'self'; "
+    # Inline scripts / eval needed until inline JS is moved to external files.
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+    "https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; "
+    # Inline styles needed until inline style blocks are moved to stylesheets.
+    "style-src 'self' 'unsafe-inline' "
+    "https://fonts.googleapis.com https://unpkg.com "
+    "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    # img-src includes https: for Leaflet map tiles (loaded from tile CDNs).
+    "img-src 'self' data: blob: https:; "
+    # connect-src: all API calls go through the same origin (WB_BASE_URL).
+    "connect-src 'self'; "
+    "worker-src 'self' blob:; "
+    # frame-ancestors 'self' is consistent with X-Frame-Options: SAMEORIGIN.
+    "frame-ancestors 'self';"
+)
+
 @app.after_request
 def _apply_cors(response):
+    # HSTS — only sent over HTTPS; instructs browsers to always use HTTPS.
     if os.getenv("FORCE_HTTPS", "0") == "1":
         response.headers.setdefault(
             "Strict-Transport-Security",
             "max-age=31536000; includeSubDomains"
         )
+    # Content-Security-Policy: restrict what the browser can load/execute.
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    # Prevent MIME-type sniffing attacks.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Block the page from being framed (clickjacking protection); consistent
+    # with frame-ancestors 'self' in the CSP above.
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    # Control the Referer header sent with outbound requests.
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return _apply_cors_headers(response)
 
 @app.route('/', methods=['OPTIONS'])
