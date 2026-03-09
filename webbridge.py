@@ -63,8 +63,21 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 
 # Set a secret key for session security (shared with data_sorter if integrated)
 _flask_secret = os.getenv("FLASK_SECRET_KEY", "")
+_is_production = os.getenv("FLASK_ENV", "").lower() in ("production", "prod") or \
+                 os.getenv("PRODUCTION", "0") == "1"
 if not _flask_secret or _flask_secret == "change-me-in-production-webbridge":
     _flask_secret = secrets.token_hex(32)
+    if _is_production:
+        # In production, a missing secret key is a critical security failure —
+        # sessions will not survive restarts and HMAC signatures will change.
+        # Set FLASK_SECRET_KEY in your environment before starting the server:
+        #   python -c "import secrets; print(secrets.token_hex(32))"
+        logging.critical(
+            "FATAL: FLASK_SECRET_KEY is not set in a production environment. "
+            "Refusing to start with an ephemeral key. "
+            "Set FLASK_SECRET_KEY to a persistent strong random value and restart."
+        )
+        raise SystemExit(1)
     logging.warning(
         "FLASK_SECRET_KEY is not set (or is the default placeholder). "
         "A random key has been generated for this session — sessions will not "
@@ -74,10 +87,12 @@ if not _flask_secret or _flask_secret == "change-me-in-production-webbridge":
     )
 app.secret_key = _flask_secret
 
-# Session cookie security flags
+# Session cookie security flags.
+# SESSION_COOKIE_SECURE is True by default (required for HTTPS deployments).
+# Set DISABLE_SECURE_COOKIES=1 only in a local HTTP development environment.
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.getenv("FORCE_HTTPS", "0") == "1"
+app.config['SESSION_COOKIE_SECURE'] = os.getenv("DISABLE_SECURE_COOKIES", "0") != "1"
 
 # Global upload limit raised to 80 MB to support bulk CV uploads.
 # Single-file endpoints enforce their own 6 MB per-file check below.
@@ -586,7 +601,9 @@ def admin_appeal_action():
         return jsonify({"error": str(e)}), 500
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# Affected section: lightweight CORS support for local development
+# Credentialed CORS is only granted to origins in the allowlist.
+# Non-allowlisted origins receive no ACAO header (browser blocks the request).
+# A wildcard ACAO is never sent — that would bypass credential isolation.
 def _apply_cors_headers(response):
     try:
         origin = request.headers.get('Origin', '')
@@ -594,21 +611,57 @@ def _apply_cors_headers(response):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Vary'] = 'Origin'
-        else:
-            response.headers['Access-Control-Allow-Origin'] = '*'
+        # Non-allowlisted origins: deliberately omit ACAO so the browser blocks
+        # the cross-origin read.  Do NOT fall back to '*'.
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PATCH, PUT, DELETE'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
     except Exception:
         pass
     return response
 
+# ── Security response headers ───────────────────────────────────────────────
+# Note: 'unsafe-inline' and 'unsafe-eval' are required because the current
+# HTML files use extensive inline <script> blocks and eval-adjacent patterns
+# (e.g. Chart.js).  Removing them requires migrating all inline JS to external
+# files — tracked as a follow-up hardening task.  This CSP still provides
+# meaningful protection by locking down allowed external script/style sources
+# and blocking clickjacking via frame-ancestors.
+_CSP = (
+    "default-src 'self'; "
+    # Inline scripts / eval needed until inline JS is moved to external files.
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+    "https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; "
+    # Inline styles needed until inline style blocks are moved to stylesheets.
+    "style-src 'self' 'unsafe-inline' "
+    "https://fonts.googleapis.com https://unpkg.com "
+    "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    # img-src includes https: for Leaflet map tiles (loaded from tile CDNs).
+    "img-src 'self' data: blob: https:; "
+    # connect-src: all API calls go through the same origin (WB_BASE_URL).
+    "connect-src 'self'; "
+    "worker-src 'self' blob:; "
+    # frame-ancestors 'self' is consistent with X-Frame-Options: SAMEORIGIN.
+    "frame-ancestors 'self';"
+)
+
 @app.after_request
 def _apply_cors(response):
+    # HSTS — only sent over HTTPS; instructs browsers to always use HTTPS.
     if os.getenv("FORCE_HTTPS", "0") == "1":
         response.headers.setdefault(
             "Strict-Transport-Security",
             "max-age=31536000; includeSubDomains"
         )
+    # Content-Security-Policy: restrict what the browser can load/execute.
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    # Prevent MIME-type sniffing attacks.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Block the page from being framed (clickjacking protection); consistent
+    # with frame-ancestors 'self' in the CSP above.
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    # Control the Referer header sent with outbound requests.
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return _apply_cors_headers(response)
 
 @app.route('/', methods=['OPTIONS'])
@@ -2792,6 +2845,218 @@ def _should_overwrite_existing(existing_meta, incoming_level="L2", force=False):
         return True, "default-allow"
     except Exception:
         return True, "error-eval-allow"
+
+
+def _ensure_search_indexes(cur, conn):
+    """Idempotently create full-text search and trigram indexes on sourcing/process tables.
+
+    Sets up:
+    - pg_trgm extension (for fuzzy / similarity matching)
+    - search_vector TSVECTOR column on sourcing and process tables
+    - GIN index on search_vector for fast full-text queries
+    - pg_trgm GIN indexes on key text columns (name, jobtitle, company) for fuzzy matching
+    - Trigger functions + BEFORE INSERT/UPDATE triggers to keep search_vector current
+    - Backfill of search_vector for existing rows (runs only when column is first added)
+    """
+    ddls = []
+    try:
+        # 1. Enable pg_trgm extension (idempotent)
+        cur.execute("SAVEPOINT _si_ext")
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        cur.execute("RELEASE SAVEPOINT _si_ext")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_ext")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] pg_trgm extension install failed (non-fatal): {e}")
+
+    # 2. Add search_vector column to sourcing if absent
+    sourcing_col_added = False
+    try:
+        cur.execute("SAVEPOINT _si_sv_s")
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='sourcing'
+              AND column_name='search_vector'
+        """)
+        if cur.fetchone() is None:
+            cur.execute("ALTER TABLE sourcing ADD COLUMN search_vector TSVECTOR")
+            sourcing_col_added = True
+        cur.execute("RELEASE SAVEPOINT _si_sv_s")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_sv_s")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] sourcing.search_vector column add failed (non-fatal): {e}")
+
+    # 3. Add search_vector column to process if absent
+    process_col_added = False
+    try:
+        cur.execute("SAVEPOINT _si_sv_p")
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='process'
+              AND column_name='search_vector'
+        """)
+        if cur.fetchone() is None:
+            cur.execute("ALTER TABLE process ADD COLUMN search_vector TSVECTOR")
+            process_col_added = True
+        cur.execute("RELEASE SAVEPOINT _si_sv_p")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_sv_p")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] process.search_vector column add failed (non-fatal): {e}")
+
+    # 4. Create GIN indexes on search_vector columns
+    gin_ddls = [
+        ("_si_gin_s", "CREATE INDEX IF NOT EXISTS idx_sourcing_search_vector ON sourcing USING GIN(search_vector)"),
+        ("_si_gin_p", "CREATE INDEX IF NOT EXISTS idx_process_search_vector ON process USING GIN(search_vector)"),
+        # Trigram GIN indexes for fuzzy matching on key text columns
+        ("_si_trgm_s_name",     "CREATE INDEX IF NOT EXISTS idx_sourcing_name_trgm ON sourcing USING GIN(name gin_trgm_ops)"),
+        ("_si_trgm_s_jobtitle", "CREATE INDEX IF NOT EXISTS idx_sourcing_jobtitle_trgm ON sourcing USING GIN(jobtitle gin_trgm_ops)"),
+        ("_si_trgm_s_company",  "CREATE INDEX IF NOT EXISTS idx_sourcing_company_trgm ON sourcing USING GIN(company gin_trgm_ops)"),
+        ("_si_trgm_p_jobtitle", "CREATE INDEX IF NOT EXISTS idx_process_jobtitle_trgm ON process USING GIN(jobtitle gin_trgm_ops)"),
+        ("_si_trgm_p_company",  "CREATE INDEX IF NOT EXISTS idx_process_company_trgm ON process USING GIN(company gin_trgm_ops)"),
+        ("_si_trgm_p_skillset", "CREATE INDEX IF NOT EXISTS idx_process_skillset_trgm ON process USING GIN(skillset gin_trgm_ops)"),
+    ]
+    for sp, ddl in gin_ddls:
+        try:
+            cur.execute(f"SAVEPOINT {sp}")
+            cur.execute(ddl)
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
+            conn.commit()
+        except Exception as e:
+            try:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                conn.commit()
+            except Exception:
+                pass
+            logger.warning(f"[SearchIdx] Index creation failed (non-fatal): {sp}: {e}")
+
+    # 5. Trigger function + trigger for sourcing table
+    try:
+        cur.execute("SAVEPOINT _si_trig_s")
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION sourcing_search_vector_update()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                NEW.search_vector :=
+                    setweight(to_tsvector('english', coalesce(NEW.jobtitle, '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(NEW.company,  '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(NEW.name,     '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(NEW.experience,'')), 'D');
+                RETURN NEW;
+            END;
+            $$
+        """)
+        cur.execute("""
+            DROP TRIGGER IF EXISTS trg_sourcing_search_vector ON sourcing
+        """)
+        cur.execute("""
+            CREATE TRIGGER trg_sourcing_search_vector
+            BEFORE INSERT OR UPDATE OF name, jobtitle, company, experience
+            ON sourcing
+            FOR EACH ROW EXECUTE FUNCTION sourcing_search_vector_update()
+        """)
+        cur.execute("RELEASE SAVEPOINT _si_trig_s")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_trig_s")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] sourcing trigger creation failed (non-fatal): {e}")
+
+    # 6. Trigger function + trigger for process table
+    try:
+        cur.execute("SAVEPOINT _si_trig_p")
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION process_search_vector_update()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                NEW.search_vector :=
+                    setweight(to_tsvector('english', coalesce(NEW.jobtitle,  '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(NEW.company,   '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(NEW.skillset,  '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(NEW.name,      '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(NEW.experience,'')), 'D');
+                RETURN NEW;
+            END;
+            $$
+        """)
+        cur.execute("""
+            DROP TRIGGER IF EXISTS trg_process_search_vector ON process
+        """)
+        cur.execute("""
+            CREATE TRIGGER trg_process_search_vector
+            BEFORE INSERT OR UPDATE OF name, jobtitle, company, skillset, experience
+            ON process
+            FOR EACH ROW EXECUTE FUNCTION process_search_vector_update()
+        """)
+        cur.execute("RELEASE SAVEPOINT _si_trig_p")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_trig_p")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] process trigger creation failed (non-fatal): {e}")
+
+    # 7. Backfill search_vector for existing rows (only when column was just added)
+    if sourcing_col_added:
+        try:
+            cur.execute("SAVEPOINT _si_backfill_s")
+            cur.execute("""
+                UPDATE sourcing SET search_vector =
+                    setweight(to_tsvector('english', coalesce(jobtitle,  '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(company,   '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(name,      '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(experience,'')), 'D')
+                WHERE search_vector IS NULL
+            """)
+            cur.execute("RELEASE SAVEPOINT _si_backfill_s")
+            conn.commit()
+        except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT _si_backfill_s")
+                conn.commit()
+            except Exception:
+                pass
+            logger.warning(f"[SearchIdx] sourcing backfill failed (non-fatal): {e}")
+
+    if process_col_added:
+        try:
+            cur.execute("SAVEPOINT _si_backfill_p")
+            cur.execute("""
+                UPDATE process SET search_vector =
+                    setweight(to_tsvector('english', coalesce(jobtitle,  '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(company,   '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(skillset,  '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(name,      '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(experience,'')), 'D')
+                WHERE search_vector IS NULL
+            """)
+            cur.execute("RELEASE SAVEPOINT _si_backfill_p")
+            conn.commit()
+        except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT _si_backfill_p")
+                conn.commit()
+            except Exception:
+                pass
+            logger.warning(f"[SearchIdx] process backfill failed (non-fatal): {e}")
 
 
 def _ensure_rating_metadata_columns(cur, conn):
