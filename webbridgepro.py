@@ -3412,37 +3412,43 @@ def _infer_primary_job_title(job_titles):
 
 def _perform_cse_queries(job_id, queries, target_limit, country):
     results=[]
-    # Assuming queries are distributed evenly
     m_cc=re.search(r'site:([a-z]{2})\.linkedin\.com/in', " ".join(queries), re.I)
     country_code_hint = m_cc.group(1).lower() if m_cc else None
-    
-    # Calculate a simple target per query
-    total_queries = max(1, len(queries))
-    per_query_target = max(1, target_limit // total_queries)
+
+    global_collected = 0
 
     for q in queries:
+        # Global stop-loss: target already reached, no need to fire more queries.
+        still_needed = target_limit - global_collected
+        if still_needed <= 0:
+            add_message(job_id, f"Target reached: {global_collected}/{target_limit} — skipping remaining queries")
+            break
+
+        # Each query tries to collect however many are still needed to reach the
+        # overall target, so shortfalls from earlier queries are automatically filled.
         gathered=0; start_index=1; pages_fetched=0
-        add_message(job_id, f"Running CSE: {q} target={per_query_target}")
-        
-        while gathered < per_query_target:
-            remaining = per_query_target - gathered
+        effective_target = still_needed
+        add_message(job_id, f"Running CSE: {q} target={effective_target} (need {still_needed} more to reach {target_limit})")
+
+        while gathered < effective_target:
+            remaining = effective_target - gathered
             page_size = min(CSE_PAGE_SIZE, remaining)
-            
+
             page = google_cse_search_page(q, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, page_size, start_index, gl_hint=country_code_hint)
             pages_fetched+=1
-            
+
             if not page:
                 add_message(job_id, f"  No results page start={start_index}")
                 break
-            
-            results.extend(page); gathered+=len(page)
+
+            results.extend(page); gathered+=len(page); global_collected+=len(page)
             if len(page) < page_size: break
             start_index += len(page)
-            
-            # Simple safety break
-            if pages_fetched >= 20: break 
+
+            # Safety break — prevents runaway pagination on unexpectedly large indices
+            if pages_fetched >= 20: break
             time.sleep(CSE_PAGE_DELAY)
-            
+
         add_message(job_id, f"CSE done (collected {gathered}). pages={pages_fetched}")
     return _dedupe_links(results)
 
