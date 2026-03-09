@@ -892,6 +892,15 @@ pre {
               <span id="jobIdTag" class="ds-badge">Pending</span>
             </div>
             <div id="jobMessage" class="helper" style="margin-top:8px;">Pending...</div>
+            <div id="sourcingProgressWrap" class="hidden" style="margin-top:10px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+                <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
+                <span id="sourcingProfileCount" style="font-size:12px; font-weight:700; color:var(--accent);">0</span>
+              </div>
+              <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
+                <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
+              </div>
+            </div>
             <div id="jobProgress" class="helper" style="margin-top:6px; font-weight:700; color:var(--accent);"></div>
             <div id="jobCounts" class="helper" style="margin-top:6px;"></div>
             <div id="jobUrls" class="helper hidden" style="margin-top:8px; max-height:100px; overflow-y:auto; background:#fff; padding:8px; border:1px solid var(--border);"></div>
@@ -1049,6 +1058,9 @@ const MAX_TOP_TIER_COMPETITORS = 15;
 // validation filter is applied. When the response contains fewer companies (e.g., no job titles
 // entered yet), the filter is skipped to avoid hiding valid sector suggestions prematurely.
 const MIN_SUGGEST_COMPANIES_FOR_VALIDATION = 5;
+// Maximum number of product/technology references extracted from a JD to pass to /suggest.
+// Capped to avoid bloating the Gemini prompt with an exhaustive product list.
+const MAX_JD_PRODUCTS_HINT = 20;
 const suppressedAutoSuggestedCompanies=new Set();
 const userSkills = []; const userSkillIndex = new Set();
 const estimateValueEl = document.getElementById('estimateValue');
@@ -1059,6 +1071,7 @@ const LOCAL_RULE_DEFAULTS = { base:{default:50,withJobAndLocation:60}, weights:{
 let jdSuggestionsLocked = false;    // when true, suggestion lists are frozen
 let jdJobSnapshot = [];             // frozen job suggestion list
 let jdCompanySnapshot = [];         // frozen company suggestion list
+let jdProducts = [];                // product/technology references extracted from JD (e.g., "Aircon", "HVAC")
 
 function captureSuggestionSnapshot(){
   try{
@@ -1685,7 +1698,7 @@ async function fetchSuggestions(force=false){
   const _signal = _suggestAbortCtrl.signal;
   if(suggestionsLoading) suggestionsLoading.classList.remove('hidden'); suggestionsEmpty.classList.add('hidden'); if(suggestionsError) suggestionsError.classList.add('hidden');
   try{
-    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country }),signal:_signal});
+    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country, products: jdProducts }),signal:_signal});
     if(!res.ok) throw new Error(await res.text());
     const data=await res.json(); lastGeneralSuggestions=data; renderSuggestionsAggregated(data);
   }catch(e){
@@ -2670,6 +2683,13 @@ async function generateAndStart(){
     if(!data.job_id) throw new Error('No job_id in response');
     show(document.getElementById('jobSection'));
     const tag=document.getElementById('jobIdTag'); if(tag) tag.textContent=data.job_id;
+    // Reset progress bar for new job
+    const _pFill=document.getElementById('sourcingProgressFill');
+    const _pCount=document.getElementById('sourcingProfileCount');
+    const _pWrap=document.getElementById('sourcingProgressWrap');
+    if(_pFill) _pFill.style.width='0%';
+    if(_pCount) _pCount.textContent='0';
+    if(_pWrap) hide(_pWrap); // will be shown by pollJob when first data arrives
     // Persist the target limit so SourcingVerify can apply the correct token deduction rate
     try { sessionStorage.setItem('last_job_target_limit', String(userTarget || 0)); } catch(e){ console.warn('[AutoSourcing] Could not save target limit to sessionStorage:', e); }
     pollJob(data.job_id);
@@ -2685,14 +2705,29 @@ async function pollJob(jobId){
   const counts=document.getElementById('jobCounts');
   const dl=document.getElementById('downloadArea');
   const btn=document.getElementById('generateBtn');
+  const progressWrap=document.getElementById('sourcingProgressWrap');
+  const progressFill=document.getElementById('sourcingProgressFill');
+  const profileCount=document.getElementById('sourcingProfileCount');
   let interval=1500;
+  // Show progress bar when polling starts
+  if(progressWrap) show(progressWrap);
   function extractFinalRowCount(html){ if(!html) return null; const m=/Wrote\s+(\d+)\s+rows/i.exec(html); return m?parseInt(m[1],10):null; }
+  function updateProgressBar(found, target){
+    if(!progressFill || !profileCount) return;
+    profileCount.textContent=found;
+    // When target is unknown (0), show an indeterminate 50% stripe rather than misleading 100%.
+    // When target is known, fill proportionally (capped at 100%).
+    const pct = target > 0 ? Math.min(100, Math.round((found / target) * 100)) : (found > 0 ? 50 : 0);
+    progressFill.style.width=pct+'%';
+  }
   function renderCounts(data){
     const urlsCount=Array.isArray(data.urls)?data.urls.length:0;
     const target=(data.meta&&typeof data.meta.dynamic_target==='number')?data.meta.dynamic_target:null;
     const parts=[]; if(target) parts.push(`Target results: ${target}`); parts.push(`URLs collected: ${urlsCount}`);
     if(data.done){ const finalRows=extractFinalRowCount(data.status_html||''); parts.push(`Final rows: ${finalRows!=null?finalRows:'?'}`); }
     if(counts) counts.textContent=parts.join(' · ');
+    // Update visual progress bar
+    updateProgressBar(urlsCount, target||0);
   }
   async function step(){
     try{
@@ -2725,6 +2760,8 @@ async function pollJob(jobId){
           removeSearchingSpinner(btn);
           btn.textContent='Ready for Download';
         }
+        // Set progress bar to 100% when done
+        if(progressFill) progressFill.style.width='100%';
         if(data.output_csv){
           let html=`<a href="/download/${encodeURIComponent(data.output_csv)}">Download Aggregated CSV</a>`;
           if(data.output_xlsx) html+=` · <a class="alt" href="/download/${encodeURIComponent(data.output_xlsx)}">Download XLSX</a>`;
@@ -3031,6 +3068,11 @@ function updateSectorEnabledState(){
                 updateSectorEnabledState();
                 updateFullCompiledQuery(); 
                 scheduleEstimateUpdate(); 
+              }
+
+              // Store product references extracted from JD for use in competitor suggestions
+              if (Array.isArray(analyzeData.products) && analyzeData.products.length) {
+                jdProducts = analyzeData.products.slice(0, MAX_JD_PRODUCTS_HINT);
               }
 
               // NEW: Auto-select seniority dropdown based on analyzeData.seniority (map to dropdown options)

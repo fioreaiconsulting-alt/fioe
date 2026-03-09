@@ -1026,9 +1026,14 @@ def _find_best_sector_match_for_text(candidate):
 # Keys are lowercase keywords; values are exact labels expected to exist (or closely match) in SECTORS_INDEX
 # NOTE: pharma/clinical mapping removed per user request (do not auto-apply pharma heuristics)
 _KEYWORD_TO_SECTOR_LABEL = {
+    "aircon": "Industrial & Manufacturing > Machinery",
+    "air-con": "Industrial & Manufacturing > Machinery",
     "hvac": "Industrial & Manufacturing > Machinery",
     "air conditioning": "Industrial & Manufacturing > Machinery",
     "air solutions": "Industrial & Manufacturing > Machinery",
+    "refrigeration": "Industrial & Manufacturing > Machinery",
+    "chiller": "Industrial & Manufacturing > Machinery",
+    "ventilation": "Industrial & Manufacturing > Machinery",
     "software": "Technology > Software",
     "cloud": "Technology > Cloud & Infrastructure",
     "infrastructure": "Technology > Cloud & Infrastructure",
@@ -1392,15 +1397,18 @@ def gemini_analyze_jd():
         company_identification_note = ""
         
         company_prompt = (
-            "You are a recruiting assistant. Analyze the following job description and identify ALL company names mentioned.\n"
+            "You are a recruiting assistant. Analyze the following job description and identify:\n"
+            "1. ALL company names explicitly mentioned\n"
+            "2. ALL product/technology/service names mentioned (e.g., 'Aircon', 'HVAC systems', 'cloud platforms', 'ERP software')\n"
             "Return STRICT JSON with this structure:\n"
-            "{ \"companies\": [\"Company Name 1\", \"Company Name 2\", ...] }\n"
+            "{ \"companies\": [\"Company Name 1\", ...], \"products\": [\"Product1\", \"Product2\", ...] }\n"
             "Rules:\n"
             "- Include the hiring company if explicitly mentioned\n"
             "- Include client companies, partner companies, or competitor companies mentioned\n"
             "- Use official company names (e.g., 'Microsoft' not 'MS', 'Johnson & Johnson' not 'J&J')\n"
             "- Do NOT include generic industry terms (e.g., 'tech companies', 'pharma firms')\n"
-            "- Return empty array if no specific companies are mentioned\n"
+            "- For products: include tangible product categories (e.g., 'Aircon', 'air conditioning', 'HVAC', 'refrigerators', 'mobile phones', 'electric vehicles')\n"
+            "- Return empty array if none found\n"
             "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
         )
         
@@ -1414,6 +1422,14 @@ def gemini_analyze_jd():
             for c in raw_companies:
                 if isinstance(c, str) and c.strip():
                     identified_companies.append(c.strip())
+
+        # Extract products/technologies mentioned in the JD
+        identified_products = []
+        raw_products = company_obj.get("products") or []
+        if isinstance(raw_products, list):
+            for p in raw_products:
+                if isinstance(p, str) and p.strip():
+                    identified_products.append(p.strip())
         
         company_identification_note = f"Identified {len(identified_companies)} companies in JD." if identified_companies else "No companies identified in JD."
         
@@ -1431,6 +1447,17 @@ def gemini_analyze_jd():
         if identified_companies:
             companies_context = f"\n\nIDENTIFIED COMPANIES: {', '.join(identified_companies)}\n"
             companies_context += "Use these companies to help determine the appropriate sector(s) from the available sectors list."
+        elif identified_products:
+            # When no companies are found, use product references to infer sector
+            companies_context = f"\n\nIDENTIFIED PRODUCTS/TECHNOLOGIES: {', '.join(identified_products)}\n"
+            companies_context += (
+                "No specific companies were mentioned in this JD, but these products/technologies were identified. "
+                "Use them to:\n"
+                "1. Identify the correct industry sector (e.g., 'Aircon'/'HVAC' → Industrial & Manufacturing > Machinery)\n"
+                "2. Classify the role correctly — do NOT assign Gaming/Technology sectors to physical product roles\n"
+                "3. The company suggestions should be direct competitors that manufacture or sell these products\n"
+                "IMPORTANT: 'Aircon', 'air conditioning', 'HVAC', 'refrigeration' are Industrial/Manufacturing products, NOT gaming or technology."
+            )
 
         # Build strict JSON request to Gemini
         prompt = (
@@ -1440,6 +1467,8 @@ def gemini_analyze_jd():
             "- You MUST identify at least one sector. Use your best judgment if unclear.\n"
             "- Multiple sectors may be assigned if the role spans multiple domains.\n"
             "- Match sectors to the AVAILABLE SECTORS list provided below.\n"
+            "- CRITICAL: Physical product roles (e.g., Aircon, HVAC, manufacturing) belong to Industrial & Manufacturing, NOT Gaming or Technology. "
+            "These roles involve physical supply chains, mechanical engineering, and industrial processes that are fundamentally different from software or gaming industries.\n"
             + companies_context
             + sectors_list
             + "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
@@ -1912,7 +1941,8 @@ def gemini_analyze_jd():
                     industry=industry,
                     languages=None,
                     sectors=sectors,
-                    country=country
+                    country=country,
+                    products=identified_products  # Pass extracted product references for competitor context
                 )
                 
                 if gem_suggestions and gem_suggestions.get("job", {}).get("related"):
@@ -1995,6 +2025,7 @@ def gemini_analyze_jd():
             "justification": justification,
             "observation": observation,
             "skills": skills,
+            "products": identified_products,  # Product references extracted from JD (for competitor suggestions)
             "raw": raw_out
         }
         return jsonify(out), 200
@@ -4678,10 +4709,11 @@ def _enforce_company_limit(raw_list, country: str, limit: int, sectors=None):
         cleaned = _supplement_companies(cleaned, country, limit, sectors)
     return cleaned[:limit]
 
-def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors=None, country: str = None):
+def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors=None, country: str = None, products: list = None):
     if not (GEMINI_API_KEY and genai): return None
     languages = languages or []
     sectors = sectors or []
+    products = products or []
     locality_hint = "Prioritize Singapore/APAC relevance where naturally applicable." if SINGAPORE_CONTEXT else ""
     
     # Add country-specific filtering instruction
@@ -4699,7 +4731,20 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
             "  * For Gaming / Technology sectors: do NOT include pharma, healthcare, finance, insurance, or"
             " manufacturing companies, even if they use software or hire engineers internally.\n"
             "  * For Healthcare / Clinical Research sectors: do NOT include gaming, tech, or retail companies.\n"
+            "  * For Industrial & Manufacturing sectors: do NOT include pure software, gaming, or financial services companies.\n"
             "  Competitors must share the same product/service focus as the job context.\n"
+        )
+
+    # Add product-based competitor hint when products are present.
+    # Only applied when no companies are provided: when companies exist, they already
+    # give Gemini strong competitor context, and adding products could create conflicting signals.
+    product_hint = ""
+    if products and not companies:
+        product_hint = (
+            f"\n- PRODUCT CONTEXT: The JD references these products/technologies: {', '.join(products[:10])}.\n"
+            "  When no companies are explicitly mentioned, prioritize direct competitors that manufacture or sell these SAME products.\n"
+            "  For example: if the JD mentions 'Aircon' or 'HVAC', suggest companies like Daikin, Carrier, Trane, Mitsubishi Electric, LG Electronics, etc.\n"
+            "  Do NOT suggest companies from unrelated industries just to fill the list.\n"
         )
 
     input_obj = {
@@ -4722,6 +4767,7 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
         "- DO NOT output generic placeholders (e.g., 'Gaming Studio', 'Tech Company', 'Pharma Company', 'Consulting Firm', 'Marketing Agency').\n"
         + country_filter_hint
         + sector_strict_hint
+        + product_hint
         + "- No duplicates, no commentary, no extra keys.\n"
         "- If insufficient context, fill remaining slots with well-known global or APAC companies relevant to the sectors/location.\n"
         "- Maintain JSON key order as shown.\n"
@@ -4921,6 +4967,7 @@ def suggest():
     languages = data.get("languages") or []
     sectors = data.get("sectors") or data.get("selectedSectors") or []
     country = (data.get("country") or "").strip()
+    products = data.get("products") or []  # Product references extracted from JD
     key = (tuple(sorted([jt.strip().lower() for jt in job_titles])),
            tuple(sorted([c.strip().lower() for c in companies])),
            industry.lower(),
@@ -4934,7 +4981,7 @@ def suggest():
 
     user_jobs_clean = [jt.strip() for jt in job_titles if isinstance(jt, str) and jt.strip()]
 
-    gem=_gemini_suggestions(job_titles, companies, industry, languages, sectors, country)
+    gem=_gemini_suggestions(job_titles, companies, industry, languages, sectors, country, products)
     if gem:
         existing_companies = {c.lower() for c in companies if isinstance(c, str) and c.strip()}
         gem_job_raw = [s for s in gem.get("job", {}).get("related", []) if isinstance(s, str) and s.strip()]
