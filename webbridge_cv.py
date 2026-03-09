@@ -731,16 +731,15 @@ def sourcing_list():
         # When a search query is active, default sort is by relevance DESC.
         # When sort_by=rating_score, sort using a numeric cast of the JSON field.
         if sort_by == "rating_score":
-            # Sort by the numeric portion of process.rating total_score.
-            # NOTE: avoid '%' in the regex string — psycopg2 treats '%' in the
-            # query template as a format-specifier, causing IndexError when the
-            # query is executed with a parameter list.  Use [0-9] instead of \d
-            # and [[:space:]] instead of \s, and omit the '%?' quantifier that
-            # was previously used to match an optional percent sign.
+            # Extract the numeric total_score from the rating JSONB blob.
+            # regexp_match (PG 10+) returns the captured group as an array
+            # element; no backslash escaping in the replacement string is
+            # needed, which avoids the psycopg2 '%' format-specifier issue and
+            # the PostgreSQL standard_conforming_strings '\1' literal-string
+            # problem that caused "invalid input syntax for type integer: '\1'".
             _rating_score_expr = (
-                "NULLIF(regexp_replace(COALESCE(p.rating::text, ''), "
-                "'.*\"total_score\":[[:space:]]*\"?([0-9]+).*', "
-                "'\\\\1'), '')::int"
+                "(regexp_match(COALESCE(p.rating::text, ''), "
+                "'\"total_score\":[[:space:]]*\"?([0-9]+)'))[1]::int"
             )
             _dir = "DESC" if sort_dir_raw != "asc" else "ASC"
             order_sql = f"{_rating_score_expr} {_dir} NULLS LAST"
