@@ -2425,6 +2425,8 @@ const TOTAL_SEARCH_TOKEN_BASE = 5000;
 let currentPage = 1;
 let totalRowCount = 0;
 const PAGE_SIZE = 15;
+// Global sort state: when non-null, holds all rows sorted; client-side pagination is used instead of server-side
+let _globalSortedRows = null;
 
 let excelBlobUrl = null;
 function deleteClientExcelBlob(){
@@ -4507,6 +4509,16 @@ async function sendUpdate(linkedinurl, field, value, td) {
 }
 
 async function loadRows(page=1){
+  // If in global sort mode, do client-side pagination from the sorted dataset
+  if (_globalSortedRows !== null) {
+    currentPage = Math.max(1, page);
+    const start = (currentPage - 1) * PAGE_SIZE;
+    rowsData = _globalSortedRows.slice(start, start + PAGE_SIZE);
+    renderTable();
+    renderPager();
+    updateDisplayCounters();
+    return;
+  }
   setStatus('Loading rows…');
   tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px;"><span class="spinner"></span> Loading…</td></tr>`;
   currentPage = Math.max(1, page);
@@ -6142,84 +6154,125 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add Match Level header click listener for sorting with toggle states
     const matchLevelHeader = document.getElementById('matchLevelHeader');
     let __sortState = 'none'; // Track current sort state: 'none', 'descending', 'ascending'
-    
+
+    // Extracts a numeric match score from a row object
+    function getScore(r) {
+        let score = -1;
+        // Try rating field first (most reliable source)
+        if (r.rating) {
+            try {
+                const ratingObj = typeof r.rating === 'string' ? JSON.parse(r.rating) : r.rating;
+                if (ratingObj && ratingObj.total_score) {
+                    const s = parseInt(String(ratingObj.total_score).replace('%', ''), 10);
+                    if (!isNaN(s)) return s;
+                }
+            } catch(e) {}
+        }
+        // Try rating_score convenience field
+        if (score === -1 && r.rating_score) {
+            const s = parseInt(String(r.rating_score).replace('%', ''), 10);
+            if (!isNaN(s)) score = s;
+        }
+        // Try namecard cache
+        if (score === -1 && window.__sv_namecard) {
+            const cache = window.__sv_namecard.getCardCache(r.linkedinurl);
+            if (cache && cache.totalScore !== undefined) {
+                const s = parseInt(cache.totalScore, 10);
+                if (!isNaN(s)) score = s;
+            } else if (cache && cache.assessmentHTML) {
+                const m = cache.assessmentHTML.match(/(\d+)%/);
+                if (m) score = parseInt(m[1], 10);
+            }
+        }
+        // Try experience field text as last resort
+        if (score === -1 && r.experience) {
+            const m = String(r.experience).match(/(\d+)%/);
+            if (m) score = parseInt(m[1], 10);
+        }
+        return score;
+    }
+
+    // Apply current __sortState to an array of rows (mutates in-place)
+    function applySortToRows(rows) {
+        if (__sortState === 'descending') {
+            rows.sort((a, b) => getScore(b) - getScore(a));
+        } else if (__sortState === 'ascending') {
+            rows.sort((a, b) => getScore(a) - getScore(b));
+        }
+    }
+
+    // Update the sort indicator arrow in the header
+    function updateSortIndicator() {
+        if (!matchLevelHeader) return;
+        matchLevelHeader.setAttribute('aria-sort', __sortState);
+        const arrow = matchLevelHeader.querySelector('span');
+        if (!arrow) return;
+        if (__sortState === 'descending') {
+            arrow.textContent = '▼';
+        } else if (__sortState === 'ascending') {
+            arrow.textContent = '▲';
+        } else {
+            arrow.textContent = '';
+        }
+    }
+
     if (matchLevelHeader) {
-        matchLevelHeader.addEventListener('click', () => {
-            if(!rowsData || rowsData.length === 0) return;
-            
+        matchLevelHeader.addEventListener('click', async () => {
+            if (!totalRowCount && (!rowsData || rowsData.length === 0)) return;
+
             // Cycle through sort states: none → descending → ascending → none
             if (__sortState === 'none') {
                 __sortState = 'descending';
             } else if (__sortState === 'descending') {
                 __sortState = 'ascending';
             } else {
+                // Reset to no sort: clear global dataset and reload from server
                 __sortState = 'none';
-                // Reload original order when returning to 'none'
-                loadRows(currentPage);
+                _globalSortedRows = null;
                 matchLevelHeader.setAttribute('aria-sort', 'none');
-                matchLevelHeader.querySelector('span').textContent = '';
+                const arrow = matchLevelHeader.querySelector('span');
+                if (arrow) arrow.textContent = '';
                 setStatus('Sort order reset.', 'success');
+                await loadRows(1);
                 return;
             }
-            
-            // Sort rowsData based on cached score or experience text
-            rowsData.sort((a, b) => {
-                const getScore = (r) => {
-                    let score = -1;
-                    
-                    // Try rating field first (most reliable source)
-                    if (r.rating) {
-                        try {
-                            const ratingObj = typeof r.rating === 'string' ? JSON.parse(r.rating) : r.rating;
-                            if (ratingObj && ratingObj.total_score) {
-                                const scoreStr = String(ratingObj.total_score).replace('%', '');
-                                score = parseInt(scoreStr, 10);
-                                if (!isNaN(score)) return score;
-                            }
-                        } catch(e) {}
-                    }
-                    
-                    // Try cache second
-                    if(score === -1 && window.__sv_namecard) {
-                        const cache = window.__sv_namecard.getCardCache(r.linkedinurl);
-                        if(cache && cache.totalScore !== undefined) {
-                            const cachedScore = parseInt(cache.totalScore, 10);
-                            if (!isNaN(cachedScore)) {
-                                score = cachedScore;
-                            }
-                        } else if(cache && cache.assessmentHTML) {
-                            const m = cache.assessmentHTML.match(/(\d+)%/);
-                            if(m) score = parseInt(m[1], 10);
-                        }
-                    }
-                    
-                    // Try experience field text if cache miss
-                    if(score === -1 && r.experience) {
-                         const m = String(r.experience).match(/(\d+)%/);
-                         if(m) score = parseInt(m[1], 10);
-                    }
-                    return score;
-                };
-                
-                // Sort descending or ascending based on state
-                if (__sortState === 'descending') {
-                    return getScore(b) - getScore(a); // Descending (highest to lowest)
-                } else {
-                    return getScore(a) - getScore(b); // Ascending (lowest to highest)
+
+            // Fetch all rows for a truly global sort across all pages
+            setStatus('Fetching all rows for global sort…');
+            try {
+                const uid = window.__SV_ACTIVE_USERID || '';
+                if (!uid) throw new Error('User ID not found in session — please log in again');
+                const res = await fetch(`${API_LIST}?userid=${encodeURIComponent(uid)}&all=1`, { credentials: 'same-origin', cache: 'no-store' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                const allRows = Array.isArray(data.rows) ? data.rows : [];
+                if (!allRows.length) {
+                    setStatus('No rows to sort.', 'error');
+                    return;
                 }
-            });
-            
-            renderTable();
-            
-            // Update aria-sort attribute and visual indicator
-            matchLevelHeader.setAttribute('aria-sort', __sortState);
-            const arrow = matchLevelHeader.querySelector('span');
-            if (__sortState === 'descending') {
-                arrow.textContent = '▼';
-                setStatus('Table sorted by Match Level (highest to lowest).', 'success');
-            } else {
-                arrow.textContent = '▲';
-                setStatus('Table sorted by Match Level (lowest to highest).', 'success');
+                // Sort all rows globally
+                applySortToRows(allRows);
+                _globalSortedRows = allRows;
+                totalRowCount = allRows.length;
+                // Show first page of sorted results
+                currentPage = 1;
+                rowsData = _globalSortedRows.slice(0, PAGE_SIZE);
+                renderTable();
+                renderPager();
+                updateDisplayCounters();
+                updateSortIndicator();
+                if (__sortState === 'descending') {
+                    setStatus(`Table sorted by Match Level (highest to lowest) across all ${allRows.length} row(s).`, 'success');
+                } else {
+                    setStatus(`Table sorted by Match Level (lowest to highest) across all ${allRows.length} row(s).`, 'success');
+                }
+            } catch (e) {
+                console.error('Global sort fetch failed:', e);
+                setStatus('Sort failed: ' + (e.message || 'unable to fetch data'), 'error');
+                // Fall back to local sort on current page
+                applySortToRows(rowsData);
+                renderTable();
+                updateSortIndicator();
             }
         });
     }
@@ -6331,7 +6384,7 @@ window.applyTokenDelta = async function(delta) {
 //   document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
 //   showDeleteIfNeeded();
 // });
-reloadBtn.addEventListener('click', async () => { await loadRows(currentPage); refreshAccountTokens(); });
+reloadBtn.addEventListener('click', async () => { _globalSortedRows = null; await loadRows(currentPage); refreshAccountTokens(); });
 // Delete button functionality removed per requirements
 // deleteBtn.addEventListener('click', deleteSelected);
 
@@ -6360,45 +6413,73 @@ function collectDisplayedRows() {
 // AFFECTED: Replaced iframe logic with direct content execution
 async function deepResearch() {
   const btn = document.getElementById('exportCsvBtn');
-  const embeddedRoot = document.getElementById('ds-embedded-root');
 
   try {
     btn.disabled = true;
-    setStatus('Market Analytic: preparing process-table payload…');
-    const displayed = collectDisplayedRows();
-    if (!displayed.length) {
-      setStatus('No displayed rows to process.', 'error');
+    setStatus('Market Analytic: fetching complete dataset…');
+
+    // Fetch all rows from the backend so analytics reflect the full dataset,
+    // not just the current page. Fall back to displayed rows if the fetch fails.
+    let allAnalyticsRows = [];
+    const uid = window.__SV_ACTIVE_USERID || '';
+    if (uid) {
+      try {
+        const res = await fetch(`${API_LIST}?userid=${encodeURIComponent(uid)}&all=1`, { credentials: 'same-origin', cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.rows) && data.rows.length) {
+          allAnalyticsRows = data.rows.map(r => ({
+            name: (r.name || '').trim(),
+            company: (r.company || '').trim(),
+            jobtitle: (r.jobtitle || '').trim(),
+            country: (r.country || '').trim(),
+            experience: (r.experience || '').trim(),
+            linkedinurl: (r.linkedinurl || '').trim()
+          }));
+        }
+      } catch (fetchErr) {
+        console.warn('deepResearch: full-fetch failed, falling back to displayed rows:', fetchErr);
+      }
+    }
+
+    // Fall back to currently displayed rows if fetch did not return data
+    if (!allAnalyticsRows.length) {
+      allAnalyticsRows = collectDisplayedRows();
+    }
+
+    if (!allAnalyticsRows.length) {
+      setStatus('No rows available for Market Analytic.', 'error');
       btn.disabled = false;
       return;
     }
-    const uploaded_columns = ['name','company','jobtitle','country'];
-    const rowsArray = displayed.map(r => [ r.name || '', r.company || '', r.jobtitle || '', r.country || '' ]);
-    
+
+    const uploaded_columns = ['name', 'company', 'jobtitle', 'country'];
+    const rowsArray = allAnalyticsRows.map(r => [r.name, r.company, r.jobtitle, r.country]);
+
     // Prepare the payload for client-side inference
     const payloadForDataSorter = {
       uploaded_columns: uploaded_columns.slice(),
       rows: rowsArray.slice(),
-      infer_result: null, // Will be generated by clientInferFallback
+      infer_result: null,
       meta: {
         source: 'SourcingVerify.deepResearch',
         processed_at_ms: Date.now()
       }
     };
-    
+
     // Removed switchTab('tab-research') to avoid recursion (was causing stack overflow)
-    setStatus(`Market Analytic: analyzing ${displayed.length} row(s)...`, 'info');
+    setStatus(`Market Analytic: analyzing ${allAnalyticsRows.length} row(s) across all pages…`, 'info');
 
     // Trigger analysis using embedded logic from data_sorter
     if (typeof clientInferFallback === 'function') {
-        const result = clientInferFallback(payloadForDataSorter, performance.now());
-        if (result) {
-            setStatus('Market Analytic analysis complete.', 'success');
-        } else {
-            setStatus('Market Analytic analysis returned no results.', 'error');
-        }
+      const result = clientInferFallback(payloadForDataSorter, performance.now());
+      if (result) {
+        setStatus(`Market Analytic complete — ${allAnalyticsRows.length} row(s) analyzed.`, 'success');
+      } else {
+        setStatus('Market Analytic analysis returned no results.', 'error');
+      }
     } else {
-        setStatus('Analysis engine not ready.', 'error');
-        console.error('clientInferFallback function missing');
+      setStatus('Analysis engine not ready.', 'error');
+      console.error('clientInferFallback function missing');
     }
 
   } catch (e) {
