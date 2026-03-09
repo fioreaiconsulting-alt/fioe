@@ -292,6 +292,26 @@ const webbridge = {
   sourcingList: (params = {}) => _get('/sourcing/list', params),
 
   /**
+   * Search sourcing candidates using full-text search and server-side sorting.
+   * @param {{
+   *   userid: string,
+   *   q?: string,
+   *   sort_by?: 'name'|'company'|'jobtitle'|'rating_score'|'relevance',
+   *   sort_dir?: 'asc'|'desc',
+   *   page?: number,
+   *   page_size?: number,
+   * }} params
+   */
+  sourcingSearch: (params = {}) => _get('/sourcing/list', params),
+
+  /**
+   * Get job-title autocomplete suggestions (fuzzy, trigram-based).
+   * @param {{ q: string, userid?: string, limit?: number }} params
+   * @returns {{ suggestions: string[] }}
+   */
+  sourcingAutocomplete: (params = {}) => _get('/sourcing/autocomplete', params),
+
+  /**
    * Update a sourcing candidate record.
    * @param {{ linkedinurl: string, [key: string]: any }} data
    */

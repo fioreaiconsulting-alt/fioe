@@ -483,6 +483,24 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 .weight-config-content.open {
   display: block;
 }
+/* Section label inside the combined panel */
+.search-config-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+/* Divider between search and weightage sections */
+.search-config-divider {
+  border-top: 1px solid #e2e8f0;
+  margin: 14px 0;
+}
+/* Spacing between sections */
+.search-config-section + .search-config-divider + .search-config-section {
+  padding-top: 2px;
+}
 .weight-sliders {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
