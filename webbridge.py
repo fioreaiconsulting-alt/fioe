@@ -269,6 +269,8 @@ def _ensure_admin_columns(cur):
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS google_token_expires TIMESTAMP",
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS corporation TEXT",
         "ALTER TABLE login ADD COLUMN IF NOT EXISTS useraccess TEXT",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS cse_query_count INTEGER DEFAULT 0",
+        "ALTER TABLE login ADD COLUMN IF NOT EXISTS price_per_query NUMERIC(10,4) DEFAULT 0",
     ]
     for i, ddl in enumerate(ddls):
         sp = f"_adm_col_{i}"
@@ -302,6 +304,8 @@ def _build_users_select(avail):
         return f"COALESCE({c}, '') AS {c}" if c in avail else f"'' AS {c}"
     def _int(c, default=0):
         return f"COALESCE({c}, {default}) AS {c}" if c in avail else f"{default} AS {c}"
+    def _num(c, default=0):
+        return f"COALESCE({c}::numeric, {default}) AS {c}" if c in avail else f"{default} AS {c}"
     # userid may be named 'id' on older schemas
     if 'userid' in avail:
         uid_expr = "userid::text AS userid"
@@ -345,7 +349,9 @@ def _build_users_select(avail):
             {_txt('last_deducted_role_tag')},
             {_ts('session')},
             {_txt('useraccess')},
-            {_int('target_limit', 10)}
+            {_int('target_limit', 10)},
+            {_int('cse_query_count')},
+            {_num('price_per_query')}
         FROM login ORDER BY username
     """
 
@@ -465,6 +471,54 @@ def admin_update_target_limit():
         return jsonify({"ok": True, "username": username, "target_limit": row[0]}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.post("/admin/update-price-per-query")
+@_csrf_required
+@_require_admin
+def admin_update_price_per_query():
+    """Set the price-per-CSE-query for a specific user."""
+    body = request.get_json(force=True, silent=True) or {}
+    username = (body.get("username") or "").strip()
+    price_val = body.get("price_per_query")
+    if not username or price_val is None:
+        return jsonify({"error": "username and price_per_query required"}), 400
+    try:
+        price_float = float(price_val)
+        if price_float < 0:
+            return jsonify({"error": "price_per_query must be >= 0"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "price_per_query must be a number"}), 400
+    try:
+        conn = _pg_connect()
+        cur = conn.cursor()
+        _ensure_admin_columns(cur)
+        cur.execute(
+            "UPDATE login SET price_per_query = %s WHERE username = %s RETURNING price_per_query",
+            (price_float, username)
+        )
+        row = cur.fetchone()
+        conn.commit(); cur.close(); conn.close()
+        if not row:
+            return jsonify({"error": "User not found"}), 404
+        return jsonify({"ok": True, "username": username, "price_per_query": float(row[0])}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def _increment_cse_query_count(username, count):
+    """Increment cse_query_count in the login table for the given user."""
+    if not username or count is None or count < 1:
+        return
+    try:
+        conn = _pg_connect()
+        cur = conn.cursor()
+        _ensure_admin_columns(cur)
+        cur.execute(
+            "UPDATE login SET cse_query_count = COALESCE(cse_query_count, 0) + %s WHERE username = %s",
+            (int(count), username)
+        )
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        logger.warning(f"[CSE count] Failed to update cse_query_count for '{username}': {e}")
 
 @app.get("/admin/appeals")
 @_require_admin

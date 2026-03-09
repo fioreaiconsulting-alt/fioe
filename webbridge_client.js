@@ -247,6 +247,12 @@ const webbridge = {
    */
   adminSaveRateLimits: (config) => _post('/admin/rate-limits', config),
 
+  /**
+   * Update the price per CSE query for a specific user (admin only).
+   * @param {{ username: string, price_per_query: number }} data
+   */
+  adminUpdatePricePerQuery: (data) => _post('/admin/update-price-per-query', data),
+
   /* ── webbridge_cv.py endpoints (CV / sourcing – lines 5097-10200) ─────── */
 
   /* ─ Job search ─ */

@@ -649,7 +649,68 @@ pre {
         <!-- Location -->
         <div data-field-section="aiAssistedSearch" data-ai-field="locationSector">
           <label for="country">Location</label>
-          <input id="country" type="text" placeholder="e.g. Singapore">
+          <select id="country">
+            <option value="">Select a country...</option>
+            <optgroup label="North America">
+              <option value="United States">United States</option>
+              <option value="Canada">Canada</option>
+              <option value="Mexico">Mexico</option>
+            </optgroup>
+            <optgroup label="Latin America">
+              <option value="Brazil">Brazil</option>
+              <option value="Argentina">Argentina</option>
+              <option value="Chile">Chile</option>
+              <option value="Colombia">Colombia</option>
+              <option value="Peru">Peru</option>
+            </optgroup>
+            <optgroup label="Europe">
+              <option value="United Kingdom">United Kingdom</option>
+              <option value="Germany">Germany</option>
+              <option value="France">France</option>
+              <option value="Spain">Spain</option>
+              <option value="Italy">Italy</option>
+              <option value="Netherlands">Netherlands</option>
+              <option value="Belgium">Belgium</option>
+              <option value="Switzerland">Switzerland</option>
+              <option value="Sweden">Sweden</option>
+              <option value="Denmark">Denmark</option>
+              <option value="Norway">Norway</option>
+              <option value="Poland">Poland</option>
+              <option value="Romania">Romania</option>
+              <option value="Czech Republic">Czech Republic</option>
+              <option value="Ireland">Ireland</option>
+              <option value="Austria">Austria</option>
+              <option value="Finland">Finland</option>
+              <option value="Russia">Russia</option>
+              <option value="Ukraine">Ukraine</option>
+              <option value="Belarus">Belarus</option>
+            </optgroup>
+            <optgroup label="Middle East">
+              <option value="United Arab Emirates">United Arab Emirates</option>
+              <option value="Saudi Arabia">Saudi Arabia</option>
+              <option value="Qatar">Qatar</option>
+              <option value="Israel">Israel</option>
+              <option value="Turkey">Turkey</option>
+            </optgroup>
+            <optgroup label="Asia-Pacific">
+              <option value="China">China</option>
+              <option value="India">India</option>
+              <option value="Japan">Japan</option>
+              <option value="Korea">South Korea</option><!-- value="Korea" matches countryCodeMap entry "kr":"Korea" and COUNTRY_LANG_MAP key "korea" -->
+              <option value="Singapore">Singapore</option>
+              <option value="Malaysia">Malaysia</option>
+              <option value="Indonesia">Indonesia</option>
+              <option value="Thailand">Thailand</option>
+              <option value="Vietnam">Vietnam</option>
+              <option value="Philippines">Philippines</option>
+              <option value="Australia">Australia</option>
+              <option value="New Zealand">New Zealand</option>
+              <option value="Pakistan">Pakistan</option>
+              <option value="Hong Kong">Hong Kong</option>
+              <option value="Taiwan">Taiwan</option>
+              <option value="Sri Lanka">Sri Lanka</option>
+            </optgroup>
+          </select>
           <div class="helper">Maps to LinkedIn country domain.</div>
           
           <div style="margin-top:8px;">
@@ -1529,20 +1590,15 @@ document.getElementById('activateTranslationBtn').addEventListener('click',()=>{
   setTranslationMode(true,lang);
 });
 document.getElementById('deactivateTranslationBtn').addEventListener('click',()=>setTranslationMode(false));
-document.getElementById('country').addEventListener('input',()=>{
-  // Normalize "South Korea" to "Korea"
-  const countryInput = document.getElementById('country');
-  const normalizedValue = normalizeCountryName(countryInput.value);
-  if (normalizedValue !== countryInput.value) {
-    countryInput.value = normalizedValue;
-  }
+function onCountryChange(){
   if(translationActive){
     const lang=detectTargetLang(val('country'));
     if(!lang || lang!==translationLang) setTranslationMode(false);
   }
   updateSectorEnabledState();
   updateFullCompiledQuery(); scheduleSuggestionsUpdate(); scheduleEstimateUpdate();
-});
+}
+document.getElementById('country').addEventListener('change', onCountryChange);
 
 const suggestionsContainer=document.getElementById('aiSuggestionsContainer');
 const suggestionsGrid=document.getElementById('suggestionsGrid');
@@ -2342,7 +2398,7 @@ async function pollJob(jobId){
     includeRelatedCompaniesChk.addEventListener('change',()=>{ try{updateDynamicCompanyHeader();}catch(e){} });
   }
   jobTitleInput.addEventListener('input', ()=>{ updateDynamicCompanyHeader(); });
-  document.getElementById('country').addEventListener('input', ()=>{ updateDynamicCompanyHeader(); });
+  document.getElementById('country').addEventListener('change', ()=>{ updateDynamicCompanyHeader(); });
 })();
 
 function updateSectorEnabledState(){
