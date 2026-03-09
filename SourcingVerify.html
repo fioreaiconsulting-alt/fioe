@@ -2425,6 +2425,8 @@ const TOTAL_SEARCH_TOKEN_BASE = 5000;
 let currentPage = 1;
 let totalRowCount = 0;
 const PAGE_SIZE = 15;
+// In-memory sort state: when non-null, pagination slices this array instead of fetching from the API.
+let _globalSortedRows = null;
 
 let excelBlobUrl = null;
 function deleteClientExcelBlob(){
@@ -4507,6 +4509,8 @@ async function sendUpdate(linkedinurl, field, value, td) {
 }
 
 async function loadRows(page=1){
+  // Calling loadRows always exits in-memory sort mode and returns to API-backed pagination
+  _globalSortedRows = null;
   setStatus('Loading rows…');
   tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px;"><span class="spinner"></span> Loading…</td></tr>`;
   currentPage = Math.max(1, page);
@@ -6142,11 +6146,50 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add Match Level header click listener for sorting with toggle states
     const matchLevelHeader = document.getElementById('matchLevelHeader');
     let __sortState = 'none'; // Track current sort state: 'none', 'descending', 'ascending'
-    
+
+    /** Extract a numeric match score from a row object (0-100, or -1 if unknown). */
+    function _getMatchScore(r) {
+        let score = -1;
+        // Try rating field first (most reliable source)
+        if (r.rating) {
+            try {
+                const ratingObj = typeof r.rating === 'string' ? JSON.parse(r.rating) : r.rating;
+                if (ratingObj && ratingObj.total_score) {
+                    const s = parseInt(String(ratingObj.total_score).replace('%', ''), 10);
+                    if (!isNaN(s)) return s;
+                }
+            } catch(_) {}
+        }
+        // Try namecard cache second
+        if (window.__sv_namecard) {
+            const cache = window.__sv_namecard.getCardCache(r.linkedinurl);
+            if (cache && cache.totalScore !== undefined) {
+                const s = parseInt(cache.totalScore, 10);
+                if (!isNaN(s)) return s;
+            }
+            if (cache && cache.assessmentHTML) {
+                const m = cache.assessmentHTML.match(/(\d+)%/);
+                if (m) return parseInt(m[1], 10);
+            }
+        }
+        // Fallback: percentage in experience text
+        if (r.experience) {
+            const m = String(r.experience).match(/(\d+)%/);
+            if (m) score = parseInt(m[1], 10);
+        }
+        return score;
+    }
+
+    /** Apply the current __sortState to an array and return a sorted copy. */
+    function _applySort(arr) {
+        return arr.slice().sort((a, b) => {
+            const diff = _getMatchScore(b) - _getMatchScore(a);
+            return __sortState === 'descending' ? diff : -diff;
+        });
+    }
+
     if (matchLevelHeader) {
-        matchLevelHeader.addEventListener('click', () => {
-            if(!rowsData || rowsData.length === 0) return;
-            
+        matchLevelHeader.addEventListener('click', async () => {
             // Cycle through sort states: none → descending → ascending → none
             if (__sortState === 'none') {
                 __sortState = 'descending';
@@ -6154,72 +6197,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 __sortState = 'ascending';
             } else {
                 __sortState = 'none';
-                // Reload original order when returning to 'none'
-                loadRows(currentPage);
+                _globalSortedRows = null; // exit in-memory sort mode
                 matchLevelHeader.setAttribute('aria-sort', 'none');
                 matchLevelHeader.querySelector('span').textContent = '';
+                await loadRows(currentPage);
                 setStatus('Sort order reset.', 'success');
                 return;
             }
-            
-            // Sort rowsData based on cached score or experience text
-            rowsData.sort((a, b) => {
-                const getScore = (r) => {
-                    let score = -1;
-                    
-                    // Try rating field first (most reliable source)
-                    if (r.rating) {
-                        try {
-                            const ratingObj = typeof r.rating === 'string' ? JSON.parse(r.rating) : r.rating;
-                            if (ratingObj && ratingObj.total_score) {
-                                const scoreStr = String(ratingObj.total_score).replace('%', '');
-                                score = parseInt(scoreStr, 10);
-                                if (!isNaN(score)) return score;
-                            }
-                        } catch(e) {}
-                    }
-                    
-                    // Try cache second
-                    if(score === -1 && window.__sv_namecard) {
-                        const cache = window.__sv_namecard.getCardCache(r.linkedinurl);
-                        if(cache && cache.totalScore !== undefined) {
-                            const cachedScore = parseInt(cache.totalScore, 10);
-                            if (!isNaN(cachedScore)) {
-                                score = cachedScore;
-                            }
-                        } else if(cache && cache.assessmentHTML) {
-                            const m = cache.assessmentHTML.match(/(\d+)%/);
-                            if(m) score = parseInt(m[1], 10);
-                        }
-                    }
-                    
-                    // Try experience field text if cache miss
-                    if(score === -1 && r.experience) {
-                         const m = String(r.experience).match(/(\d+)%/);
-                         if(m) score = parseInt(m[1], 10);
-                    }
-                    return score;
-                };
-                
-                // Sort descending or ascending based on state
-                if (__sortState === 'descending') {
-                    return getScore(b) - getScore(a); // Descending (highest to lowest)
-                } else {
-                    return getScore(a) - getScore(b); // Ascending (lowest to highest)
-                }
-            });
-            
-            renderTable();
-            
-            // Update aria-sort attribute and visual indicator
+
             matchLevelHeader.setAttribute('aria-sort', __sortState);
-            const arrow = matchLevelHeader.querySelector('span');
-            if (__sortState === 'descending') {
-                arrow.textContent = '▼';
-                setStatus('Table sorted by Match Level (highest to lowest).', 'success');
-            } else {
-                arrow.textContent = '▲';
-                setStatus('Table sorted by Match Level (lowest to highest).', 'success');
+            matchLevelHeader.querySelector('span').textContent = __sortState === 'descending' ? '▼' : '▲';
+
+            // Fetch all rows so the sort spans every page, not just the visible one
+            const uid = window.__SV_ACTIVE_USERID || '';
+            if (!uid) { setStatus('Missing user session.', 'error'); return; }
+
+            try {
+                setStatus('Loading all rows for global sort…');
+                const res = await fetch(`${API_LIST}?userid=${encodeURIComponent(uid)}&all=1`);
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                const fetchedRows = Array.isArray(data.rows) ? data.rows : [];
+                if (!fetchedRows.length) { setStatus('No rows to sort.', 'error'); return; }
+
+                // Sort the full dataset and switch to in-memory pagination
+                _globalSortedRows = _applySort(fetchedRows);
+                totalRowCount = _globalSortedRows.length;
+                currentPage = 1;
+
+                // Show first page from sorted data
+                rowsData = _globalSortedRows.slice(0, PAGE_SIZE);
+                renderTable();
+                renderPager();
+
+                const label = __sortState === 'descending'
+                    ? `Table sorted by Match Level across all ${totalRowCount} result(s) (highest first).`
+                    : `Table sorted by Match Level across all ${totalRowCount} result(s) (lowest first).`;
+                setStatus(label, 'success');
+            } catch (e) {
+                setStatus('Sort failed: ' + (e.message || e), 'error');
             }
         });
     }
@@ -6360,33 +6376,50 @@ function collectDisplayedRows() {
 // AFFECTED: Replaced iframe logic with direct content execution
 async function deepResearch() {
   const btn = document.getElementById('exportCsvBtn');
-  const embeddedRoot = document.getElementById('ds-embedded-root');
 
   try {
     btn.disabled = true;
-    setStatus('Market Analytic: preparing process-table payload…');
-    const displayed = collectDisplayedRows();
-    if (!displayed.length) {
-      setStatus('No displayed rows to process.', 'error');
+    setStatus('Market Analytic: fetching all rows…');
+
+    // Always fetch ALL rows so analytics reflect the complete dataset, not just the current page
+    const uid = window.__SV_ACTIVE_USERID || '';
+    if (!uid) { setStatus('Missing user session.', 'error'); btn.disabled = false; return; }
+
+    let allFetchedRows = [];
+    try {
+      const res = await fetch(`${API_LIST}?userid=${encodeURIComponent(uid)}&all=1`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      allFetchedRows = Array.isArray(data.rows) ? data.rows : [];
+    } catch (fetchErr) {
+      // If the all=1 fetch fails, fall back to the currently displayed rows
+      console.warn('deepResearch: all=1 fetch failed, falling back to displayed rows:', fetchErr);
+      allFetchedRows = rowsData.slice();
+    }
+
+    if (!allFetchedRows.length) {
+      setStatus('No rows to analyze.', 'error');
       btn.disabled = false;
       return;
     }
+
     const uploaded_columns = ['name','company','jobtitle','country'];
-    const rowsArray = displayed.map(r => [ r.name || '', r.company || '', r.jobtitle || '', r.country || '' ]);
-    
+    const rowsArray = allFetchedRows.map(r => [
+      r.name || '', r.company || '', r.jobtitle ?? r.role ?? '', r.country || ''
+    ]);
+
     // Prepare the payload for client-side inference
     const payloadForDataSorter = {
       uploaded_columns: uploaded_columns.slice(),
       rows: rowsArray.slice(),
-      infer_result: null, // Will be generated by clientInferFallback
+      infer_result: null,
       meta: {
         source: 'SourcingVerify.deepResearch',
         processed_at_ms: Date.now()
       }
     };
-    
-    // Removed switchTab('tab-research') to avoid recursion (was causing stack overflow)
-    setStatus(`Market Analytic: analyzing ${displayed.length} row(s)...`, 'info');
+
+    setStatus(`Market Analytic: analyzing ${allFetchedRows.length} row(s) across all pages…`, 'info');
 
     // Trigger analysis using embedded logic from data_sorter
     if (typeof clientInferFallback === 'function') {
@@ -6843,19 +6876,34 @@ if (bulkAssessmentBtn && bulkDirInput) {
 
 /* Affected: ensure the manual Snipper launch also sends a tiny JSON body removed */
 
+/** Navigate to a page. When _globalSortedRows is active (in-memory sort mode),
+ *  slices from the sorted array instead of fetching from the API. */
+async function navigatePage(page) {
+  if (_globalSortedRows) {
+    const tp = Math.max(1, Math.ceil(_globalSortedRows.length / PAGE_SIZE));
+    currentPage = Math.max(1, Math.min(page, tp));
+    rowsData = _globalSortedRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+    renderTable();
+    renderPager();
+    setStatus(`Page ${currentPage} of ${tp} (sorted).`);
+  } else {
+    await loadRows(page);
+  }
+}
+
 const pagerEl = document.getElementById('pager');
 const prevBtn = document.getElementById('prevPageBtn');
 const nextBtn = document.getElementById('nextPageBtn');
 prevBtn.addEventListener('click', async () => {
   if(currentPage > 1){
-    await loadRows(currentPage - 1);
+    await navigatePage(currentPage - 1);
     refreshAccountTokens();
   }
 });
 nextBtn.addEventListener('click', async () => {
   const tp = Math.max(1, Math.ceil((totalRowCount||0)/PAGE_SIZE));
   if(currentPage < tp){
-    await loadRows(currentPage + 1);
+    await navigatePage(currentPage + 1);
     refreshAccountTokens();
   }
 });
