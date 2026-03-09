@@ -840,6 +840,7 @@ pre {
             <strong style="font-size:13px; color:var(--text);">Compiled Boolean Query</strong>
             <pre id="fullCompiledExpr" style="margin-top:8px;"></pre>
             <div id="copyNotice" class="helper" style="display:none; color:var(--success-600);">Copied!</div>
+            <div id="xraySplitPreview" style="display:none; margin-top:8px; font-size:12px; font-weight:600; color:var(--accent);"></div>
           </div>
 
           <div id="aiSuggestionsContainer" class="suggestions-wrapper" style="display:none;">
@@ -1785,6 +1786,23 @@ function updateFullCompiledQuery(){
   const wrap=document.getElementById('fullQueryWrapper'); const pre=document.getElementById('fullCompiledExpr');
   if(full){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
   const copyNoticeEl=document.getElementById('copyNotice'); if(copyNoticeEl) copyNoticeEl.style.display='none';
+  // Live split preview: show how many queries this Xray command will produce before Search is clicked
+  try {
+    const previewEl=document.getElementById('xraySplitPreview');
+    if(previewEl){
+      if(full){
+        const parts=_splitXrayQuery(full);
+        if(parts.length>1){
+          previewEl.textContent=`⚡ LinkedIn: ${parts.length} queries will be executed (auto-split — original query exceeds ${XRAY_WORD_LIMIT} words)`;
+          previewEl.style.display='block';
+        } else {
+          previewEl.textContent=''; previewEl.style.display='none';
+        }
+      } else {
+        previewEl.textContent=''; previewEl.style.display='none';
+      }
+    }
+  } catch(e){ /* _splitXrayQuery not yet available on first parse — safe to ignore */ }
 }
 document.getElementById('copyFullQueryBtn').addEventListener('click',()=>{
   const q=buildFullBooleanQuery(); if(!q) return;
