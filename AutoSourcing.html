@@ -834,7 +834,16 @@ pre {
         </div>
 
         <div id="advancedSection">
-          
+
+          <!-- Search Mode toggle: Best Mode (auto-split at 32 words) vs Fast Mode (no splitting) -->
+          <div id="searchModeWrapper" style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
+            <input id="bestModeChk" type="checkbox" checked style="display:none;">
+            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="true" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
+              <span>⚡ Best Mode</span>
+            </button>
+            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries &gt;32 words are auto-split for better coverage</span>
+          </div>
+
           <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
             <button type="button" class="mini-btn" id="copyFullQueryBtn" style="position:absolute; top:8px; right:8px;">Copy</button>
             <strong style="font-size:13px; color:var(--text);">Compiled Boolean Query</strong>
@@ -1790,7 +1799,7 @@ function updateFullCompiledQuery(){
   try {
     const previewEl=document.getElementById('xraySplitPreview');
     if(previewEl){
-      if(full){
+      if(full && isBestMode()){
         const parts=_splitXrayQuery(full);
         if(parts.length>1){
           previewEl.textContent=`⚡ LinkedIn: ${parts.length} queries will be executed (auto-split — original query exceeds ${XRAY_WORD_LIMIT} words)`;
@@ -1824,6 +1833,7 @@ document.getElementById('copyFullQueryBtn').addEventListener('click',()=>{
     }
     toggleAdvancedVisibility(advPref);
     if(genBtn){ genBtn.addEventListener('click', primaryButtonHandler); }
+    initSearchMode();
   }catch(e){ }
 })();
 
@@ -2178,6 +2188,36 @@ function _splitXrayQuery(fullQuery, wordLimit) {
 }
 // ── End Xray query auto-split ─────────────────────────────────────────────
 
+// ── Search mode: Best (auto-split) vs Fast (no split) ─────────────────────
+const STORAGE_KEY_SEARCH_MODE = 'xray_search_mode_best';
+
+function isBestMode() {
+  const chk = document.getElementById('bestModeChk');
+  return chk ? chk.checked : true;
+}
+
+function initSearchMode() {
+  const chk = document.getElementById('bestModeChk');
+  const btn = document.getElementById('bestModeToggle');
+  const hint = document.getElementById('searchModeHint');
+  if (!chk || !btn) return;
+  const saved = localStorage.getItem(STORAGE_KEY_SEARCH_MODE);
+  if (saved === 'false') chk.checked = false;
+  function applyMode() {
+    const best = chk.checked;
+    const span = btn.querySelector('span');
+    if (span) span.textContent = best ? '⚡ Best Mode' : '🚀 Fast Mode';
+    btn.setAttribute('aria-pressed', best ? 'true' : 'false');
+    if (hint) hint.textContent = best
+      ? 'Queries >32 words are auto-split for better coverage'
+      : 'Queries are sent as-is without splitting';
+    localStorage.setItem(STORAGE_KEY_SEARCH_MODE, String(best));
+    updateFullCompiledQuery();
+  }
+  applyMode();
+  btn.addEventListener('click', () => { chk.checked = !chk.checked; applyMode(); });
+}
+
 function buildQueries(country){
   const langBlock=buildLanguageXrayBlock();
   const jobBlock=buildJobTitleExpressionAugmented();
@@ -2195,9 +2235,9 @@ function buildQueries(country){
   const fallbackQueryRaw=joinBlocks(baseBlocks);
   const xray=buildChannelXrayQueries();
 
-  // Expand a raw query into one-or-more split queries, labelled accordingly
+  // Expand a raw query into one-or-more split queries (Best Mode only), labelled accordingly
   function makeItems(label, rawQuery) {
-    const parts = _splitXrayQuery(rawQuery);
+    const parts = isBestMode() ? _splitXrayQuery(rawQuery) : [rawQuery];
     if (parts.length === 1) return [{ label, query: parts[0] }];
     return parts.map((q, i) => ({ label: `${label} [${i+1}/${parts.length}]`, query: q }));
   }
@@ -2467,7 +2507,8 @@ async function generateAndStart(){
     searchResultsOnly: searchResultsOnly,
     selectedSectors:selectedSectors.slice(),
     channelGaming:false, channelMedia:false, channelTechnology:false, xrayPlatformQueries:[],
-    userTarget: userTarget
+    userTarget: userTarget,
+    bestMode: isBestMode()
   };
   try{
     const res=await fetch('/start_job',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});

@@ -5030,7 +5030,7 @@ def parse_linkedin_title(title: str):
     return name or None, jobtitle or None, company or None
 
 def google_cse_search_page(query: str, api_key: str, cx: str, num: int, start_index: int, gl_hint: str = None):
-    if not api_key or not cx: return []
+    if not api_key or not cx: return [], 0
     endpoint="https://www.googleapis.com/customsearch/v1"
     params={"key":api_key,"cx":cx,"q":query,"num":min(num,10),"start":start_index}
     if gl_hint: params["gl"]=gl_hint
@@ -5039,13 +5039,18 @@ def google_cse_search_page(query: str, api_key: str, cx: str, num: int, start_in
         r.raise_for_status()
         data=r.json()
         items=data.get("items",[]) or []
+        total_str=(data.get("searchInformation") or {}).get("totalResults","0") or "0"
+        try:
+            estimated_total=int(str(total_str).replace(",",""))
+        except (ValueError, TypeError):
+            estimated_total=0
         out=[]
         for it in items:
             out.append({"link":it.get("link") or "","title":it.get("title") or "","snippet":it.get("snippet") or "","displayLink":it.get("displayLink") or ""})
-        return out
+        return out, estimated_total
     except Exception as e:
         logger.warning(f"[CSE] page fetch failed: {e}")
-        return []
+        return [], 0
 
 def _is_private_host(url: str) -> bool:
     """Return True if the URL resolves to a private/loopback/reserved IP — used to block SSRF."""
@@ -5279,23 +5284,35 @@ def _perform_cse_queries(job_id, queries, target_limit, country):
     # Calculate a simple target per query
     total_queries = max(1, len(queries))
     per_query_target = max(1, target_limit // total_queries)
+    global_collected = 0
 
     for q in queries:
+        # Stop-loss: already collected enough across all queries
+        if global_collected >= target_limit:
+            add_message(job_id, f"Stop-loss: {global_collected}/{target_limit} results collected — skipping remaining queries")
+            break
+
         gathered=0; start_index=1; pages_fetched=0
-        add_message(job_id, f"Running CSE: {q} target={per_query_target}")
+        effective_target=per_query_target
+        add_message(job_id, f"Running CSE: {q} target={effective_target}")
         
-        while gathered < per_query_target:
-            remaining = per_query_target - gathered
+        while gathered < effective_target:
+            remaining = effective_target - gathered
             page_size = min(CSE_PAGE_SIZE, remaining)
             
-            page = google_cse_search_page(q, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, page_size, start_index, gl_hint=country_code_hint)
+            page, estimated_total = google_cse_search_page(q, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, page_size, start_index, gl_hint=country_code_hint)
             pages_fetched+=1
+
+            # Stop-loss: on first page, cap this query's target to what Google says is available
+            if pages_fetched == 1 and estimated_total > 0 and estimated_total < effective_target:
+                effective_target = estimated_total
+                add_message(job_id, f"  Stop-loss: Google reports ~{estimated_total} results — capping query target to {effective_target}")
             
             if not page:
                 add_message(job_id, f"  No results page start={start_index}")
                 break
             
-            results.extend(page); gathered+=len(page)
+            results.extend(page); gathered+=len(page); global_collected+=len(page)
             if len(page) < page_size: break
             start_index += len(page)
             
