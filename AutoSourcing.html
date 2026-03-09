@@ -1041,6 +1041,7 @@ const jobTitles=[]; const jobTitleIndex=new Set();
 const companies=[]; const companyIndex=new Set();
 const languages=[]; const languageIndex=new Set();
 let autoSuggestedCompanies=[];
+let genericCompetitorCompanies=[];   // direct competitors from /suggest (non-sector) — used for dual-query in Best Mode
 const suppressedAutoSuggestedCompanies=new Set();
 const userSkills = []; const userSkillIndex = new Set();
 const estimateValueEl = document.getElementById('estimateValue');
@@ -1262,6 +1263,18 @@ function buildEffectiveCompanyExpression(){
   } else {
     combined = dedupe([...companies, ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))]);
   }
+  if(!combined.length) return '';
+  if(combined.length===1) return `"${escapeQuotes(combined[0])}"`;
+  return '('+combined.map(c=>`"${escapeQuotes(c)}"`).join(' OR ')+')';
+}
+
+// Returns an OR-expression for direct competitor companies (non-sector suggestions from /suggest).
+// Used by buildQueries to generate a second query when both sector companies and competitors exist.
+function buildGenericCompanyExpression(){
+  const combined = dedupe(
+    [...companies, ...genericCompetitorCompanies]
+      .filter(c => c && !suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
+  );
   if(!combined.length) return '';
   if(combined.length===1) return `"${escapeQuotes(combined[0])}"`;
   return '('+combined.map(c=>`"${escapeQuotes(c)}"`).join(' OR ')+')';
@@ -1697,14 +1710,23 @@ function renderSuggestionsAggregated(data){
     companyList = Array.from(companySet);
   }
 
-  // Sector guardrail: when a sector is active, restrict the company suggestion chips to only
-  // sector-derived companies. JD-snapshot companies and generic /suggest results can include
-  // unrelated entries (e.g. Microsoft, Epic Systems in a Healthcare context) that contaminate
-  // the suggestions. sectorCompanyRelated is the authoritative sector-specific source.
+  // Sector ordering: when a sector is active, display direct competitors (from /suggest, not in
+  // sectorCompanyRelated) FIRST so users see the most job-title-relevant suggestions immediately.
+  // Sector companies follow. This respects the "competitor priority" rule while keeping sector
+  // suggestions available in the same panel.
+  // We also track genericCompetitorCompanies separately so buildQueries can generate a second
+  // query for the competitor companies when a sector query already covers sector companies.
   if (selectedSectors.length > 0 && sectorCompanyRelated && sectorCompanyRelated.size > 0) {
     const sectorKeys = new Set();
     sectorCompanyRelated.forEach(s => sectorKeys.add(canonicalKey(normalizeSpaces(s))));
-    companyList = companyList.filter(c => sectorKeys.has(canonicalKey(c)));
+    const competitors = companyList.filter(c => !sectorKeys.has(canonicalKey(c)));
+    const sectorOnly  = companyList.filter(c =>  sectorKeys.has(canonicalKey(c)));
+    // Track generic competitors (non-sector) for dual-query generation in buildQueries
+    genericCompetitorCompanies = dedupe(competitors);
+    // Chips display: competitors first, then sector companies (no duplication)
+    companyList = dedupe([...competitors, ...sectorOnly]);
+  } else {
+    genericCompetitorCompanies = [];
   }
 
   // ALWAYS populate autoSuggestedCompanies from the companyList so left suggestions appear on the right
@@ -1805,19 +1827,42 @@ function buildFullBooleanQuery(){
   let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl;
   return q;
 }
+// Builds the full Xray query for direct competitor companies (non-sector).
+// Returns '' when no competitor companies are available or no sector is active.
+function buildGenericFullQuery(){
+  if (!selectedSectors.length) return '';
+  const genericBlock = buildGenericCompanyExpression();
+  if (!genericBlock) return '';
+  const lang=buildLanguageXrayBlock();
+  const jAug=buildJobTitleExpressionAugmented();
+  const cc=lookupCountryCode(val('country'));
+  const site= cc?`site:${cc}.linkedin.com/in`:`site:linkedin.com/in`;
+  const seniorityExcl=buildSeniorityExclusion();
+  const blocks=[]; if(lang) blocks.push(lang); if(jAug) blocks.push(jAug); blocks.push(genericBlock);
+  let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl;
+  return q;
+}
 function updateFullCompiledQuery(){
   const full=buildFullBooleanQuery();
   const wrap=document.getElementById('fullQueryWrapper'); const pre=document.getElementById('fullCompiledExpr');
   if(full){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
   const copyNoticeEl=document.getElementById('copyNotice'); if(copyNoticeEl) copyNoticeEl.style.display='none';
-  // Live split preview: show how many queries this Xray command will produce before Search is clicked
+  // Live split preview: show how many queries this Xray command will produce before Search is clicked.
+  // Accounts for both the primary (sector) query AND the competitor query when both exist.
   try {
     const previewEl=document.getElementById('xraySplitPreview');
     if(previewEl){
       if(full && isBestMode()){
-        const parts=_splitXrayQuery(full);
-        if(parts.length>1){
-          previewEl.textContent=`⚡ LinkedIn: ${parts.length} queries will be executed (auto-split — original query exceeds ${XRAY_WORD_LIMIT} words)`;
+        const primaryParts=_splitXrayQuery(full);
+        // Also count the competitor query splits if one would be generated
+        const genericFull = buildGenericFullQuery();
+        const genericCount = genericFull ? _splitXrayQuery(genericFull).length : 0;
+        const totalParts = primaryParts.length + genericCount;
+        if(totalParts > 1){
+          const detail = (genericCount > 0)
+            ? `${primaryParts.length} sector + ${genericCount} competitor`
+            : `${primaryParts.length} split`;
+          previewEl.textContent=`⚡ LinkedIn: ${totalParts} queries will be executed (${detail} — original query exceeds ${XRAY_WORD_LIMIT} words)`;
           previewEl.style.display='block';
         } else {
           previewEl.textContent=''; previewEl.style.display='none';
@@ -2257,6 +2302,11 @@ function buildQueries(country){
   const fallbackQueryRaw=joinBlocks(baseBlocks);
   const xray=buildChannelXrayQueries();
 
+  // Dual-query: when a sector is active AND direct competitor companies exist (from /suggest),
+  // generate a second query for those competitors. Both queries get Best Mode splitting applied.
+  // buildGenericFullQuery() is the single source of truth for this query construction.
+  const genericQueryRaw = buildGenericFullQuery() || null;
+
   // Expand a raw query into one-or-more split queries (Best Mode only), labelled accordingly
   function makeItems(label, rawQuery) {
     const parts = isBestMode() ? _splitXrayQuery(rawQuery) : [rawQuery];
@@ -2264,7 +2314,11 @@ function buildQueries(country){
     return parts.map((q, i) => ({ label: `${label} [${i+1}/${parts.length}]`, query: q }));
   }
 
-  const primary=[...makeItems('LinkedIn', primaryQueryRaw), ...xray];
+  const primary=[
+    ...makeItems('LinkedIn', primaryQueryRaw),
+    ...(genericQueryRaw ? makeItems('LinkedIn(competitors)', genericQueryRaw) : []),
+    ...xray
+  ];
 
   let fallback=[];
   const userHasCompanies = companies.length > 0;
