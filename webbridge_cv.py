@@ -371,10 +371,17 @@ def _gemini_multi_sector(selected, user_job_title, user_company, languages=None)
     languages = languages or []
     region_hint="SG/APAC" if SINGAPORE_CONTEXT else None
     input_obj={"selectedSectors": selected, "userJobTitle": user_job_title or None, "userCompany": user_company or None, "languages": languages, "regionHint": region_hint}
-    prompt=("SYSTEM:\nYou are a sourcing assistant. integrated into an application. Generate concise suggestions.\n"
+    prompt=("SYSTEM:\nYou are a sourcing assistant integrated into an application. Generate concise suggestions.\n"
             "Return ONLY JSON: {\"job\":{\"related\":[...]},\"company\":{\"related\":[...]}}\n"
             f"- Provide EXACTLY 15 real job titles (or fill with closest relevant if fewer) in job.related.\n"
             f"- Provide EXACTLY {COMPANY_SUGGESTIONS_LIMIT} real company names (brand-level) in company.related.\n"
+            "- STRICT SECTOR RULE for company.related: ONLY include companies whose PRIMARY BUSINESS and CORE\n"
+            "  OPERATIONS fall within the selected sector(s). EXCLUDE any company from a different industry\n"
+            "  that merely uses or purchases services in those sectors. Examples of what to exclude:\n"
+            "  * For Gaming / Technology sectors: do NOT include pharma, healthcare, finance, insurance, or\n"
+            "    manufacturing companies, even if they use software or hire engineers internally.\n"
+            "  * For Healthcare / Clinical Research sectors: do NOT include gaming, tech, or retail companies.\n"
+            "  Competitors must share the same product/service focus as companies already in the sector.\n"
             "- NO generic placeholders (e.g., 'Tech Company', 'Gaming Studio').\n"
             "- NO commentary or extra keys.\n"
             f"INPUT:\n{json.dumps(input_obj,ensure_ascii=False)}\nJSON:")

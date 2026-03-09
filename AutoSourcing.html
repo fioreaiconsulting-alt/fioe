@@ -1045,6 +1045,10 @@ let genericCompetitorCompanies=[];   // direct competitors from /suggest (non-se
 // Maximum number of direct competitors to include as "top-tier" (the /suggest response is ordered
 // by relevance/local-presence, so slicing to this cap keeps only the most authoritative ones).
 const MAX_TOP_TIER_COMPETITORS = 15;
+// Minimum number of companies the role-scoped /suggest response must return before the cross-sector
+// validation filter is applied. When the response contains fewer companies (e.g., no job titles
+// entered yet), the filter is skipped to avoid hiding valid sector suggestions prematurely.
+const MIN_SUGGEST_COMPANIES_FOR_VALIDATION = 5;
 const suppressedAutoSuggestedCompanies=new Set();
 const userSkills = []; const userSkillIndex = new Set();
 const estimateValueEl = document.getElementById('estimateValue');
@@ -1168,12 +1172,14 @@ function renderJobTitleChips(){
   const wrap=document.getElementById('jobTitleAggregator'); const box=document.getElementById('jobTitleChips');
   box.innerHTML=''; if(jobTitles.length===0){ wrap.classList.add('hidden'); document.getElementById('compiledJobTitleExpr').textContent=''; return; }
   wrap.classList.remove('hidden');
+  const jobChipFrag=document.createDocumentFragment();
   jobTitles.forEach((t,i)=>{ 
     const d=document.createElement('div'); d.className='tag-chip';
     d.innerHTML=`<span>${t}</span><button type="button" aria-label="Remove ${t}">&times;</button>`;
     d.querySelector('button').addEventListener('click', ()=>removeJobTitle(i));
-    box.appendChild(d);
+    jobChipFrag.appendChild(d);
   });
+  box.appendChild(jobChipFrag);
   document.getElementById('compiledJobTitleExpr').textContent=buildJobTitleExpression();
 }
 function buildJobTitleExpressionAugmented(){
@@ -1238,12 +1244,14 @@ function renderCompanyChips(){
   const wrap=document.getElementById('companyAggregator'); const box=document.getElementById('companyChips');
   box.innerHTML=''; if(companies.length===0){ wrap.classList.add('hidden'); document.getElementById('compiledCompanyExpr').textContent=''; return; }
   wrap.classList.remove('hidden');
+  const compChipFrag=document.createDocumentFragment();
   companies.forEach((c,i)=>{
     const d=document.createElement('div'); d.className='tag-chip';
     d.innerHTML=`<span>${c}</span><button type="button" aria-label="Remove ${c}">&times;</button>`;
     d.querySelector('button').addEventListener('click', ()=>removeCompany(i));
-    box.appendChild(d);
+    compChipFrag.appendChild(d);
   });
+  box.appendChild(compChipFrag);
   document.getElementById('compiledCompanyExpr').textContent=buildCompanyExpression();
 }
 function buildCompanyExpression(){
@@ -1326,14 +1334,16 @@ function populateSectorSelect(){
 function renderSectorChips(){
   sectorChips.innerHTML=''; if(!selectedSectors.length){ sectorChipsWrap.classList.add('hidden'); hide(sectorCompanyDisplay); updateDynamicCompanyPreview(true); updateDynamicCompanyHeader(); return; }
   sectorChipsWrap.classList.remove('hidden');
+  const sectorChipFrag = document.createDocumentFragment();
   selectedSectors.forEach((label,idx)=>{
     const chip=document.createElement('div'); chip.className='tag-chip';
     chip.innerHTML=`<span>${label}</span><button type="button" aria-label="Remove sector">&times;</button>`;
     chip.querySelector('button').addEventListener('click',()=>{
       selectedSectors.splice(idx,1); renderSectorChips(); scheduleSectorSuggestionsUpdate(); scheduleSuggestionsUpdate(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); updateDynamicCompanyPreview(); updateDynamicCompanyHeader();
     });
-    sectorChips.appendChild(chip);
+    sectorChipFrag.appendChild(chip);
   });
+  sectorChips.appendChild(sectorChipFrag);
   renderEffectiveCompaniesDisplay();
   updateDynamicCompanyHeader();
 }
@@ -1356,6 +1366,7 @@ function renderEffectiveCompaniesDisplay(){
   if(!effective.length){ hide(sectorCompanyDisplay); sectorCompanyList.innerHTML=''; updateDynamicCompanyPreview(); return; }
   show(sectorCompanyDisplay); sectorCompanyList.innerHTML='';
   const dynamicSet = new Set((lastDynamicPreviewCompanies || []).map(x => x.toLowerCase()));
+  const sectorFrag = document.createDocumentFragment();
   effective.forEach(name=>{
     if(dynamicSet.has(name.toLowerCase())) return;
     const isUser=companyIndex.has(name.toLowerCase());
@@ -1370,8 +1381,9 @@ function renderEffectiveCompaniesDisplay(){
         updateFullCompiledQuery(); renderEffectiveCompaniesDisplay();
       }
     });
-    sectorCompanyList.appendChild(div);
+    sectorFrag.appendChild(div);
   });
+  sectorCompanyList.appendChild(sectorFrag);
   updateDynamicCompanyPreview();
 }
 
@@ -1742,14 +1754,27 @@ function renderSuggestionsAggregated(data){
     // not Pfizer or Epic Systems).
     const rawSuggestCompanies = (data.company?.related || [])
       .map(s => normalizeSpaces(s)).filter(Boolean);
+    // Build a lookup set of all companies the role-scoped /suggest returned. This is used both for
+    // competitor derivation and as a cross-sector validation set for sector company suggestions.
+    const rawSuggestKeys = new Set(rawSuggestCompanies.map(c => canonicalKey(c)));
     const competitors = rawSuggestCompanies.filter(c => !sectorKeys.has(canonicalKey(c)));
-    const sectorOnly  = companyList.filter(c =>  sectorKeys.has(canonicalKey(c)));
+    const sectorFromCompanyList = companyList.filter(c => sectorKeys.has(canonicalKey(c)));
+    // Cross-sector contamination guard: only include sector company suggestions that ALSO appear in
+    // the role-scoped /suggest response, which is scoped to both the active role and the selected
+    // sectors. This prevents the /sector_suggest endpoint from leaking companies whose core business
+    // is in a different sector (e.g., J&J or Merck appearing for Gaming / Technology sectors because
+    // the AI tagged them as enterprise software users rather than genuine sector operators).
+    // Fallback: if /suggest returned fewer than 5 companies (e.g., no job titles entered yet),
+    // skip the cross-validation to avoid prematurely hiding valid sector suggestions.
+    const sectorOnly = rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION
+      ? sectorFromCompanyList.filter(c => rawSuggestKeys.has(canonicalKey(c)))
+      : sectorFromCompanyList;
     // Cap to MAX_TOP_TIER_COMPETITORS: the /suggest response is ordered by AI relevance with
     // local-presence verification, so the first N entries are the most authoritative same-category
     // competitors. This guardrail prevents low-tier or off-category companies from inflating the
     // competitor query or appearing in suggestion chips ahead of sector companies.
     genericCompetitorCompanies = dedupe(competitors).slice(0, MAX_TOP_TIER_COMPETITORS);
-    // Chips display: top-tier direct competitors first (capped), then sector companies
+    // Chips display: top-tier direct competitors first (capped), then validated sector companies
     companyList = dedupe([...genericCompetitorCompanies, ...sectorOnly]);
   } else {
     genericCompetitorCompanies = [];
@@ -1763,7 +1788,9 @@ function renderSuggestionsAggregated(data){
     const jobGrid = document.getElementById('jobTitleSuggestionsGrid');
     if (jobGrid) {
       jobGrid.innerHTML = '';
-      Array.from(jobList).forEach(text => jobGrid.appendChild(makeChip(text,'job',false)));
+      const jobFrag = document.createDocumentFragment();
+      Array.from(jobList).forEach(text => jobFrag.appendChild(makeChip(text,'job',false)));
+      jobGrid.appendChild(jobFrag);
       if (jobList.length>0) show(jobBox); else hide(jobBox);
     }
   } catch(e){}
@@ -1773,7 +1800,9 @@ function renderSuggestionsAggregated(data){
     const companyGrid = document.getElementById('companySuggestionsGrid');
     if (companyGrid) {
       companyGrid.innerHTML = '';
-      Array.from(companyList).forEach(text => companyGrid.appendChild(makeChip(text,'company',false)));
+      const compFrag = document.createDocumentFragment();
+      Array.from(companyList).forEach(text => compFrag.appendChild(makeChip(text,'company',false)));
+      companyGrid.appendChild(compFrag);
       if (companyList.length>0) show(companyBox); else hide(companyBox);
     }
   } catch(e){}
@@ -1790,7 +1819,9 @@ function buildSuggestionGroup(title,list,type){
   const group=document.createElement('div'); group.style.border='1px solid var(--border)'; group.style.borderRadius='8px'; group.style.padding='10px';
   const h=document.createElement('div'); h.style.fontSize='12px'; h.style.fontWeight='700'; h.style.marginBottom='8px'; h.textContent=title; group.appendChild(h);
   const box=document.createElement('div'); box.style.display='flex'; box.style.flexWrap='wrap'; box.style.gap='8px';
-  list.forEach(text=>box.appendChild(makeChip(text,type,false)));
+  const frag=document.createDocumentFragment();
+  list.forEach(text=>frag.appendChild(makeChip(text,type,false)));
+  box.appendChild(frag);
   group.appendChild(box); return group;
 }
 function makeChip(text,type,isExisting){
@@ -2380,6 +2411,7 @@ function renderQueries(qs){
     }
   }
 
+  const outerFrag=document.createDocumentFragment();
   groups.forEach(group=>{
     // Show auto-split notice when a command produced more than one query
     if(group.items.length>1){
@@ -2387,16 +2419,17 @@ function renderQueries(qs){
       badge.className='helper';
       badge.style.cssText='margin:10px 0 2px; font-size:12px; font-weight:600; color:var(--accent);';
       badge.textContent=`⚡ ${group.base}: ${group.items.length} queries (auto-split — original query exceeded ${XRAY_WORD_LIMIT} words)`;
-      container.appendChild(badge);
+      outerFrag.appendChild(badge);
     }
     group.items.forEach(q=>{
       const a=document.createElement('a');
       a.href='https://www.google.com/search?q='+encodeForGoogle(q.query);
       a.target='_blank'; a.rel='noopener noreferrer';
       a.textContent=q.label+' → '+q.query; a.style.display='block'; a.style.margin='6px 0';
-      container.appendChild(a);
+      outerFrag.appendChild(a);
     });
   });
+  container.appendChild(outerFrag);
 }
 
 async function translateJobTitle(text,target){
@@ -3189,13 +3222,17 @@ function renderExternalSuggestions(jobs, comps){
   
   if(jobGrid){
     jobGrid.innerHTML = '';
-    jobs.forEach(t => jobGrid.appendChild(makeChip(t, 'job', false)));
+    const jFrag = document.createDocumentFragment();
+    jobs.forEach(t => jFrag.appendChild(makeChip(t, 'job', false)));
+    jobGrid.appendChild(jFrag);
     if(jobs.length > 0) show(jobBox);
   }
   
   if(compGrid){
     compGrid.innerHTML = '';
-    comps.forEach(c => compGrid.appendChild(makeChip(c, 'company', false)));
+    const cFrag = document.createDocumentFragment();
+    comps.forEach(c => cFrag.appendChild(makeChip(c, 'company', false)));
+    compGrid.appendChild(cFrag);
     if(comps.length > 0) show(compBox);
   }
   
