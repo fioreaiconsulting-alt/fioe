@@ -1759,21 +1759,39 @@ function renderSuggestionsAggregated(data){
     const rawSuggestKeys = new Set(rawSuggestCompanies.map(c => canonicalKey(c)));
     const competitors = rawSuggestCompanies.filter(c => !sectorKeys.has(canonicalKey(c)));
     const sectorFromCompanyList = companyList.filter(c => sectorKeys.has(canonicalKey(c)));
-    // Cross-sector contamination guard: only include sector company suggestions that ALSO appear in
-    // the role-scoped /suggest response, which is scoped to both the active role and the selected
-    // sectors. This prevents the /sector_suggest endpoint from leaking companies whose core business
-    // is in a different sector (e.g., J&J or Merck appearing for Gaming / Technology sectors because
-    // the AI tagged them as enterprise software users rather than genuine sector operators).
+    // Cross-sector contamination guard for sector chips: only include sector company suggestions
+    // that ALSO appear in the role-scoped /suggest response, which is scoped to both the active
+    // role and the selected sectors. This prevents the /sector_suggest endpoint from leaking
+    // companies whose core business is in a different sector (e.g., J&J or Merck appearing for
+    // Gaming / Technology sectors because the AI tagged them as enterprise software users rather
+    // than genuine sector operators).
     // Fallback: if /suggest returned fewer than 5 companies (e.g., no job titles entered yet),
     // skip the cross-validation to avoid prematurely hiding valid sector suggestions.
     const sectorOnly = rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION
       ? sectorFromCompanyList.filter(c => rawSuggestKeys.has(canonicalKey(c)))
       : sectorFromCompanyList;
+    // Cross-sector contamination guard for competitor chips: when sector alignment is confirmed
+    // (rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION AND sectorOnly is non-empty),
+    // restrict competitors to those appearing in the first MAX_TOP_TIER_COMPETITORS entries of
+    // rawSuggestCompanies. Gemini orders company.related by direct relevance to the role + sector
+    // context, so the most authoritative competitors appear first; cross-sector leakage (e.g. J&J
+    // or Merck for a Gaming/Tech role) tends to appear in the tail. Positional capping thus
+    // naturally excludes low-relevance, off-sector entries without requiring a hardcoded blocklist.
+    // Fallback: if positional filtering removed ALL competitors (e.g. all top-N slots were taken
+    // by sector companies), fall back to the unfiltered list to avoid showing no competitors.
+    let validatedCompetitors = competitors;
+    if (rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION && sectorOnly.length > 0) {
+      const topCompetitorKeys = new Set(
+        rawSuggestCompanies.slice(0, MAX_TOP_TIER_COMPETITORS).map(c => canonicalKey(c))
+      );
+      validatedCompetitors = competitors.filter(c => topCompetitorKeys.has(canonicalKey(c)));
+      if (validatedCompetitors.length === 0) validatedCompetitors = competitors;
+    }
     // Cap to MAX_TOP_TIER_COMPETITORS: the /suggest response is ordered by AI relevance with
     // local-presence verification, so the first N entries are the most authoritative same-category
     // competitors. This guardrail prevents low-tier or off-category companies from inflating the
     // competitor query or appearing in suggestion chips ahead of sector companies.
-    genericCompetitorCompanies = dedupe(competitors).slice(0, MAX_TOP_TIER_COMPETITORS);
+    genericCompetitorCompanies = dedupe(validatedCompetitors).slice(0, MAX_TOP_TIER_COMPETITORS);
     // Chips display: top-tier direct competitors first (capped), then validated sector companies
     companyList = dedupe([...genericCompetitorCompanies, ...sectorOnly]);
   } else {

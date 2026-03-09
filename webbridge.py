@@ -4688,7 +4688,20 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
     country_filter_hint = ""
     if country:
         country_filter_hint = f"\n- When suggesting companies, ONLY recommend companies with a legal entity or registered presence in {country}.\n- Exclude companies that do not operate in {country}.\n"
-    
+
+    # Add strict sector rule when sectors are provided to prevent cross-sector leakage
+    sector_strict_hint = ""
+    if sectors:
+        sector_strict_hint = (
+            "\n- STRICT SECTOR RULE for company.related: ONLY include companies whose PRIMARY BUSINESS and CORE"
+            " OPERATIONS are direct competitors in the specified sector(s). EXCLUDE any company from a different"
+            " industry that merely uses or purchases products/services in those sectors. Examples of what to exclude:\n"
+            "  * For Gaming / Technology sectors: do NOT include pharma, healthcare, finance, insurance, or"
+            " manufacturing companies, even if they use software or hire engineers internally.\n"
+            "  * For Healthcare / Clinical Research sectors: do NOT include gaming, tech, or retail companies.\n"
+            "  Competitors must share the same product/service focus as the job context.\n"
+        )
+
     input_obj = {
         "sectors": sectors,
         "jobTitles": job_titles,
@@ -4705,10 +4718,11 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
         f"Hard requirements:\n"
         f"- Provide EXACTLY {job_limit} distinct, real, professional job title variants in job.related (if context allows; otherwise fill remaining with closest relevant titles).\n"
         f"- Provide EXACTLY {company_limit} distinct, real, company or organization names in company.related.\n"
-        "- Company names MUST be real, brand-level entities (e.g., 'Ubisoft', 'Electronic Arts', 'Pfizer').\n"
+        "- Company names MUST be real, brand-level entities (e.g., 'Ubisoft', 'Electronic Arts', 'Epic Games').\n"
         "- DO NOT output generic placeholders (e.g., 'Gaming Studio', 'Tech Company', 'Pharma Company', 'Consulting Firm', 'Marketing Agency').\n"
-        + country_filter_hint +
-        "- No duplicates, no commentary, no extra keys.\n"
+        + country_filter_hint
+        + sector_strict_hint
+        + "- No duplicates, no commentary, no extra keys.\n"
         "- If insufficient context, fill remaining slots with well-known global or APAC companies relevant to the sectors/location.\n"
         "- Maintain JSON key order as shown.\n"
         f"{locality_hint}\n\nINPUT(JSON): {json.dumps(input_obj, ensure_ascii=False)}\n\nJSON:"
