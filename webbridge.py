@@ -1398,24 +1398,30 @@ def gemini_analyze_jd():
         
         company_prompt = (
             "You are a recruiting assistant. Analyze the following job description and identify:\n"
-            "1. ALL company names explicitly mentioned\n"
-            "2. ALL product/technology/service names mentioned (e.g., 'Aircon', 'HVAC systems', 'cloud platforms', 'ERP software')\n"
+            "1. The PRIMARY job title being hired for (the exact role name, e.g. 'Cloud Engineer', 'Site Activation Manager', 'Sales Manager')\n"
+            "2. ALL company names explicitly mentioned\n"
+            "3. ALL product/technology/service names mentioned (e.g., 'Aircon', 'HVAC systems', 'cloud platforms', 'ERP software')\n"
             "Return STRICT JSON with this structure:\n"
-            "{ \"companies\": [\"Company Name 1\", ...], \"products\": [\"Product1\", \"Product2\", ...] }\n"
+            "{ \"job_title\": \"Exact Role Title\", \"companies\": [\"Company Name 1\", ...], \"products\": [\"Product1\", \"Product2\", ...] }\n"
             "Rules:\n"
+            "- job_title: extract the SPECIFIC role title from the JD (e.g., 'Cloud Engineer', not 'Gaming Professional' or 'Technology Professional')\n"
             "- Include the hiring company if explicitly mentioned\n"
             "- Include client companies, partner companies, or competitor companies mentioned\n"
             "- Use official company names (e.g., 'Microsoft' not 'MS', 'Johnson & Johnson' not 'J&J')\n"
             "- Do NOT include generic industry terms (e.g., 'tech companies', 'pharma firms')\n"
             "- For products: include tangible product categories (e.g., 'Aircon', 'air conditioning', 'HVAC', 'refrigerators', 'mobile phones', 'electric vehicles')\n"
-            "- Return empty array if none found\n"
+            "- Return empty string/array if none found\n"
             "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
         )
         
+        _jd_gen_config = genai.GenerationConfig(temperature=0.1, max_output_tokens=2048)
         model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
-        company_resp = model.generate_content(company_prompt)
+        company_resp = model.generate_content(company_prompt, generation_config=_jd_gen_config)
         company_raw = (company_resp.text or "").strip()
         company_obj = _extract_json_object(company_raw) or {}
+        
+        # Extract job title identified in Step 1 as a strong signal for the main analysis
+        step1_job_title = (company_obj.get("job_title") or "").strip()
         
         raw_companies = company_obj.get("companies") or []
         if isinstance(raw_companies, list):
@@ -1460,27 +1466,37 @@ def gemini_analyze_jd():
             )
 
         # Build strict JSON request to Gemini
+        # Include Step 1 job title as an anchor to prevent misclassification
+        job_title_hint = ""
+        if step1_job_title:
+            job_title_hint = (
+                f"\n\nPRE-IDENTIFIED JOB TITLE: \"{step1_job_title}\"\n"
+                "Use this as the job_title in your response unless the JD text strongly contradicts it."
+            )
         prompt = (
             "You are a recruiting assistant. Analyze the job description and return STRICT JSON with keys:\n"
             "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
             "IMPORTANT:\n"
+            "- job_title: extract the EXACT role name from the JD (e.g., 'Cloud Engineer', 'Site Activation Manager'). NEVER use generic labels like 'Gaming Professional' or 'Technology Professional'.\n"
             "- You MUST identify at least one sector. Use your best judgment if unclear.\n"
             "- Multiple sectors may be assigned if the role spans multiple domains.\n"
             "- Match sectors to the AVAILABLE SECTORS list provided below.\n"
             "- CRITICAL: Physical product roles (e.g., Aircon, HVAC, manufacturing) belong to Industrial & Manufacturing, NOT Gaming or Technology. "
             "These roles involve physical supply chains, mechanical engineering, and industrial processes that are fundamentally different from software or gaming industries.\n"
+            + job_title_hint
             + companies_context
             + sectors_list
             + "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
         )
 
-        resp = model.generate_content(prompt)
+        resp = model.generate_content(prompt, generation_config=_jd_gen_config)
         raw_out = (resp.text or "").strip()
         parsed_obj = _extract_json_object(raw_out) or {}
         parsed = parsed_obj.get("parsed", {})
         
         # Normalize output
-        job_title = (parsed.get("job_title") or parsed.get("role") or "").strip()
+        # Use Step 1 job title as fallback when Step 2 model returns empty
+        job_title = (parsed.get("job_title") or parsed.get("role") or step1_job_title or "").strip()
         seniority = (parsed.get("seniority") or "").strip()
         sector = parsed.get("sector") or ""
         sectors = parsed.get("sectors") or ([sector] if sector else [])
@@ -1986,15 +2002,27 @@ def gemini_analyze_jd():
                         # Add "Lead" variant
                         job_titles.append(f"Lead {job_title}")
             else:
-                # No job title provided at all - use sector-specific defaults
-                # These are placeholder titles when no better inference is possible
-                if sectors and sectors[0] != "Other":
-                    # Extract sector name for more specific title generation
-                    sector_name = sectors[0].split(">")[-1].strip() if ">" in sectors[0] else sectors[0]
-                    # Generate sector-appropriate titles (these are fallback placeholders)
-                    job_titles = [f"{sector_name} Professional", f"Senior {sector_name} Professional"]
-                else:
-                    # Ultimate fallback for unknown sectors
+                # No job title in JD — try a dedicated fast extraction before using generic placeholders
+                try:
+                    _title_extract_prompt = (
+                        "Extract the job title being hired for from this job description. "
+                        "Return ONLY the job title as plain text (e.g. 'Cloud Engineer', 'Product Manager'). "
+                        "If not determinable, return an empty string.\n\nJOB DESCRIPTION:\n"
+                        + (text_input[:3000])
+                    )
+                    _title_extract_resp = model.generate_content(
+                        _title_extract_prompt,
+                        generation_config=genai.GenerationConfig(temperature=0.05, max_output_tokens=64)
+                    )
+                    _extracted_title = (_title_extract_resp.text or "").strip().strip('"').strip()
+                    # Reject clearly generic/unhelpful responses
+                    # Reject titles that are PURELY generic labels (only when the entire title is a single generic word)
+                    _bad_patterns = re.compile(r'^(professional|specialist|expert|associate|general|worker|employee)$', re.I)
+                    if _extracted_title and len(_extracted_title) < 80 and not _bad_patterns.match(_extracted_title.strip()):
+                        job_titles = [_extracted_title, f"Senior {_extracted_title}"]
+                    else:
+                        job_titles = ["Professional", "Senior Professional"]
+                except Exception:
                     job_titles = ["Professional", "Senior Professional"]
         
         # Update justification to note job title inference

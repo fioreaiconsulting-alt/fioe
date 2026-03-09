@@ -831,6 +831,16 @@ pre {
           <div id="previewControls" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:16px;">
             <button class="primary" id="generateBtn" data-state="idle" style="padding:14px 40px; font-size:16px; width:100%;">Sourcing</button>
           </div>
+          <!-- Sourcing progress bar — visible below the Sourcing button while job runs -->
+          <div id="sourcingProgressWrap" class="hidden" style="margin-top:12px; padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
+              <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
+            </div>
+            <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
+              <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
+            </div>
+          </div>
         </div>
 
         <div id="advancedSection">
@@ -892,15 +902,6 @@ pre {
               <span id="jobIdTag" class="ds-badge">Pending</span>
             </div>
             <div id="jobMessage" class="helper" style="margin-top:8px;">Pending...</div>
-            <div id="sourcingProgressWrap" class="hidden" style="margin-top:10px;">
-              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-                <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
-                <span id="sourcingProfileCount" style="font-size:12px; font-weight:700; color:var(--accent);">0</span>
-              </div>
-              <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
-                <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
-              </div>
-            </div>
             <div id="jobProgress" class="helper" style="margin-top:6px; font-weight:700; color:var(--accent);"></div>
             <div id="jobCounts" class="helper" style="margin-top:6px;"></div>
             <div id="jobUrls" class="helper hidden" style="margin-top:8px; max-height:100px; overflow-y:auto; background:#fff; padding:8px; border:1px solid var(--border);"></div>
