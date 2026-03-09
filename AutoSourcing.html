@@ -1250,10 +1250,15 @@ function buildCompanyExpression(){
 function buildEffectiveCompanyExpression(){
   let combined;
   if(selectedSectors.length > 0){
-    combined = dedupe([
-      ...companies,
-      ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
-    ]);
+    // Sector guardrail: when a sector is active, build the company expression strictly from
+    // sector-derived companies (sectorCompanyRelated) only. Do NOT merge in user-typed companies
+    // (companies array) or generic auto-suggested companies — they belong to a different context
+    // and would otherwise cross-contaminate the sector-specific query.
+    combined = dedupe(
+      Array.from(sectorCompanyRelated)
+        .map(c => normalizeSpaces(c))
+        .filter(c => c && !suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
+    );
   } else {
     combined = dedupe([...companies, ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))]);
   }
