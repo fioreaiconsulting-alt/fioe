@@ -55,7 +55,7 @@ from webbridge import (
     _infer_region_from_country,
     _find_best_sector_match_for_text, _map_keyword_to_sector_label,
     _compute_search_target,
-    _should_overwrite_existing, _ensure_rating_metadata_columns,
+    _should_overwrite_existing, _ensure_rating_metadata_columns, _ensure_search_indexes,
     _persist_jskillset, _fetch_jskillset, _fetch_jskillset_from_process,
     _sync_login_jskillset_to_process,
     _clean_list, _enforce_company_limit, _heuristic_job_suggestions,
@@ -583,116 +583,284 @@ def download_file(filename):
 def sourcing_verify_page():
     return send_from_directory(BASE_DIR, "SourcingVerify.html")
 
+# Module-level flag: _ensure_search_indexes runs at most once per process start.
+_search_indexes_ensured = False
+_search_indexes_lock = threading.Lock()
+
+
+def _get_pg_conn():
+    """Open and return a new psycopg2 connection using env vars."""
+    import psycopg2
+    return psycopg2.connect(
+        host=os.getenv("PGHOST", "localhost"),
+        port=int(os.getenv("PGPORT", "5432")),
+        user=os.getenv("PGUSER", "postgres"),
+        password=os.getenv("PGPASSWORD", ""),
+        dbname=os.getenv("PGDATABASE", "candidate_db"),
+    )
+
+
+def _lazy_ensure_search_indexes():
+    """Call _ensure_search_indexes exactly once per process (thread-safe)."""
+    global _search_indexes_ensured
+    if _search_indexes_ensured:
+        return
+    with _search_indexes_lock:
+        if _search_indexes_ensured:
+            return
+        try:
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            _ensure_search_indexes(cur, conn)
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[SearchIdx] lazy ensure failed (non-fatal): {e}")
+        finally:
+            _search_indexes_ensured = True
+
+
+def _parse_rating_row(row_dict, rating_raw):
+    """Parse a rating JSON blob and attach convenience fields to row_dict in-place."""
+    if not rating_raw:
+        row_dict["rating"] = ""
+        return
+    row_dict["rating"] = rating_raw
+    try:
+        rating_obj = None
+        if isinstance(rating_raw, str):
+            rating_obj = json.loads(rating_raw)
+        elif isinstance(rating_raw, dict):
+            rating_obj = rating_raw
+        if rating_obj:
+            total_score_str = rating_obj.get("total_score", "")
+            if total_score_str and "%" in total_score_str:
+                row_dict["rating_score"] = total_score_str.replace("%", "").strip()
+            stars = rating_obj.get("stars")
+            if stars is not None:
+                row_dict["rating_stars"] = str(stars)
+            assessment_level = rating_obj.get("assessment_level", "")
+            if "Level 1" in assessment_level or "L1" in assessment_level:
+                row_dict["rating_level"] = "L1"
+            elif "Level 2" in assessment_level or "L2" in assessment_level:
+                row_dict["rating_level"] = "L2"
+    except Exception as e:
+        logger.warning(f"[Sourcing List] Failed to parse rating JSON for {row_dict.get('linkedinurl','')}: {e}")
+
+
 @app.get("/sourcing/list")
 def sourcing_list():
+    """List sourcing candidates with optional full-text search and server-side sorting.
+
+    Query parameters:
+      userid     – required; filters by owner
+      q          – optional; full-text + trigram search query
+      sort_by    – optional; one of: name, company, jobtitle, rating_score, relevance (default)
+      sort_dir   – optional; asc | desc (default desc when sort_by=relevance/rating_score, else asc)
+      page       – page number (1-based)
+      page_size  – rows per page (max 1000)
+      all        – "1" / "true" / "yes" to return all rows without paging
+    """
     try:
+        _lazy_ensure_search_indexes()
+
         userid = (request.args.get("userid") or "").strip()
         if not userid:
             return jsonify({"rows": []})
+
+        q = (request.args.get("q") or "").strip()
+        sort_by = (request.args.get("sort_by") or "").strip().lower()
+        sort_dir_raw = (request.args.get("sort_dir") or "").strip().lower()
+
+        # Validate sort_by against an explicit allowlist to prevent SQL injection
+        _ALLOWED_SORT = {"name", "company", "jobtitle", "rating_score", "relevance", ""}
+        if sort_by not in _ALLOWED_SORT:
+            sort_by = ""
+        if sort_dir_raw not in {"asc", "desc", ""}:
+            sort_dir_raw = ""
+
         page = request.args.get("page", type=int)
         page_size = request.args.get("page_size", type=int) or request.args.get("pagesize", type=int)
-        all_flag = (request.args.get("all") or "").strip().lower() in {"1","true","yes"}
+        all_flag = (request.args.get("all") or "").strip().lower() in {"1", "true", "yes"}
         use_paging = (bool(page and page_size) and not all_flag)
         if use_paging:
             page = max(1, int(page))
             page_size = max(1, min(int(page_size), 1000))
             offset = (page - 1) * page_size
-        import psycopg2
-        from psycopg2 import sql
-        pg_host=os.getenv("PGHOST","localhost")
-        pg_port=int(os.getenv("PGPORT","5432"))
-        pg_user=os.getenv("PGUSER","postgres")
-        pg_password=os.getenv("PGPASSWORD", "")
-        pg_db=os.getenv("PGDATABASE","candidate_db")
-        conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
-        cur=conn.cursor()
+
+        conn = _get_pg_conn()
+        cur = conn.cursor()
+
+        # Detect optional pic column once
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='sourcing' AND column_name='pic'
+        """)
+        has_pic = cur.fetchone() is not None
+
+        # Detect whether process has a skillset column (for search)
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='process' AND column_name='skillset'
+        """)
+        has_skillset = cur.fetchone() is not None
+
+        # Detect whether search_vector columns exist (added by _ensure_search_indexes)
+        cur.execute("""
+            SELECT table_name FROM information_schema.columns
+            WHERE table_schema='public' AND column_name='search_vector'
+              AND table_name IN ('sourcing','process')
+        """)
+        _sv_tables = {r[0] for r in cur.fetchall()}
+        has_sourcing_sv = 'sourcing' in _sv_tables
+        has_process_sv  = 'process'  in _sv_tables
+
+        # Detect whether pg_trgm extension is available (needed for similarity())
+        cur.execute("""
+            SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'
+        """)
+        has_trgm = cur.fetchone() is not None
+
+        pic_col = "s.pic," if has_pic else ""
+        pic_idx = 6 if has_pic else None  # 0-based index of pic in result tuple
+        rating_idx = 7 if has_pic else 6
+
+        # ------------------------------------------------------------------
+        # Build ORDER BY clause
+        # ------------------------------------------------------------------
+        # When a search query is active, default sort is by relevance DESC.
+        # When sort_by=rating_score, sort using a numeric cast of the JSON field.
+        if sort_by == "rating_score":
+            # Sort by the numeric portion of process.rating->>'total_score'
+            _rating_score_expr = "NULLIF(regexp_replace(p.rating::text, '.*\"total_score\":\\s*\"?(\\d+)%?\"?.*', '\\1'), '')::int"
+            _dir = "DESC" if sort_dir_raw != "asc" else "ASC"
+            order_sql = f"{_rating_score_expr} {_dir} NULLS LAST"
+        elif sort_by == "company":
+            order_sql = f"COALESCE(p.company, s.company) {'DESC' if sort_dir_raw == 'desc' else 'ASC'} NULLS LAST"
+        elif sort_by == "jobtitle":
+            order_sql = f"COALESCE(p.jobtitle, s.jobtitle) {'DESC' if sort_dir_raw == 'desc' else 'ASC'} NULLS LAST"
+        elif sort_by == "name":
+            order_sql = f"s.name {'DESC' if sort_dir_raw == 'desc' else 'ASC'} NULLS LAST"
+        elif q:
+            # Default when search active: relevance descending
+            order_sql = "relevance_score DESC NULLS LAST"
+        else:
+            # No search, no explicit sort: default alphabetical by name
+            order_sql = "s.name ASC NULLS LAST"
+
+        # ------------------------------------------------------------------
+        # Build WHERE clause + params
+        # ------------------------------------------------------------------
+        where_clauses = ["s.userid = %s"]
+        params_where = [userid]
+
+        if q:
+            # Combine tsvector full-text search (when columns available) with
+            # ILIKE fallback so queries work even before search_vector is populated.
+            like_q = f"%{q}%"
+            fts_parts = []
+            extra_params: list = []
+            if has_sourcing_sv:
+                fts_parts.append("s.search_vector @@ websearch_to_tsquery('english', %s)")
+                extra_params.append(q)
+            if has_process_sv:
+                fts_parts.append("p.search_vector @@ websearch_to_tsquery('english', %s)")
+                extra_params.append(q)
+            fts_clause = f"({' OR '.join(fts_parts)}) OR " if fts_parts else ""
+            where_clauses.append(f"""(
+                {fts_clause}
+                s.name      ILIKE %s
+                OR s.jobtitle  ILIKE %s
+                OR s.company   ILIKE %s
+            )""")
+            params_where += extra_params + [like_q, like_q, like_q]
+
+        where_sql = " AND ".join(where_clauses)
+
+        # ------------------------------------------------------------------
+        # Relevance score expression (used in SELECT and ORDER BY when q set)
+        # ------------------------------------------------------------------
+        if q:
+            skillset_tsvec = f"to_tsvector('english', coalesce(p.skillset, ''))" if has_skillset else "to_tsvector('')"
+            if has_trgm:
+                relevance_expr = f"""(
+                    ts_rank(
+                        setweight(to_tsvector('english', coalesce(s.jobtitle, '')), 'A') ||
+                        setweight(to_tsvector('english', coalesce(s.company,  '')), 'B') ||
+                        setweight(to_tsvector('english', coalesce(s.name,     '')), 'C') ||
+                        setweight(to_tsvector('english', coalesce(s.experience,'')), 'D') ||
+                        setweight({skillset_tsvec}, 'B'),
+                        websearch_to_tsquery('english', %s)
+                    ) +
+                    0.4 * greatest(
+                        similarity(coalesce(s.jobtitle, ''), %s),
+                        similarity(coalesce(s.company,  ''), %s),
+                        similarity(coalesce(s.name,     ''), %s)
+                    )
+                ) AS relevance_score"""
+                params_score = [q, q, q, q]
+            else:
+                relevance_expr = f"""
+                    ts_rank(
+                        setweight(to_tsvector('english', coalesce(s.jobtitle, '')), 'A') ||
+                        setweight(to_tsvector('english', coalesce(s.company,  '')), 'B') ||
+                        setweight(to_tsvector('english', coalesce(s.name,     '')), 'C') ||
+                        setweight(to_tsvector('english', coalesce(s.experience,'')), 'D') ||
+                        setweight({skillset_tsvec}, 'B'),
+                        websearch_to_tsquery('english', %s)
+                    ) AS relevance_score"""
+                params_score = [q]
+        else:
+            relevance_expr = "0.0 AS relevance_score"
+            params_score = []
+
+        # ------------------------------------------------------------------
+        # COUNT for pagination
+        # ------------------------------------------------------------------
         total = None
         if use_paging:
-            cur.execute("SELECT COUNT(*) FROM sourcing WHERE userid=%s", (userid,))
+            count_params = list(params_where)
+            cur.execute(f"""
+                SELECT COUNT(*)
+                FROM sourcing s
+                LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
+                WHERE {where_sql}
+            """, count_params)
             total = int(cur.fetchone()[0])
-            # Check if pic column exists
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='pic'")
-            has_pic = cur.fetchone() is not None
-            
-            # LEFT JOIN with process table to get latest company value for Gemini inference
-            # Priority: process.company > sourcing.company (CV-parsed data is source of truth)
-            if has_pic:
-                cur.execute(
-                    sql.SQL("""
-                        SELECT s.name, 
-                               COALESCE(p.company, s.company) as company,
-                               COALESCE(p.jobtitle, s.jobtitle) as jobtitle,
-                               COALESCE(p.country, s.country) as country,
-                               s.experience, 
-                               s.linkedinurl, 
-                               s.pic,
-                               p.rating
-                        FROM sourcing s
-                        LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
-                        WHERE s.userid=%s 
-                        ORDER BY s.name NULLS LAST 
-                        LIMIT %s OFFSET %s
-                    """),
-                    (userid, page_size, offset)
-                )
-            else:
-                cur.execute(
-                    sql.SQL("""
-                        SELECT s.name, 
-                               COALESCE(p.company, s.company) as company,
-                               COALESCE(p.jobtitle, s.jobtitle) as jobtitle,
-                               COALESCE(p.country, s.country) as country,
-                               s.experience, 
-                               s.linkedinurl,
-                               p.rating
-                        FROM sourcing s
-                        LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
-                        WHERE s.userid=%s 
-                        ORDER BY s.name NULLS LAST 
-                        LIMIT %s OFFSET %s
-                    """),
-                    (userid, page_size, offset)
-                )
-        else:
-            # Check if pic column exists
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='sourcing' AND column_name='pic'")
-            has_pic = cur.fetchone() is not None
-            
-            # LEFT JOIN with process table to get latest company value for Gemini inference
-            # Priority: process.company > sourcing.company (CV-parsed data is source of truth)
-            if has_pic:
-                cur.execute("""
-                    SELECT s.name, 
-                           COALESCE(p.company, s.company) as company,
-                           COALESCE(p.jobtitle, s.jobtitle) as jobtitle,
-                           COALESCE(p.country, s.country) as country,
-                           s.experience, 
-                           s.linkedinurl, 
-                           s.pic,
-                           p.rating
-                    FROM sourcing s
-                    LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
-                    WHERE s.userid=%s 
-                    ORDER BY s.name NULLS LAST
-                """, (userid,))
-            else:
-                cur.execute("""
-                    SELECT s.name, 
-                           COALESCE(p.company, s.company) as company,
-                           COALESCE(p.jobtitle, s.jobtitle) as jobtitle,
-                           COALESCE(p.country, s.country) as country,
-                           s.experience, 
-                           s.linkedinurl,
-                           p.rating
-                    FROM sourcing s
-                    LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
-                    WHERE s.userid=%s 
-                    ORDER BY s.name NULLS LAST
-                """, (userid,))
-        
-        # Process rows and convert bytea to base64 if needed
+
+        # ------------------------------------------------------------------
+        # Main SELECT
+        # ------------------------------------------------------------------
+        select_sql = f"""
+            SELECT s.name,
+                   COALESCE(p.company,  s.company)  AS company,
+                   COALESCE(p.jobtitle, s.jobtitle) AS jobtitle,
+                   COALESCE(p.country,  s.country)  AS country,
+                   s.experience,
+                   s.linkedinurl,
+                   {pic_col}
+                   p.rating,
+                   {relevance_expr}
+            FROM sourcing s
+            LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
+            WHERE {where_sql}
+            ORDER BY {order_sql}
+        """
+        final_params = params_score + params_where
+        if use_paging:
+            select_sql += " LIMIT %s OFFSET %s"
+            final_params += [page_size, offset]
+
+        cur.execute(select_sql, final_params)
+
+        # ------------------------------------------------------------------
+        # Build result rows
+        # ------------------------------------------------------------------
         import base64
         rows = []
+        # Column index for relevance_score is after rating
+        relevance_col_idx = (rating_idx + 1)
+
         for r in cur.fetchall():
             row_dict = {
                 "name": r[0] or "",
@@ -701,88 +869,112 @@ def sourcing_list():
                 "country": r[3] or "",
                 "experience": r[4] or "",
                 "linkedinurl": r[5] or "",
-                "rating": "",  # Initialize rating field (full JSON)
-                "rating_score": "",  # Convenience field: numeric score (e.g., "79")
-                "rating_stars": "",  # Convenience field: star count (e.g., "4")
-                "rating_level": ""   # Convenience field: assessment level (e.g., "L1")
+                "rating": "",
+                "rating_score": "",
+                "rating_stars": "",
+                "rating_level": "",
+                "relevance_score": float(r[relevance_col_idx]) if r[relevance_col_idx] is not None else 0.0,
             }
-            # Add pic column if it exists
-            if has_pic and len(r) > 6:
-                pic_data = r[6]
+            if has_pic and pic_idx is not None:
+                pic_data = r[pic_idx]
                 if pic_data:
-                    # Convert bytea to base64 string for JSON transport
                     if isinstance(pic_data, (bytes, memoryview)):
-                        row_dict["pic"] = base64.b64encode(bytes(pic_data)).decode('utf-8')
+                        row_dict["pic"] = base64.b64encode(bytes(pic_data)).decode("utf-8")
                     else:
-                        # Already a string (legacy URL data)
                         row_dict["pic"] = str(pic_data)
                 else:
                     row_dict["pic"] = ""
-                # Rating is at index 7 when pic exists
-                if len(r) > 7:
-                    row_dict["rating"] = r[7] or ""
             else:
                 row_dict["pic"] = ""
-                # Rating is at index 6 when no pic
-                if len(r) > 6:
-                    row_dict["rating"] = r[6] or ""
-            
-            # Parse rating JSON and extract convenience fields for frontend
-            if row_dict["rating"]:
-                try:
-                    rating_obj = None
-                    if isinstance(row_dict["rating"], str):
-                        rating_obj = json.loads(row_dict["rating"])
-                    elif isinstance(row_dict["rating"], dict):
-                        rating_obj = row_dict["rating"]
-                    
-                    if rating_obj:
-                        # Extract total_score (e.g., "79%") and convert to numeric
-                        total_score_str = rating_obj.get("total_score", "")
-                        if total_score_str and "%" in total_score_str:
-                            row_dict["rating_score"] = total_score_str.replace("%", "").strip()
-                        
-                        # Extract stars
-                        stars = rating_obj.get("stars")
-                        if stars is not None:
-                            row_dict["rating_stars"] = str(stars)
-                        
-                        # Extract assessment level (e.g., "L1" from "L1 Assessment" or legacy "Level 1 Assessment")
-                        assessment_level = rating_obj.get("assessment_level", "")
-                        if "Level 1" in assessment_level or "L1" in assessment_level:
-                            row_dict["rating_level"] = "L1"
-                        elif "Level 2" in assessment_level or "L2" in assessment_level:
-                            row_dict["rating_level"] = "L2"
-                except Exception as e:
-                    logger.warning(f"[Sourcing List] Failed to parse rating JSON for {row_dict['linkedinurl']}: {e}")
-            
+
+            _parse_rating_row(row_dict, r[rating_idx])
             rows.append(row_dict)
-        cur.close(); conn.close()
-        
-        # Diagnostic logging to check if rating is included
+
+        cur.close()
+        conn.close()
+
         if rows:
-            sample = rows[0]
-            has_rating_field = "rating" in sample
-            rating_value = sample.get("rating", "")
-            has_rating_data = bool(rating_value and rating_value != "")
-            rating_score = sample.get("rating_score", "")
-            rating_stars = sample.get("rating_stars", "")
-            rating_level = sample.get("rating_level", "")
-            logger.info(f"[Sourcing List] Returning {len(rows)} rows | Has rating: {has_rating_data} | Convenience fields: score={rating_score}%, stars={rating_stars}, level={rating_level}")
-        
+            s = rows[0]
+            logger.info(
+                f"[Sourcing List] {len(rows)} rows | q={q!r} | sort={sort_by}/{sort_dir_raw} | "
+                f"rating_score={s.get('rating_score')}, stars={s.get('rating_stars')}, level={s.get('rating_level')}"
+            )
+
         resp = {"rows": rows}
         if use_paging:
             resp.update({"page": page, "page_size": page_size, "total": total})
-        
-        # Add no-cache headers to ensure fresh data after assessments
+
         response = jsonify(resp)
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
     except Exception as e:
         logger.warning(f"[Sourcing List] {e}")
         return jsonify({"error": str(e)}), 500
+
+
+
+@app.get("/sourcing/autocomplete")
+def sourcing_autocomplete():
+    """Return top job-title suggestions matching a prefix/query for autocomplete UIs.
+
+    Query parameters:
+      q      – required; search prefix or partial term (min 2 chars)
+      userid – optional; restrict suggestions to this user's sourcing pool
+      limit  – max suggestions to return (default 10, max 30)
+
+    Uses trigram similarity for fuzzy prefix matching so it tolerates typos.
+    Results are ranked by similarity score descending, then alphabetically.
+    """
+    try:
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"suggestions": []})
+
+        userid = (request.args.get("userid") or "").strip()
+        limit = min(int(request.args.get("limit") or 10), 30)
+
+        conn = _get_pg_conn()
+        cur = conn.cursor()
+
+        params = []
+        user_filter = ""
+        if userid:
+            user_filter = "WHERE s.userid = %s"
+            params.append(userid)
+
+        # Query distinct job titles from both sourcing and process tables,
+        # ranked by trigram similarity to the query string.
+        cur.execute(f"""
+            WITH candidates AS (
+                SELECT COALESCE(p.jobtitle, s.jobtitle) AS jobtitle
+                FROM sourcing s
+                LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
+                {user_filter}
+                UNION
+                SELECT jobtitle FROM process WHERE jobtitle IS NOT NULL AND jobtitle <> ''
+            )
+            SELECT DISTINCT jobtitle,
+                   similarity(jobtitle, %s) AS sim
+            FROM candidates
+            WHERE jobtitle IS NOT NULL
+              AND jobtitle <> ''
+              AND (
+                  jobtitle ILIKE %s
+                  OR similarity(jobtitle, %s) > 0.15
+              )
+            ORDER BY sim DESC, jobtitle ASC
+            LIMIT %s
+        """, params + [q, f"%{q}%", q, limit])
+
+        suggestions = [row[0] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({"suggestions": suggestions})
+    except Exception as e:
+        logger.warning(f"[Sourcing Autocomplete] {e}")
+        return jsonify({"suggestions": []})
 
 @app.post("/sourcing/update")
 @_csrf_required

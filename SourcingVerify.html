@@ -294,7 +294,35 @@ html, body {
            Styling: white on white with opacity:0 as requested in comment #3768916799 -->
       <button id="exportCsvBtn" title="Market Analytic" style="outline:white; color:white; background:white; border:1px solid white; opacity:0; pointer-events:auto;">Market Analytic</button>
 
-      <button id="marketAnalysisBtn" title="Transfer sourcing data to admin table & open Data Sorter">Run Market Analysis</button>
+      <button id="marketAnalysisBtn" title="Transfer sourcing data to admin table &amp; open Data Sorter">Run Market Analysis</button>
+  </div>
+
+  <!-- Full-text / fuzzy candidate search bar -->
+  <div id="candidateSearchBar" style="margin:8px 0; display:flex; align-items:center; gap:8px; position:relative;">
+      <div style="position:relative; flex:1; max-width:480px;">
+          <input type="search" id="candidateSearchInput"
+                 placeholder="Search by name, job title, company, skills…"
+                 autocomplete="off"
+                 style="width:100%; padding:7px 36px 7px 12px; border:1px solid #d0d7de; border-radius:6px;
+                        font-size:14px; box-sizing:border-box; outline:none;"
+                 aria-label="Search candidates" />
+          <span id="candidateSearchClear"
+                style="position:absolute; right:10px; top:50%; transform:translateY(-50%);
+                       cursor:pointer; color:#57606a; font-size:16px; display:none;"
+                title="Clear search">✕</span>
+          <!-- Autocomplete dropdown -->
+          <ul id="candidateSearchDropdown"
+              style="display:none; position:absolute; top:100%; left:0; right:0; z-index:200;
+                     margin:0; padding:0; list-style:none; background:#fff;
+                     border:1px solid #d0d7de; border-radius:0 0 6px 6px;
+                     box-shadow:0 4px 12px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto;">
+          </ul>
+      </div>
+      <button id="candidateSearchBtn"
+              style="padding:7px 16px; background:#0969da; color:#fff; border:none;
+                     border-radius:6px; cursor:pointer; font-size:14px; white-space:nowrap;"
+              title="Search candidates">Search</button>
+      <span id="candidateSearchStatus" style="font-size:12px; color:#57606a;"></span>
   </div>
 
   <!-- Bulk Assessment Progress Indicator (from Assessment Review) -->
@@ -2383,7 +2411,8 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
   }
 })();
 
-const API_LIST   = '/sourcing/list';
+const API_LIST       = '/sourcing/list';
+const API_AUTOCOMPLETE = '/sourcing/autocomplete';
 const API_UPDATE = '/sourcing/update';
 const API_DELETE = '/sourcing/delete';
 const API_MARKET = '/sourcing/market_analysis';
@@ -2425,6 +2454,11 @@ const TOTAL_SEARCH_TOKEN_BASE = 5000;
 let currentPage = 1;
 let totalRowCount = 0;
 const PAGE_SIZE = 15;
+// Active search query; when set, loadRows passes it to the server for full-text search
+let _activeSearchQuery = '';
+// Server-side sort params; set when user clicks a sortable column header
+let _serverSortBy  = '';   // e.g. 'rating_score', 'name', 'company'
+let _serverSortDir = '';   // 'asc' | 'desc'
 // Global sort state: when non-null, holds all rows sorted; client-side pagination is used instead of server-side
 let _globalSortedRows = null;
 
@@ -4525,14 +4559,26 @@ async function loadRows(page=1){
   try {
     const uid = window.__SV_ACTIVE_USERID || '';
     if(!uid){ throw new Error('Missing user session'); }
-    const url = `${API_LIST}?userid=${encodeURIComponent(uid)}&page=${currentPage}&page_size=${PAGE_SIZE}`;
+    let url = `${API_LIST}?userid=${encodeURIComponent(uid)}&page=${currentPage}&page_size=${PAGE_SIZE}`;
+    if (_activeSearchQuery) {
+      url += `&q=${encodeURIComponent(_activeSearchQuery)}`;
+      // Default sort for search results is relevance unless overridden
+      const sb = _serverSortBy || 'relevance';
+      const sd = _serverSortDir || 'desc';
+      url += `&sort_by=${encodeURIComponent(sb)}&sort_dir=${encodeURIComponent(sd)}`;
+    } else if (_serverSortBy) {
+      url += `&sort_by=${encodeURIComponent(_serverSortBy)}&sort_dir=${encodeURIComponent(_serverSortDir || 'desc')}`;
+    }
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to load');
     rowsData = Array.isArray(data.rows) ? data.rows : [];
     totalRowCount = data.total || rowsData.length;
     if (!rowsData.length) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:#57606a;">No rows found.</td></tr>`;
+      const msg = _activeSearchQuery
+        ? `No results found for "${escapeHtml(_activeSearchQuery)}".`
+        : 'No rows found.';
+      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:#57606a;">${msg}</td></tr>`;
       setStatus('No data.');
       updateDisplayCounters();
       renderPager();
@@ -6226,9 +6272,11 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (__sortState === 'descending') {
                 __sortState = 'ascending';
             } else {
-                // Reset to no sort: clear global dataset and reload from server
+                // Reset to no sort: reload from server with default ordering
                 __sortState = 'none';
                 _globalSortedRows = null;
+                _serverSortBy  = '';
+                _serverSortDir = '';
                 matchLevelHeader.setAttribute('aria-sort', 'none');
                 const arrow = matchLevelHeader.querySelector('span');
                 if (arrow) arrow.textContent = '';
@@ -6237,37 +6285,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Fetch all rows for a truly global sort across all pages
-            setStatus('Fetching all rows for global sort…');
+            // Use server-side sorting by rating_score to avoid fetch-all
+            const sortDir = __sortState === 'descending' ? 'desc' : 'asc';
+            _serverSortBy  = 'rating_score';
+            _serverSortDir = sortDir;
+            setStatus(`Sorting by Match Level (${__sortState})…`);
             try {
                 const uid = window.__SV_ACTIVE_USERID || '';
                 if (!uid) throw new Error('User ID not found in session — please log in again');
-                const res = await fetch(`${API_LIST}?userid=${encodeURIComponent(uid)}&all=1`, { credentials: 'same-origin', cache: 'no-store' });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-                const allRows = Array.isArray(data.rows) ? data.rows : [];
-                if (!allRows.length) {
-                    setStatus('No rows to sort.', 'error');
-                    return;
-                }
-                // Sort all rows globally
-                applySortToRows(allRows);
-                _globalSortedRows = allRows;
-                totalRowCount = allRows.length;
-                // Show first page of sorted results
-                currentPage = 1;
-                rowsData = _globalSortedRows.slice(0, PAGE_SIZE);
-                renderTable();
-                renderPager();
-                updateDisplayCounters();
+                await loadRows(1);
                 updateSortIndicator();
-                if (__sortState === 'descending') {
-                    setStatus(`Table sorted by Match Level (highest to lowest) across all ${allRows.length} row(s).`, 'success');
-                } else {
-                    setStatus(`Table sorted by Match Level (lowest to highest) across all ${allRows.length} row(s).`, 'success');
-                }
+                const dir = __sortState === 'descending' ? 'highest to lowest' : 'lowest to highest';
+                setStatus(`Sorted by Match Level (${dir}), page 1 of ${Math.ceil(totalRowCount / PAGE_SIZE)}.`, 'success');
             } catch (e) {
-                console.error('Global sort fetch failed:', e);
+                console.error('Server-side sort failed:', e);
+                _serverSortBy  = '';
+                _serverSortDir = '';
                 setStatus('Sort failed: ' + (e.message || 'unable to fetch data'), 'error');
                 // Fall back to local sort on current page
                 applySortToRows(rowsData);
@@ -6384,7 +6417,7 @@ window.applyTokenDelta = async function(delta) {
 //   document.querySelectorAll('.row-select').forEach(cb => cb.checked = checked);
 //   showDeleteIfNeeded();
 // });
-reloadBtn.addEventListener('click', async () => { _globalSortedRows = null; await loadRows(currentPage); refreshAccountTokens(); });
+reloadBtn.addEventListener('click', async () => { _resetAndReload(); await loadRows(currentPage); refreshAccountTokens(); });
 // Delete button functionality removed per requirements
 // deleteBtn.addEventListener('click', deleteSelected);
 
@@ -6923,6 +6956,146 @@ if (bulkAssessmentBtn && bulkDirInput) {
 }
 
 /* Affected: ensure the manual Snipper launch also sends a tiny JSON body removed */
+
+/* ── Candidate search bar with autocomplete ─────────────────────────────── */
+(function () {
+  const searchInput    = document.getElementById('candidateSearchInput');
+  const searchBtn      = document.getElementById('candidateSearchBtn');
+  const searchClear    = document.getElementById('candidateSearchClear');
+  const searchDropdown = document.getElementById('candidateSearchDropdown');
+  const searchStatus   = document.getElementById('candidateSearchStatus');
+  if (!searchInput) return;
+
+  let _acDebounce = null;
+  let _acActiveIdx = -1; // keyboard-focused item index in dropdown
+
+  function hideDropdown() {
+    if (searchDropdown) searchDropdown.style.display = 'none';
+    _acActiveIdx = -1;
+  }
+
+  function _acSetActive(idx) {
+    if (!searchDropdown) return;
+    const items = searchDropdown.querySelectorAll('li');
+    items.forEach((li, i) => {
+      li.style.background = i === idx ? '#e8f0fe' : '';
+      li.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+    });
+    _acActiveIdx = idx;
+  }
+
+  function showDropdown(items) {
+    if (!searchDropdown) return;
+    searchDropdown.innerHTML = '';
+    _acActiveIdx = -1;
+    if (!items.length) { hideDropdown(); return; }
+    items.forEach((item, idx) => {
+      const li = document.createElement('li');
+      li.textContent = item;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', 'false');
+      li.style.cssText = 'padding:8px 12px; cursor:pointer; font-size:13px; border-bottom:1px solid #f0f0f0;';
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        searchInput.value = item;
+        hideDropdown();
+        triggerSearch();
+      });
+      li.addEventListener('mouseover', () => _acSetActive(idx));
+      searchDropdown.appendChild(li);
+    });
+    searchDropdown.style.display = 'block';
+  }
+
+  async function fetchAutocomplete(q) {
+    // Minimum 2 characters required to avoid excessive DB load
+    if (!q || q.length < 2) { hideDropdown(); return; }
+    try {
+      const uid = window.__SV_ACTIVE_USERID || '';
+      let url = `${API_AUTOCOMPLETE}?q=${encodeURIComponent(q)}&limit=10`;
+      if (uid) url += `&userid=${encodeURIComponent(uid)}`;
+      const res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const data = await res.json();
+      showDropdown(Array.isArray(data.suggestions) ? data.suggestions : []);
+    } catch (_) {
+      hideDropdown();
+    }
+  }
+
+  async function triggerSearch() {
+    const q = (searchInput.value || '').trim();
+    _activeSearchQuery = q;
+    _serverSortBy  = q ? 'relevance' : '';
+    _serverSortDir = q ? 'desc'      : '';
+    _globalSortedRows = null;
+    hideDropdown();
+    if (searchClear) searchClear.style.display = q ? 'inline' : 'none';
+    if (searchStatus) searchStatus.textContent = q ? `Searching for "${q}"…` : '';
+    await loadRows(1);
+    if (searchStatus) searchStatus.textContent = q
+      ? `${totalRowCount} result(s) for "${q}"`
+      : '';
+  }
+
+  searchInput.addEventListener('input', () => {
+    const q = (searchInput.value || '').trim();
+    if (searchClear) searchClear.style.display = q ? 'inline' : 'none';
+    clearTimeout(_acDebounce);
+    _acDebounce = setTimeout(() => fetchAutocomplete(q), 280);
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    const items = searchDropdown ? searchDropdown.querySelectorAll('li') : [];
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (items.length) _acSetActive(Math.min(_acActiveIdx + 1, items.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (items.length) _acSetActive(Math.max(_acActiveIdx - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (_acActiveIdx >= 0 && items[_acActiveIdx]) {
+        searchInput.value = items[_acActiveIdx].textContent;
+        hideDropdown();
+      }
+      triggerSearch();
+    } else if (e.key === 'Escape') {
+      hideDropdown();
+      searchInput.blur();
+    }
+  });
+
+  searchInput.addEventListener('blur', () => {
+    // Delay so mousedown on dropdown item fires first
+    setTimeout(hideDropdown, 200);
+  });
+
+  searchBtn.addEventListener('click', triggerSearch);
+
+  if (searchClear) {
+    searchClear.addEventListener('click', async () => {
+      searchInput.value = '';
+      searchClear.style.display = 'none';
+      if (searchStatus) searchStatus.textContent = '';
+      _activeSearchQuery = '';
+      _serverSortBy  = '';
+      _serverSortDir = '';
+      _globalSortedRows = null;
+      await loadRows(1);
+    });
+  }
+})();
+/* ── End candidate search bar ────────────────────────────────────────────── */
+
+function _resetAndReload() {
+  _globalSortedRows = null;
+  _serverSortBy = '';
+  _serverSortDir = '';
+  _activeSearchQuery = '';
+  const si = document.getElementById('candidateSearchInput');
+  if (si) si.value = '';
+}
 
 const pagerEl = document.getElementById('pager');
 const prevBtn = document.getElementById('prevPageBtn');

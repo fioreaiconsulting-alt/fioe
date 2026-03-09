@@ -2794,6 +2794,218 @@ def _should_overwrite_existing(existing_meta, incoming_level="L2", force=False):
         return True, "error-eval-allow"
 
 
+def _ensure_search_indexes(cur, conn):
+    """Idempotently create full-text search and trigram indexes on sourcing/process tables.
+
+    Sets up:
+    - pg_trgm extension (for fuzzy / similarity matching)
+    - search_vector TSVECTOR column on sourcing and process tables
+    - GIN index on search_vector for fast full-text queries
+    - pg_trgm GIN indexes on key text columns (name, jobtitle, company) for fuzzy matching
+    - Trigger functions + BEFORE INSERT/UPDATE triggers to keep search_vector current
+    - Backfill of search_vector for existing rows (runs only when column is first added)
+    """
+    ddls = []
+    try:
+        # 1. Enable pg_trgm extension (idempotent)
+        cur.execute("SAVEPOINT _si_ext")
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        cur.execute("RELEASE SAVEPOINT _si_ext")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_ext")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] pg_trgm extension install failed (non-fatal): {e}")
+
+    # 2. Add search_vector column to sourcing if absent
+    sourcing_col_added = False
+    try:
+        cur.execute("SAVEPOINT _si_sv_s")
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='sourcing'
+              AND column_name='search_vector'
+        """)
+        if cur.fetchone() is None:
+            cur.execute("ALTER TABLE sourcing ADD COLUMN search_vector TSVECTOR")
+            sourcing_col_added = True
+        cur.execute("RELEASE SAVEPOINT _si_sv_s")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_sv_s")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] sourcing.search_vector column add failed (non-fatal): {e}")
+
+    # 3. Add search_vector column to process if absent
+    process_col_added = False
+    try:
+        cur.execute("SAVEPOINT _si_sv_p")
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='process'
+              AND column_name='search_vector'
+        """)
+        if cur.fetchone() is None:
+            cur.execute("ALTER TABLE process ADD COLUMN search_vector TSVECTOR")
+            process_col_added = True
+        cur.execute("RELEASE SAVEPOINT _si_sv_p")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_sv_p")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] process.search_vector column add failed (non-fatal): {e}")
+
+    # 4. Create GIN indexes on search_vector columns
+    gin_ddls = [
+        ("_si_gin_s", "CREATE INDEX IF NOT EXISTS idx_sourcing_search_vector ON sourcing USING GIN(search_vector)"),
+        ("_si_gin_p", "CREATE INDEX IF NOT EXISTS idx_process_search_vector ON process USING GIN(search_vector)"),
+        # Trigram GIN indexes for fuzzy matching on key text columns
+        ("_si_trgm_s_name",     "CREATE INDEX IF NOT EXISTS idx_sourcing_name_trgm ON sourcing USING GIN(name gin_trgm_ops)"),
+        ("_si_trgm_s_jobtitle", "CREATE INDEX IF NOT EXISTS idx_sourcing_jobtitle_trgm ON sourcing USING GIN(jobtitle gin_trgm_ops)"),
+        ("_si_trgm_s_company",  "CREATE INDEX IF NOT EXISTS idx_sourcing_company_trgm ON sourcing USING GIN(company gin_trgm_ops)"),
+        ("_si_trgm_p_jobtitle", "CREATE INDEX IF NOT EXISTS idx_process_jobtitle_trgm ON process USING GIN(jobtitle gin_trgm_ops)"),
+        ("_si_trgm_p_company",  "CREATE INDEX IF NOT EXISTS idx_process_company_trgm ON process USING GIN(company gin_trgm_ops)"),
+        ("_si_trgm_p_skillset", "CREATE INDEX IF NOT EXISTS idx_process_skillset_trgm ON process USING GIN(skillset gin_trgm_ops)"),
+    ]
+    for sp, ddl in gin_ddls:
+        try:
+            cur.execute(f"SAVEPOINT {sp}")
+            cur.execute(ddl)
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
+            conn.commit()
+        except Exception as e:
+            try:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                conn.commit()
+            except Exception:
+                pass
+            logger.warning(f"[SearchIdx] Index creation failed (non-fatal): {sp}: {e}")
+
+    # 5. Trigger function + trigger for sourcing table
+    try:
+        cur.execute("SAVEPOINT _si_trig_s")
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION sourcing_search_vector_update()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                NEW.search_vector :=
+                    setweight(to_tsvector('english', coalesce(NEW.jobtitle, '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(NEW.company,  '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(NEW.name,     '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(NEW.experience,'')), 'D');
+                RETURN NEW;
+            END;
+            $$
+        """)
+        cur.execute("""
+            DROP TRIGGER IF EXISTS trg_sourcing_search_vector ON sourcing
+        """)
+        cur.execute("""
+            CREATE TRIGGER trg_sourcing_search_vector
+            BEFORE INSERT OR UPDATE OF name, jobtitle, company, experience
+            ON sourcing
+            FOR EACH ROW EXECUTE FUNCTION sourcing_search_vector_update()
+        """)
+        cur.execute("RELEASE SAVEPOINT _si_trig_s")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_trig_s")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] sourcing trigger creation failed (non-fatal): {e}")
+
+    # 6. Trigger function + trigger for process table
+    try:
+        cur.execute("SAVEPOINT _si_trig_p")
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION process_search_vector_update()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                NEW.search_vector :=
+                    setweight(to_tsvector('english', coalesce(NEW.jobtitle,  '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(NEW.company,   '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(NEW.skillset,  '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(NEW.name,      '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(NEW.experience,'')), 'D');
+                RETURN NEW;
+            END;
+            $$
+        """)
+        cur.execute("""
+            DROP TRIGGER IF EXISTS trg_process_search_vector ON process
+        """)
+        cur.execute("""
+            CREATE TRIGGER trg_process_search_vector
+            BEFORE INSERT OR UPDATE OF name, jobtitle, company, skillset, experience
+            ON process
+            FOR EACH ROW EXECUTE FUNCTION process_search_vector_update()
+        """)
+        cur.execute("RELEASE SAVEPOINT _si_trig_p")
+        conn.commit()
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT _si_trig_p")
+            conn.commit()
+        except Exception:
+            pass
+        logger.warning(f"[SearchIdx] process trigger creation failed (non-fatal): {e}")
+
+    # 7. Backfill search_vector for existing rows (only when column was just added)
+    if sourcing_col_added:
+        try:
+            cur.execute("SAVEPOINT _si_backfill_s")
+            cur.execute("""
+                UPDATE sourcing SET search_vector =
+                    setweight(to_tsvector('english', coalesce(jobtitle,  '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(company,   '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(name,      '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(experience,'')), 'D')
+                WHERE search_vector IS NULL
+            """)
+            cur.execute("RELEASE SAVEPOINT _si_backfill_s")
+            conn.commit()
+        except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT _si_backfill_s")
+                conn.commit()
+            except Exception:
+                pass
+            logger.warning(f"[SearchIdx] sourcing backfill failed (non-fatal): {e}")
+
+    if process_col_added:
+        try:
+            cur.execute("SAVEPOINT _si_backfill_p")
+            cur.execute("""
+                UPDATE process SET search_vector =
+                    setweight(to_tsvector('english', coalesce(jobtitle,  '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(company,   '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(skillset,  '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(name,      '')), 'C') ||
+                    setweight(to_tsvector('english', coalesce(experience,'')), 'D')
+                WHERE search_vector IS NULL
+            """)
+            cur.execute("RELEASE SAVEPOINT _si_backfill_p")
+            conn.commit()
+        except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT _si_backfill_p")
+                conn.commit()
+            except Exception:
+                pass
+            logger.warning(f"[SearchIdx] process backfill failed (non-fatal): {e}")
+
+
 def _ensure_rating_metadata_columns(cur, conn):
     """Add rating_level, rating_updated_at, rating_version columns to process table if absent."""
     try:
