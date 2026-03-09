@@ -66,12 +66,14 @@ from webbridge import (
     _sanitize_for_excel, _aggregate_company_dropdown,
     _extract_company_from_jobtitle, _gemini_extract_company_from_jobtitle,
     _role_tag_session_column_ensured,
+    _increment_cse_query_count,
 )
 
 def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, search_results_only, country, dynamic_target, job_titles):
     global SEARCH_RESULTS_TARGET
     add_message(job_id, "Starting search pipeline...")
     rows=[]; urls=[]
+    cse_queries_fired = 0
     if isinstance(dynamic_target, int) and dynamic_target > 0:
         SEARCH_RESULTS_TARGET = dynamic_target
     target_limit = SEARCH_RESULTS_TARGET
@@ -83,7 +85,9 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
                 add_message(job_id, "ERROR: GOOGLE_CSE_API_KEY/CX not set. Cannot run search.")
             else:
                 executed_primary=True
-                cse_results=_perform_cse_queries(job_id, queries or ["site:linkedin.com/in"], target_limit, country)
+                primary_q = queries or ["site:linkedin.com/in"]
+                cse_results=_perform_cse_queries(job_id, primary_q, target_limit, country)
+                cse_queries_fired += len(primary_q)
                 urls=[r["link"] for r in cse_results]
                 with JOBS_LOCK:
                     JOBS[job_id]['urls']=urls
@@ -105,6 +109,7 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
         if executed_primary and len(rows)==0 and fallback_queries:
             add_message(job_id,"Primary produced zero rows. Executing fallback queries...")
             cse_results=_perform_cse_queries(job_id, fallback_queries, target_limit, country)
+            cse_queries_fired += len(fallback_queries)
             new_urls=[r["link"] for r in cse_results]
             with JOBS_LOCK:
                 JOBS[job_id]['urls']=list(dict.fromkeys(JOBS[job_id]['urls']+new_urls))
@@ -168,6 +173,12 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
                     rows=filtered
             after=len(rows)
             add_message(job_id, f"Seniority filter '{seniority_effective}' applied: kept {after}/{before} rows.")
+        # Persist CSE query count for the user who triggered this job
+        if cse_queries_fired > 0:
+            with JOBS_LOCK:
+                job_username = (JOBS.get(job_id) or {}).get('username', '')
+            if job_username:
+                _increment_cse_query_count(job_username, cse_queries_fired)
         csv_name,xlsx_name=_write_outputs(job_id, rows)
         # CSV/XLSX both saved to SEARCH_XLS_DIR now
         csv_ok=bool(csv_name) and os.path.exists(os.path.join(SEARCH_XLS_DIR, csv_name))

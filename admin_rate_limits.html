@@ -562,12 +562,19 @@ const USER_COLS = [
   { key: 'role_tag',              label: 'Role Tag'          },
   { key: 'token',                 label: 'Tokens'            },
   { key: 'target_limit',          label: 'Target Limit (SEARCH_RESULTS_TARGET)' },
+  { key: 'cse_query_count',       label: 'CSE Query Count'   },
+  { key: 'price_per_query',       label: 'Price per Query ($)' },
+  { key: 'total_query_cost',      label: 'Total Query Cost ($)' },
   { key: 'jd',                    label: 'JD (preview)'      },
   { key: 'jskillset',             label: 'JSkillset'         },
   { key: 'google_refresh_token',  label: 'Google Token'      },
   { key: 'google_token_expires',  label: 'Google Exp.'       },
   { key: 'last_result_count',     label: 'Last Results'      },
 ];
+
+function calcTotalQueryCost(count, price) {
+  return (parseInt(count ?? 0, 10) * (parseFloat(price) || 0)).toFixed(4);
+}
 
 function renderUsersCard() {
   const card = document.createElement('div');
@@ -606,6 +613,29 @@ function renderUsersCard() {
         td.innerHTML = `<input class="inline-num" type="number" min="0" data-user="${escHtml(u.username)}" data-field="token" value="${u.token ?? 0}">`;
       } else if (c.key === 'target_limit') {
         td.innerHTML = `<input class="inline-num" type="number" min="1" data-user="${escHtml(u.username)}" data-field="target_limit" value="${u.target_limit ?? 10}">`;
+      } else if (c.key === 'cse_query_count') {
+        td.textContent = String(u.cse_query_count ?? 0);
+        td.style.textAlign = 'right';
+      } else if (c.key === 'price_per_query') {
+        const priceInput = document.createElement('input');
+        priceInput.className = 'inline-num';
+        priceInput.type = 'number';
+        priceInput.min = '0';
+        priceInput.step = '0.0001';
+        priceInput.dataset.user = u.username;
+        priceInput.dataset.field = 'price_per_query';
+        priceInput.value = parseFloat(u.price_per_query ?? 0).toFixed(4);
+        priceInput.addEventListener('input', () => {
+          const costTd = tr.querySelector('[data-cost-cell]');
+          if (costTd) {
+            costTd.textContent = calcTotalQueryCost(u.cse_query_count, priceInput.value);
+          }
+        });
+        td.appendChild(priceInput);
+      } else if (c.key === 'total_query_cost') {
+        td.textContent = calcTotalQueryCost(u.cse_query_count, u.price_per_query);
+        td.dataset.costCell = u.username;
+        td.style.textAlign = 'right';
       } else {
         td.title = String(u[c.key] ?? '');
         td.textContent = String(u[c.key] ?? '');
@@ -631,14 +661,17 @@ function renderUsersCard() {
 async function saveUserRow(username, tr) {
   const tokenInput  = tr.querySelector('[data-field="token"]');
   const limitInput  = tr.querySelector('[data-field="target_limit"]');
+  const priceInput  = tr.querySelector('[data-field="price_per_query"]');
   const tokenVal    = parseInt(tokenInput?.value, 10);
   const limitVal    = parseInt(limitInput?.value, 10);
+  const priceVal    = parseFloat(priceInput?.value) || 0;
   const errs = [];
   if (isNaN(tokenVal) || tokenVal < 0) errs.push('Token must be ≥ 0');
   if (isNaN(limitVal) || limitVal < 1) errs.push('Target limit must be ≥ 1');
+  if (isNaN(priceVal) || priceVal < 0) errs.push('Price per query must be ≥ 0');
   if (errs.length) { toast(errs.join('; '), 'error'); return; }
   try {
-    const [r1, r2] = await Promise.all([
+    const [r1, r2, r3] = await Promise.all([
       fetch(`${API}/admin/update-token`, {
         method: 'POST', headers: csrfHeaders(), credentials: 'same-origin',
         body: JSON.stringify({ username, token: tokenVal }),
@@ -647,11 +680,17 @@ async function saveUserRow(username, tr) {
         method: 'POST', headers: csrfHeaders(), credentials: 'same-origin',
         body: JSON.stringify({ username, target_limit: limitVal }),
       }),
+      fetch(`${API}/admin/update-price-per-query`, {
+        method: 'POST', headers: csrfHeaders(), credentials: 'same-origin',
+        body: JSON.stringify({ username, price_per_query: priceVal }),
+      }),
     ]);
     const d1 = await r1.json();
     const d2 = await r2.json();
+    const d3 = await r3.json();
     if (!r1.ok) { toast(d1.error || 'Token update failed', 'error'); return; }
     if (!r2.ok) { toast(d2.error || 'Target limit update failed', 'error'); return; }
+    if (!r3.ok) { toast(d3.error || 'Price per query update failed', 'error'); return; }
     toast(`Saved for ${username} ✓`, 'success');
   } catch (err) {
     toast('Network error: ' + err.message, 'error');
