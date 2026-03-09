@@ -1697,6 +1697,16 @@ function renderSuggestionsAggregated(data){
     companyList = Array.from(companySet);
   }
 
+  // Sector guardrail: when a sector is active, restrict the company suggestion chips to only
+  // sector-derived companies. JD-snapshot companies and generic /suggest results can include
+  // unrelated entries (e.g. Microsoft, Epic Systems in a Healthcare context) that contaminate
+  // the suggestions. sectorCompanyRelated is the authoritative sector-specific source.
+  if (selectedSectors.length > 0 && sectorCompanyRelated && sectorCompanyRelated.size > 0) {
+    const sectorKeys = new Set();
+    sectorCompanyRelated.forEach(s => sectorKeys.add(canonicalKey(normalizeSpaces(s))));
+    companyList = companyList.filter(c => sectorKeys.has(canonicalKey(c)));
+  }
+
   // ALWAYS populate autoSuggestedCompanies from the companyList so left suggestions appear on the right
   autoSuggestedCompanies = dedupe([...companyList]).filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()));
 
@@ -1822,6 +1832,12 @@ document.getElementById('copyFullQueryBtn').addEventListener('click',()=>{
   const q=buildFullBooleanQuery(); if(!q) return;
   navigator.clipboard.writeText(q).then(()=>{ const n=document.getElementById('copyNotice'); if(n) { n.style.display='block'; setTimeout(()=>n.style.display='none',1400); } });
 });
+
+// Declare here (before the IIFE) to avoid TDZ ReferenceError when initSearchMode() is called
+// from initPreviewControls below. 'const' declarations are NOT hoisted like function declarations,
+// so declaring this after the IIFE (as it was at line 2197) would throw a silent TDZ error inside
+// the try/catch and prevent the click listener from ever being attached to #bestModeToggle.
+const STORAGE_KEY_SEARCH_MODE = 'xray_search_mode_best';
 
 (function initPreviewControls(){
   try{
@@ -2194,7 +2210,8 @@ function _splitXrayQuery(fullQuery, wordLimit) {
 // ── End Xray query auto-split ─────────────────────────────────────────────
 
 // ── Search mode: Best (auto-split) vs Fast (no split) ─────────────────────
-const STORAGE_KEY_SEARCH_MODE = 'xray_search_mode_best';
+// Note: STORAGE_KEY_SEARCH_MODE is declared before initPreviewControls() above
+// to avoid a TDZ ReferenceError that would prevent the toggle click listener from attaching.
 
 function isBestMode() {
   const chk = document.getElementById('bestModeChk');
