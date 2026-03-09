@@ -831,15 +831,35 @@ pre {
           <div id="previewControls" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:16px;">
             <button class="primary" id="generateBtn" data-state="idle" style="padding:14px 40px; font-size:16px; width:100%;">Sourcing</button>
           </div>
+          <!-- Sourcing progress bar — visible below the Sourcing button while job runs -->
+          <div id="sourcingProgressWrap" class="hidden" style="margin-top:12px; padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
+              <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
+            </div>
+            <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
+              <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
+            </div>
+          </div>
         </div>
 
         <div id="advancedSection">
-          
+
+          <!-- Search Mode toggle: Best Mode (auto-split at 32 words) vs Fast Mode (no splitting) -->
+          <div id="searchModeWrapper" style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
+            <input id="bestModeChk" type="checkbox" checked style="display:none;">
+            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="true" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
+              <span>⚡ Best Mode</span>
+            </button>
+            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries &gt;32 words are auto-split for better coverage</span>
+          </div>
+
           <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
             <button type="button" class="mini-btn" id="copyFullQueryBtn" style="position:absolute; top:8px; right:8px;">Copy</button>
             <strong style="font-size:13px; color:var(--text);">Compiled Boolean Query</strong>
             <pre id="fullCompiledExpr" style="margin-top:8px;"></pre>
             <div id="copyNotice" class="helper" style="display:none; color:var(--success-600);">Copied!</div>
+            <div id="xraySplitPreview" style="display:none; margin-top:8px; font-size:12px; font-weight:600; color:var(--accent);"></div>
           </div>
 
           <div id="aiSuggestionsContainer" class="suggestions-wrapper" style="display:none;">
@@ -1031,6 +1051,17 @@ const jobTitles=[]; const jobTitleIndex=new Set();
 const companies=[]; const companyIndex=new Set();
 const languages=[]; const languageIndex=new Set();
 let autoSuggestedCompanies=[];
+let genericCompetitorCompanies=[];   // direct competitors from /suggest (non-sector) — used for dual-query in Best Mode
+// Maximum number of direct competitors to include as "top-tier" (the /suggest response is ordered
+// by relevance/local-presence, so slicing to this cap keeps only the most authoritative ones).
+const MAX_TOP_TIER_COMPETITORS = 15;
+// Minimum number of companies the role-scoped /suggest response must return before the cross-sector
+// validation filter is applied. When the response contains fewer companies (e.g., no job titles
+// entered yet), the filter is skipped to avoid hiding valid sector suggestions prematurely.
+const MIN_SUGGEST_COMPANIES_FOR_VALIDATION = 5;
+// Maximum number of product/technology references extracted from a JD to pass to /suggest.
+// Capped to avoid bloating the Gemini prompt with an exhaustive product list.
+const MAX_JD_PRODUCTS_HINT = 20;
 const suppressedAutoSuggestedCompanies=new Set();
 const userSkills = []; const userSkillIndex = new Set();
 const estimateValueEl = document.getElementById('estimateValue');
@@ -1041,6 +1072,7 @@ const LOCAL_RULE_DEFAULTS = { base:{default:50,withJobAndLocation:60}, weights:{
 let jdSuggestionsLocked = false;    // when true, suggestion lists are frozen
 let jdJobSnapshot = [];             // frozen job suggestion list
 let jdCompanySnapshot = [];         // frozen company suggestion list
+let jdProducts = [];                // product/technology references extracted from JD (e.g., "Aircon", "HVAC")
 
 function captureSuggestionSnapshot(){
   try{
@@ -1154,12 +1186,14 @@ function renderJobTitleChips(){
   const wrap=document.getElementById('jobTitleAggregator'); const box=document.getElementById('jobTitleChips');
   box.innerHTML=''; if(jobTitles.length===0){ wrap.classList.add('hidden'); document.getElementById('compiledJobTitleExpr').textContent=''; return; }
   wrap.classList.remove('hidden');
+  const jobChipFrag=document.createDocumentFragment();
   jobTitles.forEach((t,i)=>{ 
     const d=document.createElement('div'); d.className='tag-chip';
     d.innerHTML=`<span>${t}</span><button type="button" aria-label="Remove ${t}">&times;</button>`;
     d.querySelector('button').addEventListener('click', ()=>removeJobTitle(i));
-    box.appendChild(d);
+    jobChipFrag.appendChild(d);
   });
+  box.appendChild(jobChipFrag);
   document.getElementById('compiledJobTitleExpr').textContent=buildJobTitleExpression();
 }
 function buildJobTitleExpressionAugmented(){
@@ -1224,12 +1258,14 @@ function renderCompanyChips(){
   const wrap=document.getElementById('companyAggregator'); const box=document.getElementById('companyChips');
   box.innerHTML=''; if(companies.length===0){ wrap.classList.add('hidden'); document.getElementById('compiledCompanyExpr').textContent=''; return; }
   wrap.classList.remove('hidden');
+  const compChipFrag=document.createDocumentFragment();
   companies.forEach((c,i)=>{
     const d=document.createElement('div'); d.className='tag-chip';
     d.innerHTML=`<span>${c}</span><button type="button" aria-label="Remove ${c}">&times;</button>`;
     d.querySelector('button').addEventListener('click', ()=>removeCompany(i));
-    box.appendChild(d);
+    compChipFrag.appendChild(d);
   });
+  box.appendChild(compChipFrag);
   document.getElementById('compiledCompanyExpr').textContent=buildCompanyExpression();
 }
 function buildCompanyExpression(){
@@ -1240,13 +1276,30 @@ function buildCompanyExpression(){
 function buildEffectiveCompanyExpression(){
   let combined;
   if(selectedSectors.length > 0){
-    combined = dedupe([
-      ...companies,
-      ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
-    ]);
+    // Sector guardrail: when a sector is active, build the company expression strictly from
+    // sector-derived companies (sectorCompanyRelated) only. Do NOT merge in user-typed companies
+    // (companies array) or generic auto-suggested companies — they belong to a different context
+    // and would otherwise cross-contaminate the sector-specific query.
+    combined = dedupe(
+      Array.from(sectorCompanyRelated)
+        .map(c => normalizeSpaces(c))
+        .filter(c => c && !suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
+    );
   } else {
     combined = dedupe([...companies, ...autoSuggestedCompanies.filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()))]);
   }
+  if(!combined.length) return '';
+  if(combined.length===1) return `"${escapeQuotes(combined[0])}"`;
+  return '('+combined.map(c=>`"${escapeQuotes(c)}"`).join(' OR ')+')';
+}
+
+// Returns an OR-expression for direct competitor companies (non-sector suggestions from /suggest).
+// Used by buildQueries to generate a second query when both sector companies and competitors exist.
+function buildGenericCompanyExpression(){
+  const combined = dedupe(
+    [...companies, ...genericCompetitorCompanies]
+      .filter(c => c && !suppressedAutoSuggestedCompanies.has(c.toLowerCase()))
+  );
   if(!combined.length) return '';
   if(combined.length===1) return `"${escapeQuotes(combined[0])}"`;
   return '('+combined.map(c=>`"${escapeQuotes(c)}"`).join(' OR ')+')';
@@ -1295,14 +1348,16 @@ function populateSectorSelect(){
 function renderSectorChips(){
   sectorChips.innerHTML=''; if(!selectedSectors.length){ sectorChipsWrap.classList.add('hidden'); hide(sectorCompanyDisplay); updateDynamicCompanyPreview(true); updateDynamicCompanyHeader(); return; }
   sectorChipsWrap.classList.remove('hidden');
+  const sectorChipFrag = document.createDocumentFragment();
   selectedSectors.forEach((label,idx)=>{
     const chip=document.createElement('div'); chip.className='tag-chip';
     chip.innerHTML=`<span>${label}</span><button type="button" aria-label="Remove sector">&times;</button>`;
     chip.querySelector('button').addEventListener('click',()=>{
       selectedSectors.splice(idx,1); renderSectorChips(); scheduleSectorSuggestionsUpdate(); scheduleSuggestionsUpdate(); updateFullCompiledQuery(); renderEffectiveCompaniesDisplay(); updateDynamicCompanyPreview(); updateDynamicCompanyHeader();
     });
-    sectorChips.appendChild(chip);
+    sectorChipFrag.appendChild(chip);
   });
+  sectorChips.appendChild(sectorChipFrag);
   renderEffectiveCompaniesDisplay();
   updateDynamicCompanyHeader();
 }
@@ -1325,6 +1380,7 @@ function renderEffectiveCompaniesDisplay(){
   if(!effective.length){ hide(sectorCompanyDisplay); sectorCompanyList.innerHTML=''; updateDynamicCompanyPreview(); return; }
   show(sectorCompanyDisplay); sectorCompanyList.innerHTML='';
   const dynamicSet = new Set((lastDynamicPreviewCompanies || []).map(x => x.toLowerCase()));
+  const sectorFrag = document.createDocumentFragment();
   effective.forEach(name=>{
     if(dynamicSet.has(name.toLowerCase())) return;
     const isUser=companyIndex.has(name.toLowerCase());
@@ -1339,8 +1395,9 @@ function renderEffectiveCompaniesDisplay(){
         updateFullCompiledQuery(); renderEffectiveCompaniesDisplay();
       }
     });
-    sectorCompanyList.appendChild(div);
+    sectorFrag.appendChild(div);
   });
+  sectorCompanyList.appendChild(sectorFrag);
   updateDynamicCompanyPreview();
 }
 
@@ -1619,6 +1676,9 @@ const globalRefreshBtn = document.getElementById('refreshSuggestionsBtn');
 if (globalRefreshBtn) globalRefreshBtn.addEventListener('click', ()=>{ refreshSuggestionsAll(); });
 
 let lastSuggestionHash=''; let lastGeneralSuggestions=null;
+// AbortController for in-flight /suggest requests — cancelled when a newer call is made so
+// stale responses never overwrite fresher results and their memory is released promptly.
+let _suggestAbortCtrl=null;
 
 function hashSuggestionPayload(){ return JSON.stringify({ jobs:[...jobTitles].sort(), companies:[...companies].sort(), languages:[...languages].sort(), sectors:[...selectedSectors].sort(), currentRole:false, country:(val('country')||'').toLowerCase() }); }
 function scheduleSuggestionsUpdate(){ debouncedFetchSuggestions(); }
@@ -1633,12 +1693,19 @@ async function fetchSuggestions(force=false){
   const h=hashSuggestionPayload();
   if(!force && h===lastSuggestionHash && lastGeneralSuggestions){ renderSuggestionsAggregated(lastGeneralSuggestions); return; }
   lastSuggestionHash=h;
+  // Cancel any previous in-flight request so stale responses don't overwrite fresher results.
+  if (_suggestAbortCtrl) _suggestAbortCtrl.abort();
+  _suggestAbortCtrl = new AbortController();
+  const _signal = _suggestAbortCtrl.signal;
   if(suggestionsLoading) suggestionsLoading.classList.remove('hidden'); suggestionsEmpty.classList.add('hidden'); if(suggestionsError) suggestionsError.classList.add('hidden');
   try{
-    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country })});
+    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country, products: jdProducts }),signal:_signal});
     if(!res.ok) throw new Error(await res.text());
     const data=await res.json(); lastGeneralSuggestions=data; renderSuggestionsAggregated(data);
-  }catch(e){ if(suggestionsError){ suggestionsError.textContent='Suggestion error: '+e.message; suggestionsError.classList.remove('hidden'); } }
+  }catch(e){
+    if(_signal.aborted) return; // superseded by a newer request — do nothing
+    if(suggestionsError){ suggestionsError.textContent='Suggestion error: '+e.message; suggestionsError.classList.remove('hidden'); }
+  }
   finally{ if(suggestionsLoading) suggestionsLoading.classList.add('hidden'); }
 }
 
@@ -1682,6 +1749,69 @@ function renderSuggestionsAggregated(data){
     companyList = Array.from(companySet);
   }
 
+  // Sector ordering: when a sector is active, display direct competitors (from /suggest, not in
+  // sectorCompanyRelated) FIRST so users see the most job-title-relevant suggestions immediately.
+  // Sector companies follow. This respects the "competitor priority" rule while keeping sector
+  // suggestions available in the same panel.
+  // We also track genericCompetitorCompanies separately so buildQueries can generate a second
+  // query for the competitor companies when a sector query already covers sector companies.
+  if (selectedSectors.length > 0 && sectorCompanyRelated && sectorCompanyRelated.size > 0) {
+    const sectorKeys = new Set();
+    sectorCompanyRelated.forEach(s => sectorKeys.add(canonicalKey(normalizeSpaces(s))));
+    // Derive competitors ONLY from the raw /suggest response (data.company.related), never from
+    // companyList which may include jdCompanySnapshot entries when the JD is locked.
+    // jdCompanySnapshot captures a broad industry set from the initial JD analysis (e.g. pharma
+    // manufacturers, medical device firms, hospital IT) that are in the same sector but NOT in the
+    // same product/service category. The /suggest endpoint is contextually scoped to the job titles
+    // + country, so its company.related list returns companies in the same operational category
+    // (e.g. CROs like Covance/Medpace/Charles River for an IQVIA Site Activation Manager role,
+    // not Pfizer or Epic Systems).
+    const rawSuggestCompanies = (data.company?.related || [])
+      .map(s => normalizeSpaces(s)).filter(Boolean);
+    // Build a lookup set of all companies the role-scoped /suggest returned. This is used both for
+    // competitor derivation and as a cross-sector validation set for sector company suggestions.
+    const rawSuggestKeys = new Set(rawSuggestCompanies.map(c => canonicalKey(c)));
+    const competitors = rawSuggestCompanies.filter(c => !sectorKeys.has(canonicalKey(c)));
+    const sectorFromCompanyList = companyList.filter(c => sectorKeys.has(canonicalKey(c)));
+    // Cross-sector contamination guard for sector chips: only include sector company suggestions
+    // that ALSO appear in the role-scoped /suggest response, which is scoped to both the active
+    // role and the selected sectors. This prevents the /sector_suggest endpoint from leaking
+    // companies whose core business is in a different sector (e.g., J&J or Merck appearing for
+    // Gaming / Technology sectors because the AI tagged them as enterprise software users rather
+    // than genuine sector operators).
+    // Fallback: if /suggest returned fewer than 5 companies (e.g., no job titles entered yet),
+    // skip the cross-validation to avoid prematurely hiding valid sector suggestions.
+    const sectorOnly = rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION
+      ? sectorFromCompanyList.filter(c => rawSuggestKeys.has(canonicalKey(c)))
+      : sectorFromCompanyList;
+    // Cross-sector contamination guard for competitor chips: when sector alignment is confirmed
+    // (rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION AND sectorOnly is non-empty),
+    // restrict competitors to those appearing in the first MAX_TOP_TIER_COMPETITORS entries of
+    // rawSuggestCompanies. Gemini orders company.related by direct relevance to the role + sector
+    // context, so the most authoritative competitors appear first; cross-sector leakage (e.g. J&J
+    // or Merck for a Gaming/Tech role) tends to appear in the tail. Positional capping thus
+    // naturally excludes low-relevance, off-sector entries without requiring a hardcoded blocklist.
+    // Fallback: if positional filtering removed ALL competitors (e.g. all top-N slots were taken
+    // by sector companies), fall back to the unfiltered list to avoid showing no competitors.
+    let validatedCompetitors = competitors;
+    if (rawSuggestKeys.size >= MIN_SUGGEST_COMPANIES_FOR_VALIDATION && sectorOnly.length > 0) {
+      const topCompetitorKeys = new Set(
+        rawSuggestCompanies.slice(0, MAX_TOP_TIER_COMPETITORS).map(c => canonicalKey(c))
+      );
+      validatedCompetitors = competitors.filter(c => topCompetitorKeys.has(canonicalKey(c)));
+      if (validatedCompetitors.length === 0) validatedCompetitors = competitors;
+    }
+    // Cap to MAX_TOP_TIER_COMPETITORS: the /suggest response is ordered by AI relevance with
+    // local-presence verification, so the first N entries are the most authoritative same-category
+    // competitors. This guardrail prevents low-tier or off-category companies from inflating the
+    // competitor query or appearing in suggestion chips ahead of sector companies.
+    genericCompetitorCompanies = dedupe(validatedCompetitors).slice(0, MAX_TOP_TIER_COMPETITORS);
+    // Chips display: top-tier direct competitors first (capped), then validated sector companies
+    companyList = dedupe([...genericCompetitorCompanies, ...sectorOnly]);
+  } else {
+    genericCompetitorCompanies = [];
+  }
+
   // ALWAYS populate autoSuggestedCompanies from the companyList so left suggestions appear on the right
   autoSuggestedCompanies = dedupe([...companyList]).filter(c=>!suppressedAutoSuggestedCompanies.has(c.toLowerCase()));
 
@@ -1690,7 +1820,9 @@ function renderSuggestionsAggregated(data){
     const jobGrid = document.getElementById('jobTitleSuggestionsGrid');
     if (jobGrid) {
       jobGrid.innerHTML = '';
-      Array.from(jobList).forEach(text => jobGrid.appendChild(makeChip(text,'job',false)));
+      const jobFrag = document.createDocumentFragment();
+      Array.from(jobList).forEach(text => jobFrag.appendChild(makeChip(text,'job',false)));
+      jobGrid.appendChild(jobFrag);
       if (jobList.length>0) show(jobBox); else hide(jobBox);
     }
   } catch(e){}
@@ -1700,7 +1832,9 @@ function renderSuggestionsAggregated(data){
     const companyGrid = document.getElementById('companySuggestionsGrid');
     if (companyGrid) {
       companyGrid.innerHTML = '';
-      Array.from(companyList).forEach(text => companyGrid.appendChild(makeChip(text,'company',false)));
+      const compFrag = document.createDocumentFragment();
+      Array.from(companyList).forEach(text => compFrag.appendChild(makeChip(text,'company',false)));
+      companyGrid.appendChild(compFrag);
       if (companyList.length>0) show(companyBox); else hide(companyBox);
     }
   } catch(e){}
@@ -1717,7 +1851,9 @@ function buildSuggestionGroup(title,list,type){
   const group=document.createElement('div'); group.style.border='1px solid var(--border)'; group.style.borderRadius='8px'; group.style.padding='10px';
   const h=document.createElement('div'); h.style.fontSize='12px'; h.style.fontWeight='700'; h.style.marginBottom='8px'; h.textContent=title; group.appendChild(h);
   const box=document.createElement('div'); box.style.display='flex'; box.style.flexWrap='wrap'; box.style.gap='8px';
-  list.forEach(text=>box.appendChild(makeChip(text,type,false)));
+  const frag=document.createDocumentFragment();
+  list.forEach(text=>frag.appendChild(makeChip(text,type,false)));
+  box.appendChild(frag);
   group.appendChild(box); return group;
 }
 function makeChip(text,type,isExisting){
@@ -1780,16 +1916,62 @@ function buildFullBooleanQuery(){
   let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl;
   return q;
 }
+// Builds the full Xray query for direct competitor companies (non-sector).
+// Returns '' when no competitor companies are available or no sector is active.
+function buildGenericFullQuery(){
+  if (!selectedSectors.length) return '';
+  const genericBlock = buildGenericCompanyExpression();
+  if (!genericBlock) return '';
+  const lang=buildLanguageXrayBlock();
+  const jAug=buildJobTitleExpressionAugmented();
+  const cc=lookupCountryCode(val('country'));
+  const site= cc?`site:${cc}.linkedin.com/in`:`site:linkedin.com/in`;
+  const seniorityExcl=buildSeniorityExclusion();
+  const blocks=[]; if(lang) blocks.push(lang); if(jAug) blocks.push(jAug); blocks.push(genericBlock);
+  let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl;
+  return q;
+}
 function updateFullCompiledQuery(){
   const full=buildFullBooleanQuery();
   const wrap=document.getElementById('fullQueryWrapper'); const pre=document.getElementById('fullCompiledExpr');
   if(full){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
   const copyNoticeEl=document.getElementById('copyNotice'); if(copyNoticeEl) copyNoticeEl.style.display='none';
+  // Live split preview: show how many queries this Xray command will produce before Search is clicked.
+  // Accounts for both the primary (sector) query AND the competitor query when both exist.
+  try {
+    const previewEl=document.getElementById('xraySplitPreview');
+    if(previewEl){
+      if(full && isBestMode()){
+        const primaryParts=_splitXrayQuery(full);
+        // Also count the competitor query splits if one would be generated
+        const genericFull = buildGenericFullQuery();
+        const genericCount = genericFull ? _splitXrayQuery(genericFull).length : 0;
+        const totalParts = primaryParts.length + genericCount;
+        if(totalParts > 1){
+          const detail = (genericCount > 0)
+            ? `${primaryParts.length} sector + ${genericCount} competitor`
+            : `${primaryParts.length} split`;
+          previewEl.textContent=`⚡ LinkedIn: ${totalParts} queries will be executed (${detail} — original query exceeds ${XRAY_WORD_LIMIT} words)`;
+          previewEl.style.display='block';
+        } else {
+          previewEl.textContent=''; previewEl.style.display='none';
+        }
+      } else {
+        previewEl.textContent=''; previewEl.style.display='none';
+      }
+    }
+  } catch(e){ /* _splitXrayQuery not yet available on first parse — safe to ignore */ }
 }
 document.getElementById('copyFullQueryBtn').addEventListener('click',()=>{
   const q=buildFullBooleanQuery(); if(!q) return;
   navigator.clipboard.writeText(q).then(()=>{ const n=document.getElementById('copyNotice'); if(n) { n.style.display='block'; setTimeout(()=>n.style.display='none',1400); } });
 });
+
+// Declare here (before the IIFE) to avoid TDZ ReferenceError when initSearchMode() is called
+// from initPreviewControls below. 'const' declarations are NOT hoisted like function declarations,
+// so declaring this after the IIFE (as it was at line 2197) would throw a silent TDZ error inside
+// the try/catch and prevent the click listener from ever being attached to #bestModeToggle.
+const STORAGE_KEY_SEARCH_MODE = 'xray_search_mode_best';
 
 (function initPreviewControls(){
   try{
@@ -1806,6 +1988,7 @@ document.getElementById('copyFullQueryBtn').addEventListener('click',()=>{
     }
     toggleAdvancedVisibility(advPref);
     if(genBtn){ genBtn.addEventListener('click', primaryButtonHandler); }
+    initSearchMode();
   }catch(e){ }
 })();
 
@@ -2051,6 +2234,146 @@ if (companyRefreshBtn) companyRefreshBtn.addEventListener('click', ()=>{ refresh
 
 function encodeForGoogle(q){ return encodeURIComponent(q).replace(/%20/g,'+'); }
 
+// ── Xray query auto-split ──────────────────────────────────────────────────
+const XRAY_WORD_LIMIT = 32;
+
+function _xrayWordCount(s) {
+  return s ? s.trim().split(/\s+/).filter(Boolean).length : 0;
+}
+
+/**
+ * Split a single Xray query string into ≤ XRAY_WORD_LIMIT-word queries when needed.
+ *
+ * Rules:
+ *  - Structural operators (site:, -intitle:, -inurl:, seniority exclusions) stay
+ *    intact in every resulting query and are never split.
+ *  - Language variant blocks (identified by the "( (" double-paren signature of
+ *    buildLanguageXrayBlock) are treated as structural and never split.
+ *  - Only keyword OR-expression blocks (job titles, company names) are split.
+ *
+ * Returns an array of query strings.  If the query is already ≤ the limit, or
+ * no splittable blocks are found, returns [fullQuery] unchanged.
+ */
+function _splitXrayQuery(fullQuery, wordLimit) {
+  wordLimit = wordLimit || XRAY_WORD_LIMIT;
+  if (_xrayWordCount(fullQuery) <= wordLimit) return [fullQuery];
+
+  // Isolate site: prefix (single no-space token at the start)
+  const siteM = fullQuery.match(/^(site:\S+)([\s\S]*)$/);
+  if (!siteM) return [fullQuery];
+  const site = siteM[1];
+  const rest = siteM[2].trim();
+
+  // Isolate structural suffix: -intitle:"…" -inurl:"…" and optional seniority tokens
+  const suffixM = rest.match(/\s+(-intitle:[^\s]+ -inurl:[^\s]+(?:\s+-[A-Za-z]+)*)$/);
+  const suffix = suffixM ? suffixM[1] : '';
+  const middle = suffix ? rest.slice(0, rest.length - suffix.length).trim() : rest;
+
+  if (!middle) return [fullQuery];
+
+  // Split middle by ' AND ' into top-level blocks
+  const andBlocks = middle.split(/ AND /g).map(b => b.trim()).filter(Boolean);
+
+  // Language blocks produced by buildLanguageXrayBlock() start with "( (" — skip them.
+  // Splittable blocks: contain OR and are NOT language blocks.
+  const isLangBlock = b => /^\(\s*\(/.test(b.trim());
+  const splitCandidates = andBlocks.filter(b => / OR /.test(b) && !isLangBlock(b));
+
+  if (!splitCandidates.length) return [fullQuery];
+
+  // Pick the OR block with the most words as the split target
+  const targetBlock = splitCandidates.reduce((a, b) => _xrayWordCount(b) > _xrayWordCount(a) ? b : a);
+
+  // Parse individual OR terms from the target block (strip outer parens if present)
+  let inner = targetBlock.trim();
+  if (inner.startsWith('(') && inner.endsWith(')')) inner = inner.slice(1, -1).trim();
+  const orTerms = inner.split(/ OR /).map(t => t.trim()).filter(Boolean);
+
+  if (orTerms.length <= 1) return [fullQuery];
+
+  // Fixed blocks: everything except the target block
+  const otherBlocks = andBlocks.filter(b => b !== targetBlock);
+
+  // Assemble a query from a batch of OR terms
+  function assembleQuery(orExpr) {
+    const usedBlocks = orExpr ? [...otherBlocks, orExpr] : [...otherBlocks];
+    let q = site;
+    if (usedBlocks.length) q += ' ' + usedBlocks.join(' AND ');
+    if (suffix) q += ' ' + suffix;
+    return q.trim();
+  }
+
+  // Compute word budget: wordLimit minus words in everything except the new OR block
+  const skeletonWords = _xrayWordCount(
+    otherBlocks.length
+      ? `${site} ${otherBlocks.join(' AND ')} ${suffix}`.trim()
+      : `${site} ${suffix}`.trim()
+  );
+  // +1 for the AND connector joining the OR block to the rest (only when other blocks exist)
+  const andConnector = otherBlocks.length > 0 ? 1 : 0;
+  const budget = wordLimit - skeletonWords - andConnector;
+
+  if (budget < 1) return [fullQuery]; // fixed parts alone exceed the limit; can't help
+
+  // Pack OR terms into batches, each fitting within budget
+  const batches = [];
+  let current = [];
+  let currentW = 0;
+
+  for (const term of orTerms) {
+    const tw = _xrayWordCount(term);
+    const addW = current.length > 0 ? 1 + tw : tw; // +1 for the ' OR ' connector token
+    if (current.length > 0 && currentW + addW > budget) {
+      batches.push([...current]);
+      current = [term];
+      currentW = tw;
+    } else {
+      current.push(term);
+      currentW += addW;
+    }
+  }
+  if (current.length > 0) batches.push(current);
+
+  if (batches.length <= 1) return [fullQuery];
+
+  return batches.map(terms => {
+    const orExpr = terms.length === 1 ? terms[0] : '(' + terms.join(' OR ') + ')';
+    return assembleQuery(orExpr);
+  });
+}
+// ── End Xray query auto-split ─────────────────────────────────────────────
+
+// ── Search mode: Best (auto-split) vs Fast (no split) ─────────────────────
+// Note: STORAGE_KEY_SEARCH_MODE is declared before initPreviewControls() above
+// to avoid a TDZ ReferenceError that would prevent the toggle click listener from attaching.
+
+function isBestMode() {
+  const chk = document.getElementById('bestModeChk');
+  return chk ? chk.checked : true;
+}
+
+function initSearchMode() {
+  const chk = document.getElementById('bestModeChk');
+  const btn = document.getElementById('bestModeToggle');
+  const hint = document.getElementById('searchModeHint');
+  if (!chk || !btn) return;
+  const saved = localStorage.getItem(STORAGE_KEY_SEARCH_MODE);
+  if (saved === 'false') chk.checked = false;
+  function applyMode() {
+    const best = chk.checked;
+    const span = btn.querySelector('span');
+    if (span) span.textContent = best ? '⚡ Best Mode' : '🚀 Fast Mode';
+    btn.setAttribute('aria-pressed', best ? 'true' : 'false');
+    if (hint) hint.textContent = best
+      ? 'Queries >32 words are auto-split for better coverage'
+      : 'Queries are sent as-is without splitting';
+    localStorage.setItem(STORAGE_KEY_SEARCH_MODE, String(best));
+    updateFullCompiledQuery();
+  }
+  applyMode();
+  btn.addEventListener('click', () => { chk.checked = !chk.checked; applyMode(); });
+}
+
 function buildQueries(country){
   const langBlock=buildLanguageXrayBlock();
   const jobBlock=buildJobTitleExpressionAugmented();
@@ -2064,34 +2387,91 @@ function buildQueries(country){
   function joinBlocks(blocks){
     let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl; return q;
   }
-  const primaryQuery=joinBlocks(withCompaniesBlocks);
-  const fallbackQuery=joinBlocks(baseBlocks);
+  const primaryQueryRaw=joinBlocks(withCompaniesBlocks);
+  const fallbackQueryRaw=joinBlocks(baseBlocks);
   const xray=buildChannelXrayQueries();
-  const primary=[{label:'LinkedIn', query:primaryQuery}, ...xray];
+
+  // Dual-query: when a sector is active AND direct competitor companies exist (from /suggest),
+  // generate a second query for those competitors. Both queries get Best Mode splitting applied.
+  // buildGenericFullQuery() is the single source of truth for this query construction.
+  const genericQueryRaw = buildGenericFullQuery() || null;
+
+  // Expand a raw query into one-or-more split queries (Best Mode only), labelled accordingly
+  function makeItems(label, rawQuery) {
+    const parts = isBestMode() ? _splitXrayQuery(rawQuery) : [rawQuery];
+    if (parts.length === 1) return [{ label, query: parts[0] }];
+    return parts.map((q, i) => ({ label: `${label} [${i+1}/${parts.length}]`, query: q }));
+  }
+
+  const primary=[
+    ...makeItems('LinkedIn', primaryQueryRaw),
+    ...(genericQueryRaw ? makeItems('LinkedIn(competitors)', genericQueryRaw) : []),
+    ...xray
+  ];
 
   let fallback=[];
-  const userHasCompanies = companies.length > 0;
-  // Note: includeRelated checkbox removed per requirements. When users have companies,
-  // we only use the primary query with those companies. No fallback query is needed
-  // because we're not offering the option to include "relevant companies" - we only
-  // search for the companies explicitly specified by the user.
-  if (!userHasCompanies) {
-    // When no companies specified, provide fallback query without company filter
-    fallback = [{label:'LinkedIn(no-company)', query:fallbackQuery}];
+  // Always provide fallback queries (job-title only, no company filter) so the backend
+  // can fill remaining slots when the primary (company-filtered) queries don't reach the
+  // target limit.  These are only executed by the backend when needed.
+  fallback = [...makeItems('LinkedIn(fallback)', fallbackQueryRaw)];
+
+  // In Best Mode with multiple job titles, also generate one query per job title so that
+  // all titles receive equal search depth.  Google CSE can silently favour the more common
+  // term in an OR expression (e.g. "Clinical Trial Manager" dominates "Site Activation
+  // Manager"), so per-title fallback queries ensure no title is skipped.
+  if (isBestMode() && jobTitles.length > 1) {
+    jobTitles.forEach(title => {
+      const singleTitleBlock = `"${escapeQuotes(title)}"`;
+      const singleBlocks = [];
+      if (langBlock) singleBlocks.push(langBlock);
+      singleBlocks.push(singleTitleBlock);
+      const perTitleQuery = joinBlocks(singleBlocks);
+      fallback.push({ label: `LinkedIn(fallback-${title})`, query: perTitleQuery });
+    });
   }
 
   return { primary, fallback };
 }
 function renderQueries(qs){
   const container=document.getElementById('queriesSection');
-  container.innerHTML='<h2>Generated Queries</h2>';
-  qs.forEach(q=>{
-    const a=document.createElement('a');
-    a.href='https://www.google.com/search?q='+encodeForGoogle(q.query);
-    a.target='_blank'; a.rel='noopener noreferrer';
-    a.textContent=q.label+' → '+q.query; a.style.display='block'; a.style.margin='6px 0';
-    container.appendChild(a);
+  container.innerHTML='';
+
+  const h2=document.createElement('h2');
+  h2.textContent='Generated Queries';
+  container.appendChild(h2);
+
+  if(!qs.length) return;
+
+  // Group consecutive items by base label (strip the " [N/M]" split suffix)
+  const groups=[];
+  for(const q of qs){
+    const base=q.label.replace(/\s+\[\d+\/\d+\]$/,'');
+    if(!groups.length || groups[groups.length-1].base!==base){
+      groups.push({base, items:[q]});
+    } else {
+      groups[groups.length-1].items.push(q);
+    }
+  }
+
+  const outerFrag=document.createDocumentFragment();
+  groups.forEach(group=>{
+    // Show auto-split notice when a command produced more than one query
+    if(group.items.length>1){
+      const badge=document.createElement('div');
+      badge.className='helper';
+      badge.style.cssText='margin:10px 0 2px; font-size:12px; font-weight:600; color:var(--accent);';
+      badge.textContent=`⚡ ${group.base}: ${group.items.length} queries (auto-split — original query exceeded ${XRAY_WORD_LIMIT} words)`;
+      outerFrag.appendChild(badge);
+    }
+    group.items.forEach(q=>{
+      const a=document.createElement('a');
+      a.href='https://www.google.com/search?q='+encodeForGoogle(q.query);
+      a.target='_blank'; a.rel='noopener noreferrer';
+      a.textContent=q.label+' → '+q.query; a.style.display='block'; a.style.margin='6px 0';
+      outerFrag.appendChild(a);
+    });
   });
+  container.appendChild(outerFrag);
 }
 
 async function translateJobTitle(text,target){
@@ -2304,7 +2684,8 @@ async function generateAndStart(){
     searchResultsOnly: searchResultsOnly,
     selectedSectors:selectedSectors.slice(),
     channelGaming:false, channelMedia:false, channelTechnology:false, xrayPlatformQueries:[],
-    userTarget: userTarget
+    userTarget: userTarget,
+    bestMode: isBestMode()
   };
   try{
     const res=await fetch('/start_job',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -2313,6 +2694,15 @@ async function generateAndStart(){
     if(!data.job_id) throw new Error('No job_id in response');
     show(document.getElementById('jobSection'));
     const tag=document.getElementById('jobIdTag'); if(tag) tag.textContent=data.job_id;
+    // Reset progress bar for new job
+    const _pFill=document.getElementById('sourcingProgressFill');
+    const _pCount=document.getElementById('sourcingProfileCount');
+    const _pWrap=document.getElementById('sourcingProgressWrap');
+    if(_pFill) _pFill.style.width='0%';
+    if(_pCount) _pCount.textContent='0';
+    if(_pWrap) hide(_pWrap); // will be shown by pollJob when first data arrives
+    // Persist the target limit so SourcingVerify can apply the correct token deduction rate
+    try { sessionStorage.setItem('last_job_target_limit', String(userTarget || 0)); } catch(e){ console.warn('[AutoSourcing] Could not save target limit to sessionStorage:', e); }
     pollJob(data.job_id);
   }catch(e){
     console.warn('Failed to start job',e);
@@ -2326,14 +2716,29 @@ async function pollJob(jobId){
   const counts=document.getElementById('jobCounts');
   const dl=document.getElementById('downloadArea');
   const btn=document.getElementById('generateBtn');
+  const progressWrap=document.getElementById('sourcingProgressWrap');
+  const progressFill=document.getElementById('sourcingProgressFill');
+  const profileCount=document.getElementById('sourcingProfileCount');
   let interval=1500;
+  // Show progress bar when polling starts
+  if(progressWrap) show(progressWrap);
   function extractFinalRowCount(html){ if(!html) return null; const m=/Wrote\s+(\d+)\s+rows/i.exec(html); return m?parseInt(m[1],10):null; }
+  function updateProgressBar(found, target){
+    if(!progressFill || !profileCount) return;
+    profileCount.textContent=found;
+    // When target is unknown (0), show an indeterminate 50% stripe rather than misleading 100%.
+    // When target is known, fill proportionally (capped at 100%).
+    const pct = target > 0 ? Math.min(100, Math.round((found / target) * 100)) : (found > 0 ? 50 : 0);
+    progressFill.style.width=pct+'%';
+  }
   function renderCounts(data){
     const urlsCount=Array.isArray(data.urls)?data.urls.length:0;
     const target=(data.meta&&typeof data.meta.dynamic_target==='number')?data.meta.dynamic_target:null;
     const parts=[]; if(target) parts.push(`Target results: ${target}`); parts.push(`URLs collected: ${urlsCount}`);
     if(data.done){ const finalRows=extractFinalRowCount(data.status_html||''); parts.push(`Final rows: ${finalRows!=null?finalRows:'?'}`); }
     if(counts) counts.textContent=parts.join(' · ');
+    // Update visual progress bar
+    updateProgressBar(urlsCount, target||0);
   }
   async function step(){
     try{
@@ -2366,6 +2771,8 @@ async function pollJob(jobId){
           removeSearchingSpinner(btn);
           btn.textContent='Ready for Download';
         }
+        // Set progress bar to 100% when done
+        if(progressFill) progressFill.style.width='100%';
         if(data.output_csv){
           let html=`<a href="/download/${encodeURIComponent(data.output_csv)}">Download Aggregated CSV</a>`;
           if(data.output_xlsx) html+=` · <a class="alt" href="/download/${encodeURIComponent(data.output_xlsx)}">Download XLSX</a>`;
@@ -2674,6 +3081,11 @@ function updateSectorEnabledState(){
                 scheduleEstimateUpdate(); 
               }
 
+              // Store product references extracted from JD for use in competitor suggestions
+              if (Array.isArray(analyzeData.products) && analyzeData.products.length) {
+                jdProducts = analyzeData.products.slice(0, MAX_JD_PRODUCTS_HINT);
+              }
+
               // NEW: Auto-select seniority dropdown based on analyzeData.seniority (map to dropdown options)
               try {
                 if (analyzeData.seniority) {
@@ -2881,13 +3293,17 @@ function renderExternalSuggestions(jobs, comps){
   
   if(jobGrid){
     jobGrid.innerHTML = '';
-    jobs.forEach(t => jobGrid.appendChild(makeChip(t, 'job', false)));
+    const jFrag = document.createDocumentFragment();
+    jobs.forEach(t => jFrag.appendChild(makeChip(t, 'job', false)));
+    jobGrid.appendChild(jFrag);
     if(jobs.length > 0) show(jobBox);
   }
   
   if(compGrid){
     compGrid.innerHTML = '';
-    comps.forEach(c => compGrid.appendChild(makeChip(c, 'company', false)));
+    const cFrag = document.createDocumentFragment();
+    comps.forEach(c => cFrag.appendChild(makeChip(c, 'company', false)));
+    compGrid.appendChild(cFrag);
     if(comps.length > 0) show(compBox);
   }
   

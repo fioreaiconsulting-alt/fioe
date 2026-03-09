@@ -106,11 +106,19 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
                     with JOBS_LOCK:
                         JOBS[job_id]['progress']['processed']=processed
                     if processed % 15 == 0: persist_job(job_id)
-        if executed_primary and len(rows)==0 and fallback_queries:
-            add_message(job_id,"Primary produced zero rows. Executing fallback queries...")
-            cse_results=_perform_cse_queries(job_id, fallback_queries, target_limit, country)
+        # Run fallback (job-title-only) queries whenever primary has not yet reached the
+        # target limit -- not just when it returned zero rows.  This ensures remaining
+        # slots are always filled with the best available candidates, regardless of how
+        # many the company-filtered queries found.
+        if executed_primary and fallback_queries and len(rows) < target_limit:
+            # still_needed_fb is always positive here because the condition above guards it
+            still_needed_fb = target_limit - len(rows)
+            add_message(job_id, f"Primary collected {len(rows)}/{target_limit}. Running fallback (job-title only) queries for remaining {still_needed_fb}...")
+            cse_results=_perform_cse_queries(job_id, fallback_queries, still_needed_fb, country)
             cse_queries_fired += len(fallback_queries)
-            new_urls=[r["link"] for r in cse_results]
+            # Collect already-seen URLs so duplicates from fallback are discarded
+            existing_urls = {r.get("LinkedInURL","") for r in rows}
+            new_urls=[r["link"] for r in cse_results if r.get("link") not in existing_urls]
             with JOBS_LOCK:
                 JOBS[job_id]['urls']=list(dict.fromkeys(JOBS[job_id]['urls']+new_urls))
                 JOBS[job_id]['progress']['total']=len(JOBS[job_id]['urls'])
@@ -118,11 +126,13 @@ def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, sea
             processed=0
             for item in cse_results:
                 link=item.get("link"); title=item.get("title")
-                domain_part=re.sub(r'^https?://','',link).split('/')[0].lower()
+                if not link or link in existing_urls:
+                    continue
                 if is_linkedin_profile(link):
                     name, jobtitle, company = parse_linkedin_title(title)
                     if name or jobtitle or company:
                         rows.append({"Name":name or "", "Company":company or "", "JobTitle":jobtitle or "", "Country":country or "", "LinkedInURL":link})
+                        existing_urls.add(link)
                 processed+=1
                 with JOBS_LOCK:
                     JOBS[job_id]['progress']['processed']=processed
@@ -371,10 +381,17 @@ def _gemini_multi_sector(selected, user_job_title, user_company, languages=None)
     languages = languages or []
     region_hint="SG/APAC" if SINGAPORE_CONTEXT else None
     input_obj={"selectedSectors": selected, "userJobTitle": user_job_title or None, "userCompany": user_company or None, "languages": languages, "regionHint": region_hint}
-    prompt=("SYSTEM:\nYou are a sourcing assistant. integrated into an application. Generate concise suggestions.\n"
+    prompt=("SYSTEM:\nYou are a sourcing assistant integrated into an application. Generate concise suggestions.\n"
             "Return ONLY JSON: {\"job\":{\"related\":[...]},\"company\":{\"related\":[...]}}\n"
             f"- Provide EXACTLY 15 real job titles (or fill with closest relevant if fewer) in job.related.\n"
             f"- Provide EXACTLY {COMPANY_SUGGESTIONS_LIMIT} real company names (brand-level) in company.related.\n"
+            "- STRICT SECTOR RULE for company.related: ONLY include companies whose PRIMARY BUSINESS and CORE\n"
+            "  OPERATIONS fall within the selected sector(s). EXCLUDE any company from a different industry\n"
+            "  that merely uses or purchases services in those sectors. Examples of what to exclude:\n"
+            "  * For Gaming / Technology sectors: do NOT include pharma, healthcare, finance, insurance, or\n"
+            "    manufacturing companies, even if they use software or hire engineers internally.\n"
+            "  * For Healthcare / Clinical Research sectors: do NOT include gaming, tech, or retail companies.\n"
+            "  Competitors must share the same product/service focus as companies already in the sector.\n"
             "- NO generic placeholders (e.g., 'Tech Company', 'Gaming Studio').\n"
             "- NO commentary or extra keys.\n"
             f"INPUT:\n{json.dumps(input_obj,ensure_ascii=False)}\nJSON:")

@@ -1026,9 +1026,14 @@ def _find_best_sector_match_for_text(candidate):
 # Keys are lowercase keywords; values are exact labels expected to exist (or closely match) in SECTORS_INDEX
 # NOTE: pharma/clinical mapping removed per user request (do not auto-apply pharma heuristics)
 _KEYWORD_TO_SECTOR_LABEL = {
+    "aircon": "Industrial & Manufacturing > Machinery",
+    "air-con": "Industrial & Manufacturing > Machinery",
     "hvac": "Industrial & Manufacturing > Machinery",
     "air conditioning": "Industrial & Manufacturing > Machinery",
     "air solutions": "Industrial & Manufacturing > Machinery",
+    "refrigeration": "Industrial & Manufacturing > Machinery",
+    "chiller": "Industrial & Manufacturing > Machinery",
+    "ventilation": "Industrial & Manufacturing > Machinery",
     "software": "Technology > Software",
     "cloud": "Technology > Cloud & Infrastructure",
     "infrastructure": "Technology > Cloud & Infrastructure",
@@ -1392,28 +1397,45 @@ def gemini_analyze_jd():
         company_identification_note = ""
         
         company_prompt = (
-            "You are a recruiting assistant. Analyze the following job description and identify ALL company names mentioned.\n"
+            "You are a recruiting assistant. Analyze the following job description and identify:\n"
+            "1. The PRIMARY job title being hired for (the exact role name, e.g. 'Cloud Engineer', 'Site Activation Manager', 'Sales Manager')\n"
+            "2. ALL company names explicitly mentioned\n"
+            "3. ALL product/technology/service names mentioned (e.g., 'Aircon', 'HVAC systems', 'cloud platforms', 'ERP software')\n"
             "Return STRICT JSON with this structure:\n"
-            "{ \"companies\": [\"Company Name 1\", \"Company Name 2\", ...] }\n"
+            "{ \"job_title\": \"Exact Role Title\", \"companies\": [\"Company Name 1\", ...], \"products\": [\"Product1\", \"Product2\", ...] }\n"
             "Rules:\n"
+            "- job_title: extract the SPECIFIC role title from the JD (e.g., 'Cloud Engineer', not 'Gaming Professional' or 'Technology Professional')\n"
             "- Include the hiring company if explicitly mentioned\n"
             "- Include client companies, partner companies, or competitor companies mentioned\n"
             "- Use official company names (e.g., 'Microsoft' not 'MS', 'Johnson & Johnson' not 'J&J')\n"
             "- Do NOT include generic industry terms (e.g., 'tech companies', 'pharma firms')\n"
-            "- Return empty array if no specific companies are mentioned\n"
+            "- For products: include tangible product categories (e.g., 'Aircon', 'air conditioning', 'HVAC', 'refrigerators', 'mobile phones', 'electric vehicles')\n"
+            "- Return empty string/array if none found\n"
             "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
         )
         
+        _jd_gen_config = genai.GenerationConfig(temperature=0.1, max_output_tokens=2048)
         model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
-        company_resp = model.generate_content(company_prompt)
+        company_resp = model.generate_content(company_prompt, generation_config=_jd_gen_config)
         company_raw = (company_resp.text or "").strip()
         company_obj = _extract_json_object(company_raw) or {}
+        
+        # Extract job title identified in Step 1 as a strong signal for the main analysis
+        step1_job_title = (company_obj.get("job_title") or "").strip()
         
         raw_companies = company_obj.get("companies") or []
         if isinstance(raw_companies, list):
             for c in raw_companies:
                 if isinstance(c, str) and c.strip():
                     identified_companies.append(c.strip())
+
+        # Extract products/technologies mentioned in the JD
+        identified_products = []
+        raw_products = company_obj.get("products") or []
+        if isinstance(raw_products, list):
+            for p in raw_products:
+                if isinstance(p, str) and p.strip():
+                    identified_products.append(p.strip())
         
         company_identification_note = f"Identified {len(identified_companies)} companies in JD." if identified_companies else "No companies identified in JD."
         
@@ -1431,27 +1453,50 @@ def gemini_analyze_jd():
         if identified_companies:
             companies_context = f"\n\nIDENTIFIED COMPANIES: {', '.join(identified_companies)}\n"
             companies_context += "Use these companies to help determine the appropriate sector(s) from the available sectors list."
+        elif identified_products:
+            # When no companies are found, use product references to infer sector
+            companies_context = f"\n\nIDENTIFIED PRODUCTS/TECHNOLOGIES: {', '.join(identified_products)}\n"
+            companies_context += (
+                "No specific companies were mentioned in this JD, but these products/technologies were identified. "
+                "Use them to:\n"
+                "1. Identify the correct industry sector (e.g., 'Aircon'/'HVAC' → Industrial & Manufacturing > Machinery)\n"
+                "2. Classify the role correctly — do NOT assign Gaming/Technology sectors to physical product roles\n"
+                "3. The company suggestions should be direct competitors that manufacture or sell these products\n"
+                "IMPORTANT: 'Aircon', 'air conditioning', 'HVAC', 'refrigeration' are Industrial/Manufacturing products, NOT gaming or technology."
+            )
 
         # Build strict JSON request to Gemini
+        # Include Step 1 job title as an anchor to prevent misclassification
+        job_title_hint = ""
+        if step1_job_title:
+            job_title_hint = (
+                f"\n\nPRE-IDENTIFIED JOB TITLE: \"{step1_job_title}\"\n"
+                "Use this as the job_title in your response unless the JD text strongly contradicts it."
+            )
         prompt = (
             "You are a recruiting assistant. Analyze the job description and return STRICT JSON with keys:\n"
             "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
             "IMPORTANT:\n"
+            "- job_title: extract the EXACT role name from the JD (e.g., 'Cloud Engineer', 'Site Activation Manager'). NEVER use generic labels like 'Gaming Professional' or 'Technology Professional'.\n"
             "- You MUST identify at least one sector. Use your best judgment if unclear.\n"
             "- Multiple sectors may be assigned if the role spans multiple domains.\n"
             "- Match sectors to the AVAILABLE SECTORS list provided below.\n"
+            "- CRITICAL: Physical product roles (e.g., Aircon, HVAC, manufacturing) belong to Industrial & Manufacturing, NOT Gaming or Technology. "
+            "These roles involve physical supply chains, mechanical engineering, and industrial processes that are fundamentally different from software or gaming industries.\n"
+            + job_title_hint
             + companies_context
             + sectors_list
             + "\nJOB DESCRIPTION:\n" + (text_input[:15000]) + "\n\nJSON:"
         )
 
-        resp = model.generate_content(prompt)
+        resp = model.generate_content(prompt, generation_config=_jd_gen_config)
         raw_out = (resp.text or "").strip()
         parsed_obj = _extract_json_object(raw_out) or {}
         parsed = parsed_obj.get("parsed", {})
         
         # Normalize output
-        job_title = (parsed.get("job_title") or parsed.get("role") or "").strip()
+        # Use Step 1 job title as fallback when Step 2 model returns empty
+        job_title = (parsed.get("job_title") or parsed.get("role") or step1_job_title or "").strip()
         seniority = (parsed.get("seniority") or "").strip()
         sector = parsed.get("sector") or ""
         sectors = parsed.get("sectors") or ([sector] if sector else [])
@@ -1912,7 +1957,8 @@ def gemini_analyze_jd():
                     industry=industry,
                     languages=None,
                     sectors=sectors,
-                    country=country
+                    country=country,
+                    products=identified_products  # Pass extracted product references for competitor context
                 )
                 
                 if gem_suggestions and gem_suggestions.get("job", {}).get("related"):
@@ -1956,15 +2002,27 @@ def gemini_analyze_jd():
                         # Add "Lead" variant
                         job_titles.append(f"Lead {job_title}")
             else:
-                # No job title provided at all - use sector-specific defaults
-                # These are placeholder titles when no better inference is possible
-                if sectors and sectors[0] != "Other":
-                    # Extract sector name for more specific title generation
-                    sector_name = sectors[0].split(">")[-1].strip() if ">" in sectors[0] else sectors[0]
-                    # Generate sector-appropriate titles (these are fallback placeholders)
-                    job_titles = [f"{sector_name} Professional", f"Senior {sector_name} Professional"]
-                else:
-                    # Ultimate fallback for unknown sectors
+                # No job title in JD — try a dedicated fast extraction before using generic placeholders
+                try:
+                    _title_extract_prompt = (
+                        "Extract the job title being hired for from this job description. "
+                        "Return ONLY the job title as plain text (e.g. 'Cloud Engineer', 'Product Manager'). "
+                        "If not determinable, return an empty string.\n\nJOB DESCRIPTION:\n"
+                        + (text_input[:3000])
+                    )
+                    _title_extract_resp = model.generate_content(
+                        _title_extract_prompt,
+                        generation_config=genai.GenerationConfig(temperature=0.05, max_output_tokens=64)
+                    )
+                    _extracted_title = (_title_extract_resp.text or "").strip().strip('"').strip()
+                    # Reject clearly generic/unhelpful responses
+                    # Reject titles that are PURELY generic labels (only when the entire title is a single generic word)
+                    _bad_patterns = re.compile(r'^(professional|specialist|expert|associate|general|worker|employee)$', re.I)
+                    if _extracted_title and len(_extracted_title) < 80 and not _bad_patterns.match(_extracted_title.strip()):
+                        job_titles = [_extracted_title, f"Senior {_extracted_title}"]
+                    else:
+                        job_titles = ["Professional", "Senior Professional"]
+                except Exception:
                     job_titles = ["Professional", "Senior Professional"]
         
         # Update justification to note job title inference
@@ -1995,6 +2053,7 @@ def gemini_analyze_jd():
             "justification": justification,
             "observation": observation,
             "skills": skills,
+            "products": identified_products,  # Product references extracted from JD (for competitor suggestions)
             "raw": raw_out
         }
         return jsonify(out), 200
@@ -4678,17 +4737,44 @@ def _enforce_company_limit(raw_list, country: str, limit: int, sectors=None):
         cleaned = _supplement_companies(cleaned, country, limit, sectors)
     return cleaned[:limit]
 
-def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors=None, country: str = None):
+def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors=None, country: str = None, products: list = None):
     if not (GEMINI_API_KEY and genai): return None
     languages = languages or []
     sectors = sectors or []
+    products = products or []
     locality_hint = "Prioritize Singapore/APAC relevance where naturally applicable." if SINGAPORE_CONTEXT else ""
     
     # Add country-specific filtering instruction
     country_filter_hint = ""
     if country:
         country_filter_hint = f"\n- When suggesting companies, ONLY recommend companies with a legal entity or registered presence in {country}.\n- Exclude companies that do not operate in {country}.\n"
-    
+
+    # Add strict sector rule when sectors are provided to prevent cross-sector leakage
+    sector_strict_hint = ""
+    if sectors:
+        sector_strict_hint = (
+            "\n- STRICT SECTOR RULE for company.related: ONLY include companies whose PRIMARY BUSINESS and CORE"
+            " OPERATIONS are direct competitors in the specified sector(s). EXCLUDE any company from a different"
+            " industry that merely uses or purchases products/services in those sectors. Examples of what to exclude:\n"
+            "  * For Gaming / Technology sectors: do NOT include pharma, healthcare, finance, insurance, or"
+            " manufacturing companies, even if they use software or hire engineers internally.\n"
+            "  * For Healthcare / Clinical Research sectors: do NOT include gaming, tech, or retail companies.\n"
+            "  * For Industrial & Manufacturing sectors: do NOT include pure software, gaming, or financial services companies.\n"
+            "  Competitors must share the same product/service focus as the job context.\n"
+        )
+
+    # Add product-based competitor hint when products are present.
+    # Only applied when no companies are provided: when companies exist, they already
+    # give Gemini strong competitor context, and adding products could create conflicting signals.
+    product_hint = ""
+    if products and not companies:
+        product_hint = (
+            f"\n- PRODUCT CONTEXT: The JD references these products/technologies: {', '.join(products[:10])}.\n"
+            "  When no companies are explicitly mentioned, prioritize direct competitors that manufacture or sell these SAME products.\n"
+            "  For example: if the JD mentions 'Aircon' or 'HVAC', suggest companies like Daikin, Carrier, Trane, Mitsubishi Electric, LG Electronics, etc.\n"
+            "  Do NOT suggest companies from unrelated industries just to fill the list.\n"
+        )
+
     input_obj = {
         "sectors": sectors,
         "jobTitles": job_titles,
@@ -4705,10 +4791,12 @@ def _gemini_suggestions(job_titles, companies, industry, languages=None, sectors
         f"Hard requirements:\n"
         f"- Provide EXACTLY {job_limit} distinct, real, professional job title variants in job.related (if context allows; otherwise fill remaining with closest relevant titles).\n"
         f"- Provide EXACTLY {company_limit} distinct, real, company or organization names in company.related.\n"
-        "- Company names MUST be real, brand-level entities (e.g., 'Ubisoft', 'Electronic Arts', 'Pfizer').\n"
+        "- Company names MUST be real, brand-level entities (e.g., 'Ubisoft', 'Electronic Arts', 'Epic Games').\n"
         "- DO NOT output generic placeholders (e.g., 'Gaming Studio', 'Tech Company', 'Pharma Company', 'Consulting Firm', 'Marketing Agency').\n"
-        + country_filter_hint +
-        "- No duplicates, no commentary, no extra keys.\n"
+        + country_filter_hint
+        + sector_strict_hint
+        + product_hint
+        + "- No duplicates, no commentary, no extra keys.\n"
         "- If insufficient context, fill remaining slots with well-known global or APAC companies relevant to the sectors/location.\n"
         "- Maintain JSON key order as shown.\n"
         f"{locality_hint}\n\nINPUT(JSON): {json.dumps(input_obj, ensure_ascii=False)}\n\nJSON:"
@@ -4907,6 +4995,7 @@ def suggest():
     languages = data.get("languages") or []
     sectors = data.get("sectors") or data.get("selectedSectors") or []
     country = (data.get("country") or "").strip()
+    products = data.get("products") or []  # Product references extracted from JD
     key = (tuple(sorted([jt.strip().lower() for jt in job_titles])),
            tuple(sorted([c.strip().lower() for c in companies])),
            industry.lower(),
@@ -4920,7 +5009,7 @@ def suggest():
 
     user_jobs_clean = [jt.strip() for jt in job_titles if isinstance(jt, str) and jt.strip()]
 
-    gem=_gemini_suggestions(job_titles, companies, industry, languages, sectors, country)
+    gem=_gemini_suggestions(job_titles, companies, industry, languages, sectors, country, products)
     if gem:
         existing_companies = {c.lower() for c in companies if isinstance(c, str) and c.strip()}
         gem_job_raw = [s for s in gem.get("job", {}).get("related", []) if isinstance(s, str) and s.strip()]
@@ -5030,7 +5119,7 @@ def parse_linkedin_title(title: str):
     return name or None, jobtitle or None, company or None
 
 def google_cse_search_page(query: str, api_key: str, cx: str, num: int, start_index: int, gl_hint: str = None):
-    if not api_key or not cx: return []
+    if not api_key or not cx: return [], 0
     endpoint="https://www.googleapis.com/customsearch/v1"
     params={"key":api_key,"cx":cx,"q":query,"num":min(num,10),"start":start_index}
     if gl_hint: params["gl"]=gl_hint
@@ -5039,13 +5128,18 @@ def google_cse_search_page(query: str, api_key: str, cx: str, num: int, start_in
         r.raise_for_status()
         data=r.json()
         items=data.get("items",[]) or []
+        total_str=(data.get("searchInformation") or {}).get("totalResults","0") or "0"
+        try:
+            estimated_total=int(str(total_str).replace(",",""))
+        except (ValueError, TypeError):
+            estimated_total=0
         out=[]
         for it in items:
             out.append({"link":it.get("link") or "","title":it.get("title") or "","snippet":it.get("snippet") or "","displayLink":it.get("displayLink") or ""})
-        return out
+        return out, estimated_total
     except Exception as e:
         logger.warning(f"[CSE] page fetch failed: {e}")
-        return []
+        return [], 0
 
 def _is_private_host(url: str) -> bool:
     """Return True if the URL resolves to a private/loopback/reserved IP — used to block SSRF."""
@@ -5272,37 +5366,52 @@ def _infer_primary_job_title(job_titles):
 
 def _perform_cse_queries(job_id, queries, target_limit, country):
     results=[]
-    # Assuming queries are distributed evenly
     m_cc=re.search(r'site:([a-z]{2})\.linkedin\.com/in', " ".join(queries), re.I)
     country_code_hint = m_cc.group(1).lower() if m_cc else None
-    
-    # Calculate a simple target per query
-    total_queries = max(1, len(queries))
-    per_query_target = max(1, target_limit // total_queries)
+
+    global_collected = 0
 
     for q in queries:
+        # Global stop-loss: target already reached, no need to fire more queries.
+        still_needed = target_limit - global_collected
+        if still_needed <= 0:
+            add_message(job_id, f"Target reached: {global_collected}/{target_limit} — skipping remaining queries")
+            break
+
+        # Each query tries to collect however many are still needed to reach the
+        # overall target, so shortfalls from earlier queries are automatically filled.
         gathered=0; start_index=1; pages_fetched=0
-        add_message(job_id, f"Running CSE: {q} target={per_query_target}")
-        
-        while gathered < per_query_target:
-            remaining = per_query_target - gathered
+        effective_target = still_needed
+        add_message(job_id, f"Running CSE: {q} target={effective_target} (need {still_needed} more to reach {target_limit})")
+
+        while gathered < effective_target:
+            remaining = effective_target - gathered
             page_size = min(CSE_PAGE_SIZE, remaining)
-            
-            page = google_cse_search_page(q, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, page_size, start_index, gl_hint=country_code_hint)
+
+            page, estimated_total = google_cse_search_page(q, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, page_size, start_index, gl_hint=country_code_hint)
             pages_fetched+=1
-            
+
+            # Per-query stop-loss: if Google reports fewer total results than we
+            # are requesting from this query, cap the query target to what Google
+            # says is actually available.  This prevents wasting API quota on
+            # pages that will always return empty, but does NOT prevent subsequent
+            # queries from running to make up the shortfall.
+            if pages_fetched == 1 and estimated_total > 0 and estimated_total < effective_target:
+                effective_target = estimated_total
+                add_message(job_id, f"  Stop-loss: Google reports ~{estimated_total} results for this query — capping to {effective_target}")
+
             if not page:
                 add_message(job_id, f"  No results page start={start_index}")
                 break
-            
-            results.extend(page); gathered+=len(page)
+
+            results.extend(page); gathered+=len(page); global_collected+=len(page)
             if len(page) < page_size: break
             start_index += len(page)
-            
-            # Simple safety break
-            if pages_fetched >= 20: break 
+
+            # Safety break — prevents runaway pagination on unexpectedly large indices
+            if pages_fetched >= 20: break
             time.sleep(CSE_PAGE_DELAY)
-            
+
         add_message(job_id, f"CSE done (collected {gathered}). pages={pages_fetched}")
     return _dedupe_links(results)
 
