@@ -2410,14 +2410,24 @@ function buildQueries(country){
   ];
 
   let fallback=[];
-  const userHasCompanies = companies.length > 0;
-  // Note: includeRelated checkbox removed per requirements. When users have companies,
-  // we only use the primary query with those companies. No fallback query is needed
-  // because we're not offering the option to include "relevant companies" - we only
-  // search for the companies explicitly specified by the user.
-  if (!userHasCompanies) {
-    // When no companies specified, provide fallback query without company filter
-    fallback = makeItems('LinkedIn(no-company)', fallbackQueryRaw);
+  // Always provide fallback queries (job-title only, no company filter) so the backend
+  // can fill remaining slots when the primary (company-filtered) queries don't reach the
+  // target limit.  These are only executed by the backend when needed.
+  fallback = [...makeItems('LinkedIn(fallback)', fallbackQueryRaw)];
+
+  // In Best Mode with multiple job titles, also generate one query per job title so that
+  // all titles receive equal search depth.  Google CSE can silently favour the more common
+  // term in an OR expression (e.g. "Clinical Trial Manager" dominates "Site Activation
+  // Manager"), so per-title fallback queries ensure no title is skipped.
+  if (isBestMode() && jobTitles.length > 1) {
+    jobTitles.forEach(title => {
+      const singleTitleBlock = `"${escapeQuotes(title)}"`;
+      const singleBlocks = [];
+      if (langBlock) singleBlocks.push(langBlock);
+      singleBlocks.push(singleTitleBlock);
+      const perTitleQuery = joinBlocks(singleBlocks);
+      fallback.push({ label: `LinkedIn(fallback-${title})`, query: perTitleQuery });
+    });
   }
 
   return { primary, fallback };
