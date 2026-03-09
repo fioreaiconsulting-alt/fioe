@@ -2051,6 +2051,115 @@ if (companyRefreshBtn) companyRefreshBtn.addEventListener('click', ()=>{ refresh
 
 function encodeForGoogle(q){ return encodeURIComponent(q).replace(/%20/g,'+'); }
 
+// ── Xray query auto-split ──────────────────────────────────────────────────
+const XRAY_WORD_LIMIT = 32;
+
+function _xrayWordCount(s) {
+  return s ? s.trim().split(/\s+/).filter(Boolean).length : 0;
+}
+
+/**
+ * Split a single Xray query string into ≤ XRAY_WORD_LIMIT-word queries when needed.
+ *
+ * Rules:
+ *  - Structural operators (site:, -intitle:, -inurl:, seniority exclusions) stay
+ *    intact in every resulting query and are never split.
+ *  - Language variant blocks (identified by the "( (" double-paren signature of
+ *    buildLanguageXrayBlock) are treated as structural and never split.
+ *  - Only keyword OR-expression blocks (job titles, company names) are split.
+ *
+ * Returns an array of query strings.  If the query is already ≤ the limit, or
+ * no splittable blocks are found, returns [fullQuery] unchanged.
+ */
+function _splitXrayQuery(fullQuery, wordLimit) {
+  wordLimit = wordLimit || XRAY_WORD_LIMIT;
+  if (_xrayWordCount(fullQuery) <= wordLimit) return [fullQuery];
+
+  // Isolate site: prefix (single no-space token at the start)
+  const siteM = fullQuery.match(/^(site:\S+)([\s\S]*)$/);
+  if (!siteM) return [fullQuery];
+  const site = siteM[1];
+  const rest = siteM[2].trim();
+
+  // Isolate structural suffix: -intitle:"…" -inurl:"…" and optional seniority tokens
+  const suffixM = rest.match(/\s+(-intitle:[^\s]+ -inurl:[^\s]+(?:\s+-[A-Za-z]+)*)$/);
+  const suffix = suffixM ? suffixM[1] : '';
+  const middle = suffix ? rest.slice(0, rest.length - suffix.length).trim() : rest;
+
+  if (!middle) return [fullQuery];
+
+  // Split middle by ' AND ' into top-level blocks
+  const andBlocks = middle.split(/ AND /g).map(b => b.trim()).filter(Boolean);
+
+  // Language blocks produced by buildLanguageXrayBlock() start with "( (" — skip them.
+  // Splittable blocks: contain OR and are NOT language blocks.
+  const isLangBlock = b => /^\(\s*\(/.test(b.trim());
+  const splitCandidates = andBlocks.filter(b => / OR /.test(b) && !isLangBlock(b));
+
+  if (!splitCandidates.length) return [fullQuery];
+
+  // Pick the OR block with the most words as the split target
+  const targetBlock = splitCandidates.reduce((a, b) => _xrayWordCount(b) > _xrayWordCount(a) ? b : a);
+
+  // Parse individual OR terms from the target block (strip outer parens if present)
+  let inner = targetBlock.trim();
+  if (inner.startsWith('(') && inner.endsWith(')')) inner = inner.slice(1, -1).trim();
+  const orTerms = inner.split(/ OR /).map(t => t.trim()).filter(Boolean);
+
+  if (orTerms.length <= 1) return [fullQuery];
+
+  // Fixed blocks: everything except the target block
+  const otherBlocks = andBlocks.filter(b => b !== targetBlock);
+
+  // Assemble a query from a batch of OR terms
+  function assembleQuery(orExpr) {
+    const usedBlocks = orExpr ? [...otherBlocks, orExpr] : [...otherBlocks];
+    let q = site;
+    if (usedBlocks.length) q += ' ' + usedBlocks.join(' AND ');
+    if (suffix) q += ' ' + suffix;
+    return q.trim();
+  }
+
+  // Compute word budget: wordLimit minus words in everything except the new OR block
+  const skeletonWords = _xrayWordCount(
+    otherBlocks.length
+      ? `${site} ${otherBlocks.join(' AND ')} ${suffix}`.trim()
+      : `${site} ${suffix}`.trim()
+  );
+  // +1 for the AND connector joining the OR block to the rest (only when other blocks exist)
+  const andConnector = otherBlocks.length > 0 ? 1 : 0;
+  const budget = wordLimit - skeletonWords - andConnector;
+
+  if (budget < 1) return [fullQuery]; // fixed parts alone exceed the limit; can't help
+
+  // Pack OR terms into batches, each fitting within budget
+  const batches = [];
+  let current = [];
+  let currentW = 0;
+
+  for (const term of orTerms) {
+    const tw = _xrayWordCount(term);
+    const addW = current.length > 0 ? 1 + tw : tw; // +1 for the ' OR ' connector token
+    if (current.length > 0 && currentW + addW > budget) {
+      batches.push([...current]);
+      current = [term];
+      currentW = tw;
+    } else {
+      current.push(term);
+      currentW += addW;
+    }
+  }
+  if (current.length > 0) batches.push(current);
+
+  if (batches.length <= 1) return [fullQuery];
+
+  return batches.map(terms => {
+    const orExpr = terms.length === 1 ? terms[0] : '(' + terms.join(' OR ') + ')';
+    return assembleQuery(orExpr);
+  });
+}
+// ── End Xray query auto-split ─────────────────────────────────────────────
+
 function buildQueries(country){
   const langBlock=buildLanguageXrayBlock();
   const jobBlock=buildJobTitleExpressionAugmented();
@@ -2064,10 +2173,18 @@ function buildQueries(country){
   function joinBlocks(blocks){
     let q=site; if(blocks.length) q+=' '+blocks.join(' AND '); q+=' -intitle:"jobs" -inurl:"dir/"'; if(seniorityExcl) q+=' '+seniorityExcl; return q;
   }
-  const primaryQuery=joinBlocks(withCompaniesBlocks);
-  const fallbackQuery=joinBlocks(baseBlocks);
+  const primaryQueryRaw=joinBlocks(withCompaniesBlocks);
+  const fallbackQueryRaw=joinBlocks(baseBlocks);
   const xray=buildChannelXrayQueries();
-  const primary=[{label:'LinkedIn', query:primaryQuery}, ...xray];
+
+  // Expand a raw query into one-or-more split queries, labelled accordingly
+  function makeItems(label, rawQuery) {
+    const parts = _splitXrayQuery(rawQuery);
+    if (parts.length === 1) return [{ label, query: parts[0] }];
+    return parts.map((q, i) => ({ label: `${label} [${i+1}/${parts.length}]`, query: q }));
+  }
+
+  const primary=[...makeItems('LinkedIn', primaryQueryRaw), ...xray];
 
   let fallback=[];
   const userHasCompanies = companies.length > 0;
@@ -2077,20 +2194,48 @@ function buildQueries(country){
   // search for the companies explicitly specified by the user.
   if (!userHasCompanies) {
     // When no companies specified, provide fallback query without company filter
-    fallback = [{label:'LinkedIn(no-company)', query:fallbackQuery}];
+    fallback = makeItems('LinkedIn(no-company)', fallbackQueryRaw);
   }
 
   return { primary, fallback };
 }
 function renderQueries(qs){
   const container=document.getElementById('queriesSection');
-  container.innerHTML='<h2>Generated Queries</h2>';
-  qs.forEach(q=>{
-    const a=document.createElement('a');
-    a.href='https://www.google.com/search?q='+encodeForGoogle(q.query);
-    a.target='_blank'; a.rel='noopener noreferrer';
-    a.textContent=q.label+' → '+q.query; a.style.display='block'; a.style.margin='6px 0';
-    container.appendChild(a);
+  container.innerHTML='';
+
+  const h2=document.createElement('h2');
+  h2.textContent='Generated Queries';
+  container.appendChild(h2);
+
+  if(!qs.length) return;
+
+  // Group consecutive items by base label (strip the " [N/M]" split suffix)
+  const groups=[];
+  for(const q of qs){
+    const base=q.label.replace(/\s+\[\d+\/\d+\]$/,'');
+    if(!groups.length || groups[groups.length-1].base!==base){
+      groups.push({base, items:[q]});
+    } else {
+      groups[groups.length-1].items.push(q);
+    }
+  }
+
+  groups.forEach(group=>{
+    // Show auto-split notice when a command produced more than one query
+    if(group.items.length>1){
+      const badge=document.createElement('div');
+      badge.className='helper';
+      badge.style.cssText='margin:10px 0 2px; font-size:12px; font-weight:600; color:var(--accent);';
+      badge.textContent=`⚡ ${group.base}: ${group.items.length} queries (auto-split — original query exceeded ${XRAY_WORD_LIMIT} words)`;
+      container.appendChild(badge);
+    }
+    group.items.forEach(q=>{
+      const a=document.createElement('a');
+      a.href='https://www.google.com/search?q='+encodeForGoogle(q.query);
+      a.target='_blank'; a.rel='noopener noreferrer';
+      a.textContent=q.label+' → '+q.query; a.style.display='block'; a.style.margin='6px 0';
+      container.appendChild(a);
+    });
   });
 }
 
