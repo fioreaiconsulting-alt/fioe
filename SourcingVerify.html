@@ -2496,9 +2496,14 @@ function syncMetricTokens(backendToken){
     return leftComputed;
   }
 
-  // We have authoritative backend token -> compute left and possibly persist
+  // We have authoritative backend token -> compute left and possibly persist.
+  // Token deduction rule: if the user's target limit exceeded 50, the search is heavier and costs
+  // 2 tokens per result row; otherwise the standard rate is 1 token per result row.
+  // The target limit is saved to sessionStorage by AutoSourcing.html as 'last_job_target_limit'.
+  const _savedTarget = parseInt(sessionStorage.getItem('last_job_target_limit') || '0', 10);
+  const _deductionRate = (_savedTarget > 50) ? 2 : 1;
   totalTokenEl.textContent = String(acctTokenNum);
-  const leftComputed = Math.max(0, acctTokenNum - effectiveTotal);
+  const leftComputed = Math.max(0, acctTokenNum - (effectiveTotal * _deductionRate));
   tokensLeftEl.textContent = String(leftComputed);
 
   // Session guard key prevents repeated persists for same result_count within this browser session/tab.

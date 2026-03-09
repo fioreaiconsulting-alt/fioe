@@ -1042,6 +1042,9 @@ const companies=[]; const companyIndex=new Set();
 const languages=[]; const languageIndex=new Set();
 let autoSuggestedCompanies=[];
 let genericCompetitorCompanies=[];   // direct competitors from /suggest (non-sector) — used for dual-query in Best Mode
+// Maximum number of direct competitors to include as "top-tier" (the /suggest response is ordered
+// by relevance/local-presence, so slicing to this cap keeps only the most authoritative ones).
+const MAX_TOP_TIER_COMPETITORS = 15;
 const suppressedAutoSuggestedCompanies=new Set();
 const userSkills = []; const userSkillIndex = new Set();
 const estimateValueEl = document.getElementById('estimateValue');
@@ -1721,10 +1724,14 @@ function renderSuggestionsAggregated(data){
     sectorCompanyRelated.forEach(s => sectorKeys.add(canonicalKey(normalizeSpaces(s))));
     const competitors = companyList.filter(c => !sectorKeys.has(canonicalKey(c)));
     const sectorOnly  = companyList.filter(c =>  sectorKeys.has(canonicalKey(c)));
-    // Track generic competitors (non-sector) for dual-query generation in buildQueries
-    genericCompetitorCompanies = dedupe(competitors);
-    // Chips display: competitors first, then sector companies (no duplication)
-    companyList = dedupe([...competitors, ...sectorOnly]);
+    // Track generic competitors (non-sector) for dual-query generation in buildQueries.
+    // Cap to MAX_TOP_TIER_COMPETITORS: the /suggest response is already ordered by relevance
+    // (AI-extracted, local-presence-verified), so the first N entries are the most authoritative
+    // direct competitors. This guardrail prevents generic or low-tier companies from inflating
+    // the competitor query or appearing in suggestion chips ahead of the sector companies.
+    genericCompetitorCompanies = dedupe(competitors).slice(0, MAX_TOP_TIER_COMPETITORS);
+    // Chips display: top-tier competitors first (capped), then sector companies
+    companyList = dedupe([...dedupe(competitors).slice(0, MAX_TOP_TIER_COMPETITORS), ...sectorOnly]);
   } else {
     genericCompetitorCompanies = [];
   }
@@ -2593,6 +2600,8 @@ async function generateAndStart(){
     if(!data.job_id) throw new Error('No job_id in response');
     show(document.getElementById('jobSection'));
     const tag=document.getElementById('jobIdTag'); if(tag) tag.textContent=data.job_id;
+    // Persist the target limit so SourcingVerify can apply the correct token deduction rate
+    try { sessionStorage.setItem('last_job_target_limit', String(userTarget || 0)); } catch(e){ console.warn('[AutoSourcing] Could not save target limit to sessionStorage:', e); }
     pollJob(data.job_id);
   }catch(e){
     console.warn('Failed to start job',e);
