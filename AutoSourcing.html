@@ -1650,6 +1650,9 @@ const globalRefreshBtn = document.getElementById('refreshSuggestionsBtn');
 if (globalRefreshBtn) globalRefreshBtn.addEventListener('click', ()=>{ refreshSuggestionsAll(); });
 
 let lastSuggestionHash=''; let lastGeneralSuggestions=null;
+// AbortController for in-flight /suggest requests — cancelled when a newer call is made so
+// stale responses never overwrite fresher results and their memory is released promptly.
+let _suggestAbortCtrl=null;
 
 function hashSuggestionPayload(){ return JSON.stringify({ jobs:[...jobTitles].sort(), companies:[...companies].sort(), languages:[...languages].sort(), sectors:[...selectedSectors].sort(), currentRole:false, country:(val('country')||'').toLowerCase() }); }
 function scheduleSuggestionsUpdate(){ debouncedFetchSuggestions(); }
@@ -1664,12 +1667,19 @@ async function fetchSuggestions(force=false){
   const h=hashSuggestionPayload();
   if(!force && h===lastSuggestionHash && lastGeneralSuggestions){ renderSuggestionsAggregated(lastGeneralSuggestions); return; }
   lastSuggestionHash=h;
+  // Cancel any previous in-flight request so stale responses don't overwrite fresher results.
+  if (_suggestAbortCtrl) _suggestAbortCtrl.abort();
+  _suggestAbortCtrl = new AbortController();
+  const _signal = _suggestAbortCtrl.signal;
   if(suggestionsLoading) suggestionsLoading.classList.remove('hidden'); suggestionsEmpty.classList.add('hidden'); if(suggestionsError) suggestionsError.classList.add('hidden');
   try{
-    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country })});
+    const res=await fetch('/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ jobTitles, companies, languages, sectors:selectedSectors, country }),signal:_signal});
     if(!res.ok) throw new Error(await res.text());
     const data=await res.json(); lastGeneralSuggestions=data; renderSuggestionsAggregated(data);
-  }catch(e){ if(suggestionsError){ suggestionsError.textContent='Suggestion error: '+e.message; suggestionsError.classList.remove('hidden'); } }
+  }catch(e){
+    if(_signal.aborted) return; // superseded by a newer request — do nothing
+    if(suggestionsError){ suggestionsError.textContent='Suggestion error: '+e.message; suggestionsError.classList.remove('hidden'); }
+  }
   finally{ if(suggestionsLoading) suggestionsLoading.classList.add('hidden'); }
 }
 
@@ -1722,16 +1732,25 @@ function renderSuggestionsAggregated(data){
   if (selectedSectors.length > 0 && sectorCompanyRelated && sectorCompanyRelated.size > 0) {
     const sectorKeys = new Set();
     sectorCompanyRelated.forEach(s => sectorKeys.add(canonicalKey(normalizeSpaces(s))));
-    const competitors = companyList.filter(c => !sectorKeys.has(canonicalKey(c)));
+    // Derive competitors ONLY from the raw /suggest response (data.company.related), never from
+    // companyList which may include jdCompanySnapshot entries when the JD is locked.
+    // jdCompanySnapshot captures a broad industry set from the initial JD analysis (e.g. pharma
+    // manufacturers, medical device firms, hospital IT) that are in the same sector but NOT in the
+    // same product/service category. The /suggest endpoint is contextually scoped to the job titles
+    // + country, so its company.related list returns companies in the same operational category
+    // (e.g. CROs like Covance/Medpace/Charles River for an IQVIA Site Activation Manager role,
+    // not Pfizer or Epic Systems).
+    const rawSuggestCompanies = (data.company?.related || [])
+      .map(s => normalizeSpaces(s)).filter(Boolean);
+    const competitors = rawSuggestCompanies.filter(c => !sectorKeys.has(canonicalKey(c)));
     const sectorOnly  = companyList.filter(c =>  sectorKeys.has(canonicalKey(c)));
-    // Track generic competitors (non-sector) for dual-query generation in buildQueries.
-    // Cap to MAX_TOP_TIER_COMPETITORS: the /suggest response is already ordered by relevance
-    // (AI-extracted, local-presence-verified), so the first N entries are the most authoritative
-    // direct competitors. This guardrail prevents generic or low-tier companies from inflating
-    // the competitor query or appearing in suggestion chips ahead of the sector companies.
+    // Cap to MAX_TOP_TIER_COMPETITORS: the /suggest response is ordered by AI relevance with
+    // local-presence verification, so the first N entries are the most authoritative same-category
+    // competitors. This guardrail prevents low-tier or off-category companies from inflating the
+    // competitor query or appearing in suggestion chips ahead of sector companies.
     genericCompetitorCompanies = dedupe(competitors).slice(0, MAX_TOP_TIER_COMPETITORS);
-    // Chips display: top-tier competitors first (capped), then sector companies
-    companyList = dedupe([...dedupe(competitors).slice(0, MAX_TOP_TIER_COMPETITORS), ...sectorOnly]);
+    // Chips display: top-tier direct competitors first (capped), then sector companies
+    companyList = dedupe([...genericCompetitorCompanies, ...sectorOnly]);
   } else {
     genericCompetitorCompanies = [];
   }
