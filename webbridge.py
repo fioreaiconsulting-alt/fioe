@@ -2278,6 +2278,127 @@ def gemini_analyze_jd():
         logger.exception("Gemini analyze_jd failed")
         return jsonify({"error": str(e)}), 500
 
+@app.post("/chat/upload_jd")
+@_rate("20 per minute")
+@_check_user_rate("upload_jd")
+def chat_upload_jd():
+    """
+    POST /chat/upload_jd  (multipart/form-data)
+    Accepts a Job Description file upload (PDF / DOCX / plain text) from the chat
+    interface. Extracts text, stores it in login.jd, and triggers skill extraction
+    via Gemini if available.
+
+    Form fields:
+      - username (str): authenticated user's username
+      - file      (file): the JD document
+
+    Response: { "status": "ok", "message": "...", "length": <int> }
+    """
+    conn = None
+    cur = None
+    try:
+        import io as _io
+        username = (request.form.get("username") or "").strip()
+        if not username:
+            return jsonify({"error": "username required"}), 400
+        if "file" not in request.files:
+            return jsonify({"error": "No file part in request"}), 400
+        file = request.files["file"]
+        if not file or file.filename == "":
+            return jsonify({"error": "No file selected"}), 400
+
+        # Size guard — check content-length before reading the whole body
+        if (request.content_length or 0) > _SINGLE_FILE_MAX:
+            return jsonify({"error": "File too large (max 6 MB)"}), 413
+        file_bytes = file.read()
+        if len(file_bytes) > _SINGLE_FILE_MAX:
+            return jsonify({"error": "File too large (max 6 MB)"}), 413
+
+        filename = (file.filename or "").lower()
+        extracted_text = ""
+
+        if filename.endswith(".pdf"):
+            if not _is_pdf_bytes(file_bytes):
+                return jsonify({"error": "Uploaded file is not a valid PDF"}), 400
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(_io.BytesIO(file_bytes))
+                for page in reader.pages:
+                    extracted_text += (page.extract_text() or "") + "\n"
+            except ImportError:
+                return jsonify({"error": "pypdf not installed; cannot process PDF"}), 500
+            except Exception as pdf_err:
+                return jsonify({"error": f"PDF parsing error: {pdf_err}"}), 500
+        elif filename.endswith((".docx", ".doc")):
+            try:
+                import docx
+                doc = docx.Document(_io.BytesIO(file_bytes))
+                for para in doc.paragraphs:
+                    extracted_text += para.text + "\n"
+            except ImportError:
+                return jsonify({"error": "python-docx not installed; cannot process DOCX"}), 500
+            except Exception as docx_err:
+                return jsonify({"error": f"DOCX parsing error: {docx_err}"}), 500
+        else:
+            try:
+                extracted_text = file_bytes.decode("utf-8", errors="ignore")
+            except Exception as txt_err:
+                return jsonify({"error": f"Text decoding error: {txt_err}"}), 500
+
+        extracted_text = extracted_text.strip()
+        if not extracted_text:
+            return jsonify({"error": "Could not extract text from the uploaded file"}), 400
+
+        # Persist JD text to login table
+        import psycopg2
+        conn = psycopg2.connect(
+            host=os.getenv("PGHOST", "localhost"),
+            port=int(os.getenv("PGPORT", "5432")),
+            user=os.getenv("PGUSER", "postgres"),
+            password=os.getenv("PGPASSWORD", ""),
+            dbname=os.getenv("PGDATABASE", "candidate_db"),
+        )
+        cur = conn.cursor()
+        cur.execute("UPDATE login SET jd = %s WHERE username = %s", (extracted_text, username))
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({"error": "User not found"}), 404
+        conn.commit()
+
+        # Best-effort: auto-extract skills via Gemini and persist
+        try:
+            from chat_gemini_review import analyze_job_description
+            analysis = analyze_job_description(extracted_text)
+            skills = (analysis.get("parsed") or {}).get("skills") or []
+            if skills:
+                _persist_jskillset(username, skills)
+        except Exception as skill_err:
+            logger.warning(f"[chat/upload_jd] Skill extraction skipped: {skill_err}")
+
+        logger.info(f"[chat/upload_jd] JD uploaded for user='{username}', length={len(extracted_text)}")
+        return jsonify({"status": "ok", "message": "JD uploaded and stored",
+                        "length": len(extracted_text)}), 200
+
+    except Exception as e:
+        logger.exception(f"[chat/upload_jd] Unexpected error for user='{request.form.get('username', '')}': {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 # Helper: persist jskillset (and fallback columns) for a username
 def _persist_jskillset(username: str, skills):
     """
@@ -4565,15 +4686,20 @@ def user_update_role_tag():
         role_tag = (request.args.get("role_tag") or "").strip()
     if not username:
         return jsonify({"error": "username required"}), 400
+    conn = None
+    cur = None
     try:
         import psycopg2
-        pg_host=os.getenv("PGHOST","localhost")
-        pg_port=int(os.getenv("PGPORT","5432"))
-        pg_user=os.getenv("PGUSER","postgres")
-        pg_password=os.getenv("PGPASSWORD", "")
-        pg_db=os.getenv("PGDATABASE","candidate_db")
-        conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
-        cur=conn.cursor()
+        pg_host = os.getenv("PGHOST", "localhost")
+        pg_port = int(os.getenv("PGPORT", "5432"))
+        pg_user = os.getenv("PGUSER", "postgres")
+        pg_password = os.getenv("PGPASSWORD", "")
+        pg_db = os.getenv("PGDATABASE", "candidate_db")
+        conn = psycopg2.connect(
+            host=pg_host, port=pg_port, user=pg_user,
+            password=pg_password, dbname=pg_db
+        )
+        cur = conn.cursor()
         # Ensure role_tag_session column exists in login and sourcing (once per process).
         # NOTE: This flag mirrors the _token_guard_column_ensured pattern; it is intentionally
         # not protected by a lock for the same reason — IF NOT EXISTS makes the DDL idempotent,
@@ -4588,6 +4714,9 @@ def user_update_role_tag():
             "UPDATE login SET role_tag=%s, session=NOW() WHERE username=%s",
             (role_tag, username)
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({"error": "User not found"}), 404
         # Step 2: Read back the persisted role_tag and session timestamp from login
         cur.execute(
             "SELECT role_tag, session FROM login WHERE username=%s",
@@ -4607,7 +4736,6 @@ def user_update_role_tag():
                 (login_session_ts, username, role_tag)
             )
         conn.commit()
-        cur.close(); conn.close()
         logger.info(
             f"[UpdateRoleTag] Set role_tag='{role_tag}' session_ts='{login_session_ts}' "
             f"for user='{username}' in login and sourcing tables"
@@ -4615,8 +4743,24 @@ def user_update_role_tag():
         return jsonify({"ok": True, "username": username, "role_tag": role_tag,
                         "session": login_session_ts.isoformat() if login_session_ts else None}), 200
     except Exception as e:
-        logger.warning(f"[UpdateRoleTag] Failed: {e}")
+        logger.exception(f"[UpdateRoleTag] Failed for user='{username}': {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return jsonify({"error": str(e)}), 500
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 # ==================== VSkillset Integration Endpoints ====================
 
