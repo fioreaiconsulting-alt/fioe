@@ -25,11 +25,12 @@ from werkzeug.security import check_password_hash
 
 # Structured activity logger (shared with webbridge)
 try:
-    from app_logger import log_error as _log_error_ds
+    from app_logger import log_error as _log_error_ds, log_approval as _log_approval_ds
     _DS_LOGGER_AVAILABLE = True
 except ImportError:
     _DS_LOGGER_AVAILABLE = False
     def _log_error_ds(**_kw): pass
+    def _log_approval_ds(**_kw): pass
 
 
 app = Flask(__name__, static_folder='static')
@@ -1963,6 +1964,16 @@ def generate_excel_route():
     def cleanup():
         try: os.remove(file_path)
         except OSError: pass
+    # Log the human-triggered export action
+    try:
+        _log_approval_ds(
+            action="export_excel_triggered",
+            username=session.get('username', ''),
+            detail="generate_excel export completed",
+            source="data_sorter.py",
+        )
+    except Exception:
+        pass
     return response
 
 def _serve_html_fallback(filename: str):

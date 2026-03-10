@@ -466,12 +466,36 @@ def admin_update_token():
     try:
         conn = _pg_connect()
         cur = conn.cursor()
+        # Read current balance before update to compute transaction delta
+        cur.execute("SELECT COALESCE(token,0) FROM login WHERE username = %s", (username,))
+        prev_row = cur.fetchone()
+        token_before = int(prev_row[0]) if prev_row else None
         cur.execute("UPDATE login SET token = %s WHERE username = %s RETURNING token", (token_int, username))
         row = cur.fetchone()
         conn.commit(); cur.close(); conn.close()
         if not row:
             return jsonify({"error": "User not found"}), 404
-        return jsonify({"ok": True, "username": username, "token": row[0]}), 200
+        token_after = int(row[0])
+        # Log the admin credit adjustment
+        if _LOGGER_AVAILABLE:
+            delta = token_after - token_before if token_before is not None else None
+            if delta is None:
+                txn_type = "adjustment"
+            elif delta > 0:
+                txn_type = "credit"
+            elif delta < 0:
+                txn_type = "spend"
+            else:
+                txn_type = "adjustment"
+            log_financial(
+                username=username,
+                feature="admin_token_adjustment",
+                transaction_type=txn_type,
+                token_before=token_before,
+                token_after=token_after,
+                transaction_amount=abs(delta) if delta is not None else None,
+            )
+        return jsonify({"ok": True, "username": username, "token": token_after}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -695,10 +719,11 @@ Source: {source or "unknown"}
 Error:
 {error_message}
 
-Provide a JSON response with exactly three keys:
+Provide a JSON response with exactly four keys:
 1. "explanation" — a clear, plain-language explanation of what this error means and why it occurs (2-4 sentences, no markdown).
 2. "suggested_fix" — a concrete, developer-ready description of how to fix it (bullet list, no markdown code fences).
-3. "copilot_prompt" — a ready-to-paste prompt for GitHub Copilot that includes the raw error, the explanation, the suggested fix, and asks Copilot to generate the corrected implementation.
+3. "test_case" — a short, developer-ready test case or verification step that proves the fix worked. For example: "Send a POST request to the endpoint with the corrected payload and confirm a 200 OK response." or "Run `pytest tests/test_endpoint.py::test_update_role_tag` and verify it passes." Keep it concise (1-3 steps, no markdown code fences).
+4. "copilot_prompt" — a ready-to-paste prompt for GitHub Copilot that includes the raw error, the explanation, the suggested fix, the test case, and asks Copilot to generate the corrected implementation.
 
 Respond ONLY with valid JSON. No extra commentary."""
 
@@ -714,6 +739,7 @@ Respond ONLY with valid JSON. No extra commentary."""
         parsed = json.loads(raw)
         explanation   = str(parsed.get("explanation",   "") or "")
         suggested_fix = str(parsed.get("suggested_fix", "") or "")
+        test_case     = str(parsed.get("test_case",     "") or "")
         copilot_prompt = str(parsed.get("copilot_prompt", "") or "")
         if not copilot_prompt:
             copilot_prompt = (
@@ -722,12 +748,14 @@ Respond ONLY with valid JSON. No extra commentary."""
                 f"// === ERROR ===\n{error_message}\n\n"
                 f"// === EXPLANATION ===\n{explanation}\n\n"
                 f"// === SUGGESTED FIX ===\n{suggested_fix}\n\n"
-                f"// Please suggest a corrected implementation."
+                f"// === TEST CASE ===\n{test_case}\n\n"
+                f"// Please suggest a corrected implementation that passes the above test case."
             )
         return jsonify({
             "ok": True,
             "explanation":    explanation,
             "suggested_fix":  suggested_fix,
+            "test_case":      test_case,
             "copilot_prompt": copilot_prompt,
         }), 200
     except Exception as exc:
@@ -4511,6 +4539,8 @@ def user_token_update():
         except (TypeError, ValueError):
             pass
     role_tag = (data.get("role_tag") or "").strip()
+    _token_before_tx: int | None = None  # captured before the UPDATE for financial logging
+    _username_tx: str = ""               # captured for financial logging
     try:
         import psycopg2
         pg_host = os.getenv("PGHOST", "localhost")
@@ -4555,6 +4585,8 @@ def user_token_update():
                     return jsonify({"error": "user not found"}), 404
                 current_token, stored_count, _stored_role_tag_raw, login_role_tag, login_session_ts, login_username = existing
                 stored_role_tag = (_stored_role_tag_raw or "").strip()
+                _token_before_tx = int(current_token) if current_token is not None else None
+                _username_tx = login_username or ""
                 # Auto-backfill: if role_tag is already set in login but role_tag_session is NULL,
                 # generate a session timestamp now and transfer it to sourcing where role_tag matches.
                 # This ensures every role_tag entry is tied to a valid session reference even for
@@ -4610,6 +4642,8 @@ def user_token_update():
                 _legacy_row = cur.fetchone()
                 if _legacy_row:
                     _legacy_role_tag, _legacy_session_ts, _legacy_username, _legacy_token = _legacy_row
+                    _token_before_tx = int(_legacy_token) if _legacy_token is not None else None
+                    _username_tx = _legacy_username or ""
                     # Auto-backfill: if role_tag is set but session is NULL, generate now
                     if (_legacy_role_tag or "").strip() and _legacy_session_ts is None:
                         cur.execute(
@@ -4656,7 +4690,28 @@ def user_token_update():
             conn.close()
         if not row:
             return jsonify({"error": "user not found"}), 404
-        return jsonify({"ok": True, "token": int(row[0])}), 200
+        new_token = int(row[0])
+        # Log token spend/credit transaction
+        if _LOGGER_AVAILABLE:
+            delta = (new_token - _token_before_tx) if _token_before_tx is not None else None
+            if delta is None:
+                txn_type = "adjustment"
+            elif delta < 0:
+                txn_type = "spend"
+            elif delta > 0:
+                txn_type = "credit"
+            else:
+                txn_type = "adjustment"
+            log_financial(
+                username=_username_tx,
+                userid=userid,
+                feature="token_update",
+                transaction_type=txn_type,
+                token_before=_token_before_tx,
+                token_after=new_token,
+                transaction_amount=abs(delta) if delta is not None else None,
+            )
+        return jsonify({"ok": True, "token": new_token}), 200
     except Exception as e:
         logger.error(f"[TokenUpdate] {e}")
         return jsonify({"error": str(e)}), 500
@@ -6593,6 +6648,14 @@ def byok_deactivate():
         dest = _byok_path(username)
         if os.path.isfile(dest):
             os.remove(dest)
+        log_infrastructure(
+            "byok_deactivated",
+            username=username,
+            detail="BYOK keys file removed",
+            status="success",
+            key_type="ALL",
+            deactivation_reason="manual",
+        )
         return jsonify({"ok": True, "byok_active": False})
     except Exception as exc:
         logger.exception("[porting/byok/deactivate]")

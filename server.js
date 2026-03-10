@@ -15,15 +15,18 @@ const nodemailer = require('nodemailer'); // Added for sending emails
 
 // ── Structured error logger (writes JSONL to shared log dir) ─────────────────
 const _LOG_DIR = process.env.AUTOSOURCING_LOG_DIR || String.raw`F:\Recruiting Tools\Autosourcing\log`;
-function _writeErrorLog(entry) {
+function _writeLogEntry(filePrefix, entry) {
   try {
     fs.mkdirSync(_LOG_DIR, { recursive: true });
     const date = new Date().toISOString().slice(0, 10);
-    const logFile = path.join(_LOG_DIR, `error_capture_${date}.txt`);
+    const logFile = path.join(_LOG_DIR, `${filePrefix}_${date}.txt`);
     const line = JSON.stringify({ timestamp: new Date().toISOString(), ...entry });
     fs.appendFileSync(logFile, line + '\n', 'utf8');
   } catch (_) { /* never crash the server over a log write */ }
 }
+function _writeErrorLog(entry)    { _writeLogEntry('error_capture', entry); }
+function _writeApprovalLog(entry) { _writeLogEntry('human_approval', entry); }
+function _writeInfraLog(entry)    { _writeLogEntry('infrastructure_byok', entry); }
 
 // Lazy-load Gemini SDK so the server still boots if it isn't installed
 let GoogleGenerativeAIClass = null;
@@ -1461,9 +1464,9 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
     } catch (_) { /* ignore emit errors */ }
 
     res.json({ rowsInserted: result.rowCount });
+    _writeApprovalLog({ action: 'bulk_candidates_insert', username: req.user.username, userid: req.user.id, detail: `Bulk inserted ${result.rowCount} candidates`, source: 'server.js' });
   } catch (err) {
-    console.error('=== Bulk insert error! ===');
-    console.error(err);
+    console.error('Bulk insert error:', err);
     res.status(500).json({ error: err.message || 'Bulk insert failed.' });
   }
 });
@@ -1727,6 +1730,7 @@ app.post('/candidates/bulk-delete', requireLogin, userRateLimit('bulk_delete'), 
     } catch (_) { /* ignore */ }
 
     res.json({ deletedCount: result.rowCount, attempted: cleanIds.length, ids: result.rows.map(r => r.id) });
+    _writeApprovalLog({ action: 'bulk_candidates_delete', username: req.user.username, userid: req.user.id, detail: `Bulk deleted ${result.rowCount} candidates`, source: 'server.js' });
   } catch (err) {
     console.error('Bulk delete error:', err);
     res.status(500).json({ error: 'Bulk delete failed.' });
@@ -2395,6 +2399,7 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
     } catch (e) { /* ignore */ }
 
     res.json({ updatedCount: updatedRows.length, rows: updatedRows });
+    _writeApprovalLog({ action: 'bulk_candidates_update', username: req.user.username, userid: req.user.id, detail: `Bulk updated ${updatedRows.length} candidates`, source: 'server.js' });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Bulk update error:', err);
@@ -4008,6 +4013,7 @@ app.post('/api/porting/export', requireLogin, dashboardRateLimit, async (req, re
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="export_${safeName(username)}_${Date.now()}.json"`);
     res.send(jsonStr);
+    _writeApprovalLog({ action: 'export_json_triggered', username, userid: req.user.id, detail: `Porting JSON export (${exported.length} rows)`, source: 'server.js' });
   } catch (err) {
     console.error('[porting/export]', err);
     res.status(500).json({ error: 'Export failed', detail: err.message });
@@ -4096,6 +4102,7 @@ app.delete('/api/porting/byok/deactivate', requireLogin, dashboardRateLimit, (re
     const dest = byokFilePath(req.user.username);
     if (fs.existsSync(dest)) fs.unlinkSync(dest);
     res.json({ ok: true, byok_active: false });
+    _writeInfraLog({ event_type: 'byok_deactivated', username: req.user.username, userid: req.user.id, key_type: 'ALL', deactivation_reason: 'manual', detail: 'BYOK keys file removed', status: 'success', source: 'server.js' });
   } catch (err) {
     console.error('[porting/byok/deactivate]', err);
     res.status(500).json({ error: 'Could not deactivate BYOK', detail: err.message });

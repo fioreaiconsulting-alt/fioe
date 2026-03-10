@@ -1903,6 +1903,9 @@ function openErrorAnalysisPanel(sec, errorEntry) {
       <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Suggested Fix</strong>
       <div class="gemini-output-box" id="geminiFixBox"></div>
 
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Test Case</strong>
+      <div class="gemini-output-box" id="geminiTestCaseBox"></div>
+
       <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">
         GitHub Copilot Prompt <span style="font-weight:400;color:var(--muted)">(copy &amp; paste into Copilot)</span>
       </strong>
@@ -1930,8 +1933,9 @@ async function runGeminiErrorAnalysis(errorMessage, source) {
   const wrap  = document.getElementById('geminiExplanationWrap');
   const expBox = document.getElementById('geminiExplanationBox');
   const fixBox = document.getElementById('geminiFixBox');
+  const tcBox  = document.getElementById('geminiTestCaseBox');
   const cpBox  = document.getElementById('copilotPromptBox');
-  if (!btn || !wrap || !expBox || !fixBox || !cpBox) return;
+  if (!btn || !wrap || !expBox || !fixBox || !tcBox || !cpBox) return;
 
   btn.disabled = true;
   btn.innerHTML = '<span>⏳</span> Analysing…';
@@ -1939,6 +1943,7 @@ async function runGeminiErrorAnalysis(errorMessage, source) {
   expBox.className = 'gemini-output-box loading';
   expBox.textContent = 'Calling Gemini…';
   fixBox.textContent = '';
+  if (tcBox) tcBox.textContent = '';
   cpBox.value = '';
 
   try {
@@ -1953,13 +1958,15 @@ async function runGeminiErrorAnalysis(errorMessage, source) {
       expBox.className = 'gemini-output-box';
       expBox.textContent = data.explanation || '—';
       fixBox.textContent = data.suggested_fix || '—';
+      if (tcBox) tcBox.textContent = data.test_case || '—';
       cpBox.value = data.copilot_prompt || '';
     } else if (r.status === 404) {
       // Gemini not configured on the server (GEMINI_API_KEY not set) — fall back to client-side prompt
       expBox.className = 'gemini-output-box error-state';
       expBox.textContent = 'Gemini not available on this server (API key not configured). Copilot prompt generated locally.';
       fixBox.textContent = '';
-      cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '');
+      if (tcBox) tcBox.textContent = '';
+      cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '', '');
     } else {
       const data = await r.json().catch(() => ({}));
       expBox.className = 'gemini-output-box error-state';
@@ -1968,14 +1975,13 @@ async function runGeminiErrorAnalysis(errorMessage, source) {
   } catch (err) {
     expBox.className = 'gemini-output-box error-state';
     expBox.textContent = 'Network error: ' + err.message + '\nCopilot prompt generated locally.';
-    cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '');
-  } finally {
+    cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '', '');
     btn.disabled = false;
     btn.innerHTML = '<span>✨</span> Re-analyse';
   }
 }
 
-function _buildCopilotPrompt(errorMessage, source, explanation, suggestedFix) {
+function _buildCopilotPrompt(errorMessage, source, explanation, suggestedFix, testCase) {
   return [
     '// GitHub Copilot — Error Fix Request',
     `// Source: ${source}`,
@@ -1984,6 +1990,7 @@ function _buildCopilotPrompt(errorMessage, source, explanation, suggestedFix) {
     errorMessage,
     explanation ? '\n// === EXPLANATION ===\n' + explanation : '',
     suggestedFix ? '\n// === SUGGESTED FIX ===\n' + suggestedFix : '',
+    testCase ? '\n// === TEST CASE ===\n' + testCase : '',
     '',
     '// Please suggest a corrected implementation for the code above.',
     '// Show the full corrected function / block, not just a diff.',

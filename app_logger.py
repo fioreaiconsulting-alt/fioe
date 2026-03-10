@@ -164,16 +164,28 @@ def log_agentic(username: str = "", userid: str = "", query: str = "",
 
 
 def log_financial(username: str = "", userid: str = "", credits_spent: float = 0.0,
-                  token_usage: int = 0, feature: str = "", **extra) -> None:
-    """Log a Financial / Credits event (query cost, token usage)."""
-    _write("financial", {
+                  token_usage: int = 0, feature: str = "",
+                  transaction_type: str = "", token_before: int | None = None,
+                  token_after: int | None = None, transaction_amount: int | None = None,
+                  **extra) -> None:
+    """Log a Financial / Credits event (query cost, token usage, token transaction)."""
+    entry: dict = {
         "username": username,
         "userid": userid,
         "credits_spent": credits_spent,
         "token_usage": token_usage,
         "feature": feature,
         **extra,
-    })
+    }
+    if transaction_type:
+        entry["transaction_type"] = transaction_type
+    if token_before is not None:
+        entry["token_before"] = token_before
+    if token_after is not None:
+        entry["token_after"] = token_after
+    if transaction_amount is not None:
+        entry["transaction_amount"] = transaction_amount
+    _write("financial", entry)
 
 
 def log_security(event_type: str, username: str = "", userid: str = "",
