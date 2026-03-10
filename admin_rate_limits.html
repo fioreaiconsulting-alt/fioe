@@ -142,6 +142,169 @@
     .mapping-table select:focus { outline:none; border-color:var(--primary); }
     .porting-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px; }
     #portingVerifySection { display:none; }
+
+    /* ── System Logs tab ── */
+    .log-filter-bar {
+      display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+      padding:14px 0 16px; border-bottom:1px solid var(--border); margin-bottom:18px;
+    }
+    .log-filter-bar input[type=date],
+    .log-filter-bar input[type=text] {
+      padding:5px 9px; border:1px solid var(--border); border-radius:6px;
+      font-size:13px; background:#fff;
+    }
+    .log-filter-bar input[type=date]:focus,
+    .log-filter-bar input[type=text]:focus { outline:none; border-color:var(--primary); }
+    .log-filter-bar label { font-size:12px; font-weight:600; color:var(--muted); }
+    .quick-range { display:flex; gap:4px; }
+    .quick-range button {
+      padding:4px 11px; border:1px solid var(--border); border-radius:6px;
+      background:#fff; cursor:pointer; font-size:12px; font-weight:600; color:var(--muted);
+      transition:background .15s,color .15s;
+    }
+    .quick-range button:hover,
+    .quick-range button.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+    .log-search-wrap { position:relative; flex:1; min-width:160px; max-width:280px; }
+    .log-search-wrap input { width:100%; padding-left:28px; }
+    .log-search-wrap::before {
+      content:'🔍'; position:absolute; left:8px; top:50%; transform:translateY(-50%);
+      font-size:12px; pointer-events:none;
+    }
+    .log-export-btn { margin-left:auto; display:flex; gap:6px; }
+
+    .log-sub-tabs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:16px; }
+    .log-sub-tab {
+      padding:5px 14px; border:1px solid var(--border); border-radius:20px;
+      background:#fff; cursor:pointer; font-size:12px; font-weight:600; color:var(--muted);
+      transition:background .15s,color .15s;
+    }
+    .log-sub-tab:hover { background:#eef2f6; color:#333; }
+    .log-sub-tab.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+
+    .log-section { display:none; }
+    .log-section.active { display:block; }
+    .log-section-header {
+      display:flex; align-items:center; gap:8px;
+      margin-bottom:12px;
+    }
+    .log-section-header h3 {
+      margin:0; font-size:14px; font-weight:700; color:var(--primary);
+    }
+    .log-count-badge {
+      background:var(--primary); color:#fff; border-radius:12px;
+      padding:1px 8px; font-size:11px; font-weight:700;
+    }
+
+    /* Status badges */
+    .badge {
+      display:inline-block; padding:2px 8px; border-radius:12px;
+      font-size:11px; font-weight:700; white-space:nowrap;
+    }
+    .badge-success { background:#d4f0e0; color:var(--success); }
+    .badge-fail    { background:#fde8ea; color:var(--danger);  }
+    .badge-warn    { background:#fef3e2; color:var(--warn);    }
+    .badge-info    { background:#e8f0fe; color:var(--primary); }
+    .badge-critical{ background:var(--danger); color:#fff; }
+
+    /* Severity row highlight */
+    tr.sev-warning td { background:#fffbe6; }
+    tr.sev-critical td { background:#fff0f0; }
+    tr.sev-critical td:first-child { border-left:3px solid var(--danger); }
+    tr.sev-warning  td:first-child { border-left:3px solid var(--warn); }
+
+    /* Log auto-refresh */
+    .log-refresh-bar {
+      display:flex; align-items:center; gap:8px; font-size:12px;
+      color:var(--muted); margin-bottom:10px;
+    }
+    .log-refresh-bar select { padding:3px 7px; font-size:12px;
+      border:1px solid var(--border); border-radius:6px; background:#fff; }
+    #logLastRefreshed { font-size:11px; color:var(--muted); font-style:italic; }
+
+    /* Usage counter boxes */
+    .log-counter-row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+    .log-counter {
+      background:#f5f7fa; border:1px solid var(--border); border-radius:10px;
+      padding:14px 20px; text-align:center; min-width:130px;
+    }
+    .log-counter .cval { font-size:26px; font-weight:800; color:var(--primary); }
+    .log-counter .clbl { font-size:11px; color:var(--muted); margin-top:2px; }
+
+    /* Activity log */
+    .activity-log { list-style:none; margin:0; padding:0; }
+    .activity-log li {
+      display:flex; gap:10px; align-items:flex-start;
+      padding:8px 0; border-bottom:1px solid #eaedf1; font-size:13px;
+    }
+    .activity-log li:last-child { border-bottom:none; }
+    .activity-log .act-time { color:var(--muted); font-size:12px; white-space:nowrap; flex-shrink:0; }
+    .activity-log .act-icon { font-size:16px; flex-shrink:0; }
+    .activity-log .act-msg  { flex:1; }
+
+    /* Alert icon */
+    .alert-icon { font-size:16px; vertical-align:middle; margin-right:4px; }
+
+    /* Quick filter chips */
+    .chip-filter { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+    .chip {
+      padding:3px 10px; border:1px solid var(--border); border-radius:16px;
+      background:#fff; cursor:pointer; font-size:12px; font-weight:600; color:var(--muted);
+      transition:background .15s,color .15s;
+    }
+    .chip:hover { background:#eef2f6; color:#333; }
+    .chip.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+
+    .log-empty { text-align:center; padding:24px; color:var(--muted); font-style:italic; font-size:13px; }
+
+    .log-tbl-wrap { overflow-x:auto; }
+
+    /* ── Error → Gemini analysis panel ── */
+    .error-detail-panel {
+      background:#f9fbfd; border:1px solid var(--border); border-radius:10px;
+      margin-top:20px; padding:18px 20px;
+    }
+    .error-detail-panel h4 {
+      margin:0 0 10px; font-size:14px; color:var(--primary); font-weight:700;
+    }
+    .error-raw-box {
+      background:#fff; border:1px solid var(--border); border-radius:7px;
+      padding:10px 14px; font-size:12px; font-family:monospace;
+      white-space:pre-wrap; word-break:break-all; max-height:120px; overflow-y:auto;
+      color:#333; margin-bottom:12px;
+    }
+    .gemini-output-box {
+      background:#fff; border:1px solid var(--border); border-radius:7px;
+      padding:10px 14px; font-size:13px; line-height:1.6;
+      min-height:60px; margin-bottom:12px; color:#222;
+      white-space:pre-wrap;
+    }
+    .gemini-output-box.loading { color:var(--muted); font-style:italic; }
+    .gemini-output-box.error-state { color:var(--danger); }
+    .copilot-prompt-wrap { position:relative; }
+    .copilot-prompt-box {
+      width:100%; min-height:90px; padding:10px 42px 10px 12px;
+      border:1px solid var(--border); border-radius:7px;
+      font-size:12px; font-family:monospace; resize:vertical;
+      background:#f5f7fa; color:#222; line-height:1.5;
+    }
+    .copilot-copy-btn {
+      position:absolute; top:8px; right:8px;
+      background:var(--primary); color:#fff; border:none;
+      border-radius:5px; padding:4px 9px; font-size:11px; font-weight:700;
+      cursor:pointer; transition:background .15s;
+    }
+    .copilot-copy-btn:hover { background:#084d94; }
+    .gemini-analyze-btn {
+      display:inline-flex; align-items:center; gap:6px;
+      background:linear-gradient(135deg,#4285f4,#34a853);
+      color:#fff; border:none; border-radius:7px;
+      padding:7px 16px; font-size:13px; font-weight:600; cursor:pointer;
+      transition:opacity .15s;
+    }
+    .gemini-analyze-btn:hover { opacity:.88; }
+    .gemini-analyze-btn:disabled { opacity:.5; cursor:default; }
+    .error-row-link { cursor:pointer; text-decoration:underline; color:var(--primary); }
+    .error-row-link:hover { color:#084d94; }
   </style>
 </head>
 <body>
@@ -296,6 +459,7 @@ function renderPage(container) {
     { id: 'tab-users',   label: '👥 Users'        },
     { id: 'tab-appeals', label: `📋 Appeals${_appeals.length ? ' (' + _appeals.length + ')' : ''}` },
     { id: 'tab-porting', label: '🔄 Porting'      },
+    { id: 'tab-logs',    label: '📊 System Logs'  },
   ];
   tabDefs.forEach((t, i) => {
     const btn = document.createElement('button');
@@ -355,6 +519,13 @@ function renderPage(container) {
   portingPanel.className = 'tab-panel';
   portingPanel.appendChild(renderPortingCard());
   container.appendChild(portingPanel);
+
+  // ── Tab: System Logs ──────────────────────────────────────────────────────
+  const logsPanel = document.createElement('div');
+  logsPanel.id = 'tab-logs';
+  logsPanel.className = 'tab-panel';
+  logsPanel.appendChild(renderLogsCard());
+  container.appendChild(logsPanel);
 }
 
 // ── Rate Limits cards ────────────────────────────────────────────────────────
@@ -1018,6 +1189,871 @@ function resetPortingUI() {
   document.getElementById('portingLinkSection').style.display = 'none';
   document.getElementById('portingMapStatus').textContent = '';
   document.getElementById('portingConfirmStatus').textContent = '';
+}
+
+// ── System Logs tab ──────────────────────────────────────────────────────────
+
+// Log state
+let _logs = {
+  identity:        [],
+  infrastructure:  [],
+  agentic:         [],
+  financial:       [],
+  security:        [],
+  approval:        [],
+  errors:          [],
+};
+let _logsFilter = {
+  startDate: null,
+  endDate:   null,
+  search:    '',
+  quickRange: null,  // '24h' | '7d' | '30d' | null
+};
+let _logsAutoRefreshTimer = null;
+let _logsActiveCategory   = 'identity';
+let _identityChipFilter   = null;  // null | 'failed_mfa'
+let _identitySortCol      = null;
+let _identitySortAsc      = true;
+
+const LOG_CATEGORIES = [
+  { id: 'identity',       label: '🔐 Identity & Access'       },
+  { id: 'infrastructure', label: '🏗️ Infrastructure / BYOK'   },
+  { id: 'agentic',        label: '🤖 Agentic Intent'          },
+  { id: 'financial',      label: '💰 Financial / Credits'     },
+  { id: 'security',       label: '🚨 Security Events'         },
+  { id: 'approval',       label: '✅ Human Approval'          },
+  { id: 'errors',         label: '⚠️ Error Capture'           },
+];
+
+// Per-category fixed column definitions for consistent CSV export
+const LOG_CSV_COLS = {
+  identity:       ['userid', 'login_timestamp', 'timestamp', 'ip_address', 'mfa_status'],
+  infrastructure: ['timestamp', 'event_type', 'username', 'userid', 'detail', 'status'],
+  agentic:        ['timestamp', 'username', 'userid', 'query', 'filters', 'result_count'],
+  financial:      ['timestamp', 'username', 'userid', 'credits_spent', 'token_usage', 'feature'],
+  security:       ['timestamp', 'event_type', 'event', 'username', 'userid', 'ip_address', 'detail', 'severity'],
+  approval:       ['timestamp', 'action', 'event_type', 'username', 'userid', 'detail'],
+  errors:         ['timestamp', 'severity', 'source', 'endpoint', 'message', 'error'],
+};
+
+// Search text fields per category (avoids full JSON serialization)
+const LOG_SEARCH_FIELDS = {
+  identity:       ['userid', 'login_timestamp', 'ip_address', 'mfa_status'],
+  infrastructure: ['event_type', 'username', 'userid', 'detail', 'status'],
+  agentic:        ['username', 'userid', 'query'],
+  financial:      ['username', 'userid', 'feature'],
+  security:       ['event_type', 'event', 'username', 'userid', 'ip_address', 'detail', 'severity'],
+  approval:       ['action', 'event_type', 'username', 'userid', 'detail'],
+  errors:         ['severity', 'source', 'endpoint', 'message', 'error'],
+};
+
+function truncateText(text, maxLength) {
+  const s = String(text || '');
+  return s.length > maxLength ? s.slice(0, maxLength) + '…' : s;
+}
+
+function renderLogsCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'logsCard';
+  card.innerHTML = '<h2>System Logs</h2>';
+
+  // ── Filter bar ──────────────────────────────────────────────────────────
+  const filterBar = document.createElement('div');
+  filterBar.className = 'log-filter-bar';
+  filterBar.innerHTML = `
+    <label>From</label>
+    <input type="date" id="logDateFrom" title="Start date">
+    <label>To</label>
+    <input type="date" id="logDateTo" title="End date">
+    <div class="quick-range">
+      <button data-range="24h">Last 24h</button>
+      <button data-range="7d">Last 7 days</button>
+      <button data-range="30d">Last 30 days</button>
+    </div>
+    <div class="log-search-wrap">
+      <input type="text" id="logSearch" placeholder="Search logs…">
+    </div>
+    <div class="log-export-btn">
+      <button class="btn btn-primary btn-sm" id="logExportCsv">⬇ CSV</button>
+      <button class="btn btn-primary btn-sm" id="logExportPdf">⬇ PDF</button>
+      <button class="btn btn-success btn-sm" id="logRefreshBtn">↺ Refresh</button>
+    </div>`;
+  card.appendChild(filterBar);
+
+  // Auto-refresh bar
+  const refreshBar = document.createElement('div');
+  refreshBar.className = 'log-refresh-bar';
+  refreshBar.innerHTML = `
+    Auto-refresh:
+    <select id="logAutoRefresh">
+      <option value="0">Off</option>
+      <option value="30">Every 30s</option>
+      <option value="60">Every 1 min</option>
+      <option value="300">Every 5 min</option>
+    </select>
+    <span id="logLastRefreshed"></span>`;
+  card.appendChild(refreshBar);
+
+  // ── Category sub-tabs ──────────────────────────────────────────────────
+  const subTabs = document.createElement('div');
+  subTabs.className = 'log-sub-tabs';
+  subTabs.id = 'logSubTabs';
+  LOG_CATEGORIES.forEach((cat, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'log-sub-tab' + (i === 0 ? ' active' : '');
+    btn.dataset.cat = cat.id;
+    btn.textContent = cat.label;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.log-sub-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _logsActiveCategory = cat.id;
+      document.querySelectorAll('.log-section').forEach(s => s.classList.remove('active'));
+      const sec = document.getElementById('logSection-' + cat.id);
+      if (sec) sec.classList.add('active');
+    });
+    subTabs.appendChild(btn);
+  });
+  card.appendChild(subTabs);
+
+  // ── Category sections ──────────────────────────────────────────────────
+  const sectionsWrap = document.createElement('div');
+  sectionsWrap.id = 'logSectionsWrap';
+
+  LOG_CATEGORIES.forEach((cat, i) => {
+    const sec = document.createElement('div');
+    sec.className = 'log-section' + (i === 0 ? ' active' : '');
+    sec.id = 'logSection-' + cat.id;
+    sec.innerHTML = '<div class="log-empty">Loading logs…</div>';
+    sectionsWrap.appendChild(sec);
+  });
+
+  card.appendChild(sectionsWrap);
+
+  // Wire up events after DOM attachment
+  setTimeout(() => {
+    // Date filter events
+    document.getElementById('logDateFrom').addEventListener('change', () => {
+      _logsFilter.startDate = document.getElementById('logDateFrom').value || null;
+      _logsFilter.quickRange = null;
+      document.querySelectorAll('.quick-range button').forEach(b => b.classList.remove('active'));
+      applyLogsFilter();
+    });
+    document.getElementById('logDateTo').addEventListener('change', () => {
+      _logsFilter.endDate = document.getElementById('logDateTo').value || null;
+      _logsFilter.quickRange = null;
+      document.querySelectorAll('.quick-range button').forEach(b => b.classList.remove('active'));
+      applyLogsFilter();
+    });
+
+    // Quick range buttons
+    filterBar.querySelectorAll('.quick-range button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBar.querySelectorAll('.quick-range button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _logsFilter.quickRange = btn.dataset.range;
+        const now = new Date();
+        const from = new Date();
+        if (btn.dataset.range === '24h')        from.setHours(now.getHours() - 24);
+        else if (btn.dataset.range === '7d')    from.setDate(now.getDate() - 7);
+        else if (btn.dataset.range === '30d')   from.setDate(now.getDate() - 30);
+        _logsFilter.startDate = from.toISOString().slice(0, 10);
+        _logsFilter.endDate   = now.toISOString().slice(0, 10);
+        document.getElementById('logDateFrom').value = _logsFilter.startDate;
+        document.getElementById('logDateTo').value   = _logsFilter.endDate;
+        applyLogsFilter();
+      });
+    });
+
+    // Search
+    let _searchDebounce = null;
+    document.getElementById('logSearch').addEventListener('input', e => {
+      clearTimeout(_searchDebounce);
+      _searchDebounce = setTimeout(() => {
+        _logsFilter.search = e.target.value.trim().toLowerCase();
+        applyLogsFilter();
+      }, 250);
+    });
+
+    // Refresh button
+    document.getElementById('logRefreshBtn').addEventListener('click', fetchLogs);
+
+    // Auto-refresh
+    document.getElementById('logAutoRefresh').addEventListener('change', e => {
+      clearInterval(_logsAutoRefreshTimer);
+      _logsAutoRefreshTimer = null;
+      const secs = parseInt(e.target.value, 10);
+      if (secs > 0) {
+        _logsAutoRefreshTimer = setInterval(fetchLogs, secs * 1000);
+      }
+    });
+
+    // Export CSV
+    document.getElementById('logExportCsv').addEventListener('click', exportLogsCsv);
+    // Export PDF
+    document.getElementById('logExportPdf').addEventListener('click', exportLogsPdf);
+
+    // Initial load
+    fetchLogs();
+  }, 0);
+
+  return card;
+}
+
+async function fetchLogs() {
+  const refreshBtn = document.getElementById('logRefreshBtn');
+  if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = '⏳'; }
+
+  // Build query string from filter
+  const params = new URLSearchParams();
+  if (_logsFilter.startDate) params.set('from', _logsFilter.startDate);
+  if (_logsFilter.endDate)   params.set('to',   _logsFilter.endDate);
+
+  try {
+    const r = await fetch(`${API}/admin/logs?${params}`, { credentials: 'same-origin' });
+    if (r.ok) {
+      const data = await r.json();
+      _logs.identity       = data.identity        || [];
+      _logs.infrastructure = data.infrastructure  || [];
+      _logs.agentic        = data.agentic          || [];
+      _logs.financial      = data.financial        || [];
+      _logs.security       = data.security         || [];
+      _logs.approval       = data.approval         || [];
+      _logs.errors         = data.errors           || [];
+    } else if (r.status === 404) {
+      // Endpoint not yet implemented — keep empty arrays
+    } else if (r.status === 401) {
+      location.reload(); return;
+    }
+  } catch (_) {
+    // Network error — keep current data
+  }
+
+  applyLogsFilter();
+
+  const lastEl = document.getElementById('logLastRefreshed');
+  if (lastEl) lastEl.textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+  if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '↺ Refresh'; }
+}
+
+function applyLogsFilter() {
+  const search = _logsFilter.search || '';
+  const from   = _logsFilter.startDate ? new Date(_logsFilter.startDate + 'T00:00:00') : null;
+  const to     = _logsFilter.endDate   ? new Date(_logsFilter.endDate   + 'T23:59:59') : null;
+
+  function passesDate(entry) {
+    const tsField = entry.timestamp || entry.login_timestamp || entry.ts || '';
+    if (!tsField) return true;
+    const d = new Date(tsField);
+    if (isNaN(d)) return true;
+    if (from && d < from) return false;
+    if (to   && d > to)   return false;
+    return true;
+  }
+
+  function passesSearch(entry, catId) {
+    if (!search) return true;
+    const fields = LOG_SEARCH_FIELDS[catId] || Object.keys(entry);
+    return fields.some(k => String(entry[k] || '').toLowerCase().includes(search));
+  }
+
+  function filterArr(arr, catId) {
+    return arr.filter(e => passesDate(e) && passesSearch(e, catId));
+  }
+
+  renderIdentitySection(filterArr(_logs.identity, 'identity'));
+  renderInfraSection(filterArr(_logs.infrastructure, 'infrastructure'));
+  renderAgenticSection(filterArr(_logs.agentic, 'agentic'));
+  renderFinancialSection(filterArr(_logs.financial, 'financial'));
+  renderSecuritySection(filterArr(_logs.security, 'security'));
+  renderApprovalSection(filterArr(_logs.approval, 'approval'));
+  renderErrorsSection(filterArr(_logs.errors, 'errors'));
+}
+
+// ── 1. Identity & Access ─────────────────────────────────────────────────────
+function renderIdentitySection(rows) {
+  const sec = document.getElementById('logSection-identity');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>🔐 Identity &amp; Access</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  // Quick filter chips
+  const chips = document.createElement('div');
+  chips.className = 'chip-filter';
+  const allChip = document.createElement('button');
+  allChip.className = 'chip' + (_identityChipFilter === null ? ' active' : '');
+  allChip.textContent = 'All';
+  allChip.addEventListener('click', () => {
+    _identityChipFilter = null;
+    renderIdentitySection(rows);
+  });
+  const mfaChip = document.createElement('button');
+  mfaChip.className = 'chip' + (_identityChipFilter === 'failed_mfa' ? ' active' : '');
+  mfaChip.textContent = '❌ Failed MFA only';
+  mfaChip.addEventListener('click', () => {
+    _identityChipFilter = 'failed_mfa';
+    renderIdentitySection(rows);
+  });
+  chips.appendChild(allChip);
+  chips.appendChild(mfaChip);
+  sec.appendChild(chips);
+
+  let display = rows;
+  if (_identityChipFilter === 'failed_mfa') {
+    display = rows.filter(r => String(r.mfa_status).toLowerCase().includes('fail'));
+  }
+
+  if (!display.length) {
+    sec.innerHTML += '<div class="log-empty">No identity &amp; access events for the selected range.</div>';
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'log-tbl-wrap';
+  const tbl = document.createElement('table');
+  tbl.innerHTML = `
+    <thead>
+      <tr>
+        <th data-sort="userid"        style="cursor:pointer">User ID ↕</th>
+        <th data-sort="login_timestamp" style="cursor:pointer">Login Time ↕</th>
+        <th>IP Address</th>
+        <th>MFA Status</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+
+  function renderRows(arr) {
+    tbody.innerHTML = '';
+    arr.forEach(r => {
+      const tr = document.createElement('tr');
+      const mfaOk = !String(r.mfa_status || '').toLowerCase().includes('fail');
+      tr.innerHTML = `
+        <td>${escHtml(r.userid   || '—')}</td>
+        <td>${escHtml(r.login_timestamp || r.timestamp || '—')}</td>
+        <td>${escHtml(r.ip_address || '—')}</td>
+        <td><span class="badge ${mfaOk ? 'badge-success' : 'badge-fail'}">${mfaOk ? '✅' : '❌'} ${escHtml(r.mfa_status || '—')}</span></td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  renderRows(display);
+  tbl.appendChild(tbody);
+
+  // Sortable columns (sort state persisted in _identitySortCol/_identitySortAsc)
+  tbl.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      if (_identitySortCol === col) { _identitySortAsc = !_identitySortAsc; } else { _identitySortCol = col; _identitySortAsc = true; }
+      const sorted = [...display].sort((a, b) => {
+        const av = String(a[col] || ''); const bv = String(b[col] || '');
+        return _identitySortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+      renderRows(sorted);
+    });
+  });
+
+  wrap.appendChild(tbl);
+  sec.appendChild(wrap);
+}
+
+// ── 2. Infrastructure / BYOK ─────────────────────────────────────────────────
+function renderInfraSection(rows) {
+  const sec = document.getElementById('logSection-infrastructure');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>🏗️ Infrastructure / BYOK Setup</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  if (!rows.length) {
+    sec.innerHTML += '<div class="log-empty">No infrastructure events for the selected range.</div>';
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'log-tbl-wrap';
+  const tbl = document.createElement('table');
+  tbl.innerHTML = `
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Event Type</th>
+        <th>User</th>
+        <th>Detail</th>
+        <th>Status</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+  rows.forEach(r => {
+    const ok = !String(r.status || '').toLowerCase().includes('fail');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escHtml(r.timestamp || '—')}</td>
+      <td>${escHtml(r.event_type || '—')}</td>
+      <td>${escHtml(r.username  || r.userid || '—')}</td>
+      <td title="${escHtml(r.detail || '')}">${escHtml(truncateText(r.detail, 60))}</td>
+      <td><span class="badge ${ok ? 'badge-success' : 'badge-fail'}">${ok ? '✅ Success' : '❌ Fail'}</span></td>`;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  sec.appendChild(wrap);
+}
+
+// ── 3. Agentic Intent ────────────────────────────────────────────────────────
+function renderAgenticSection(rows) {
+  const sec = document.getElementById('logSection-agentic');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>🤖 Agentic Intent</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  if (!rows.length) {
+    sec.innerHTML += '<div class="log-empty">No agentic intent events for the selected range.</div>';
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'log-tbl-wrap';
+  const tbl = document.createElement('table');
+  tbl.innerHTML = `
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>User</th>
+        <th>Search Query</th>
+        <th>Filters Used</th>
+        <th>Results</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+  rows.forEach(r => {
+    const filters = Array.isArray(r.filters) ? r.filters : (r.filters ? [r.filters] : []);
+    const chipHtml = filters.map(f =>
+      `<span class="badge badge-info" style="margin-right:3px">${escHtml(String(f))}</span>`
+    ).join('') || '<span style="color:var(--muted)">—</span>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escHtml(r.timestamp || '—')}</td>
+      <td>${escHtml(r.username || r.userid || '—')}</td>
+      <td title="${escHtml(r.query || '')}">${escHtml(truncateText(r.query, 60))}</td>
+      <td>${chipHtml}</td>
+      <td>${escHtml(String(r.result_count ?? '—'))}</td>`;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  sec.appendChild(wrap);
+}
+
+// ── 4. Financial / Credits ───────────────────────────────────────────────────
+function renderFinancialSection(rows) {
+  const sec = document.getElementById('logSection-financial');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>💰 Financial / Credits</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  // Counters / totals
+  const totalCredits = rows.reduce((s, r) => s + (parseFloat(r.credits_spent) || 0), 0);
+  const totalTokens  = rows.reduce((s, r) => s + (parseInt(r.token_usage)     || 0), 0);
+
+  const counters = document.createElement('div');
+  counters.className = 'log-counter-row';
+  counters.innerHTML = `
+    <div class="log-counter">
+      <div class="cval">${totalCredits.toFixed(4)}</div>
+      <div class="clbl">Total Credits Spent</div>
+    </div>
+    <div class="log-counter">
+      <div class="cval">${totalTokens.toLocaleString()}</div>
+      <div class="clbl">Total Token Usage</div>
+    </div>
+    <div class="log-counter">
+      <div class="cval">${rows.length}</div>
+      <div class="clbl">Transactions</div>
+    </div>`;
+  sec.appendChild(counters);
+
+  if (!rows.length) {
+    sec.innerHTML += '<div class="log-empty">No financial events for the selected range.</div>';
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'log-tbl-wrap';
+  const tbl = document.createElement('table');
+  tbl.innerHTML = `
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>User</th>
+        <th>Credits Spent</th>
+        <th>Token Usage</th>
+        <th>Feature</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escHtml(r.timestamp || '—')}</td>
+      <td>${escHtml(r.username || r.userid || '—')}</td>
+      <td style="text-align:right">${escHtml(String(r.credits_spent ?? '—'))}</td>
+      <td style="text-align:right">${escHtml(String(r.token_usage   ?? '—'))}</td>
+      <td>${escHtml(r.feature || '—')}</td>`;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  sec.appendChild(wrap);
+}
+
+// ── 5. Security Events ───────────────────────────────────────────────────────
+function renderSecuritySection(rows) {
+  const sec = document.getElementById('logSection-security');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>🚨 Security Events</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  if (!rows.length) {
+    sec.innerHTML += '<div class="log-empty">No security events for the selected range.</div>';
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'log-tbl-wrap';
+  const tbl = document.createElement('table');
+  tbl.innerHTML = `
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Event</th>
+        <th>User / IP</th>
+        <th>Detail</th>
+        <th>Severity</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+  rows.forEach(r => {
+    const sev = (r.severity || 'info').toLowerCase();
+    const sevBadge = sev === 'critical'
+      ? '<span class="badge badge-critical">⛔ Critical</span>'
+      : sev === 'warning' || sev === 'warn'
+        ? '<span class="badge badge-warn">⚠️ Warning</span>'
+        : '<span class="badge badge-info">ℹ️ Info</span>';
+    const tr = document.createElement('tr');
+    if (sev === 'critical') tr.className = 'sev-critical';
+    else if (sev === 'warning' || sev === 'warn') tr.className = 'sev-warning';
+    tr.innerHTML = `
+      <td>${escHtml(r.timestamp || '—')}</td>
+      <td><span class="alert-icon">${sev === 'critical' ? '⛔' : sev === 'warning' || sev === 'warn' ? '⚠️' : 'ℹ️'}</span>${escHtml(r.event_type || r.event || '—')}</td>
+      <td>${escHtml(r.username || r.userid || r.ip_address || '—')}</td>
+      <td title="${escHtml(r.detail || '')}">${escHtml(truncateText(r.detail, 80))}</td>
+      <td>${sevBadge}</td>`;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  sec.appendChild(wrap);
+}
+
+// ── 6. Human Approval ────────────────────────────────────────────────────────
+function renderApprovalSection(rows) {
+  const sec = document.getElementById('logSection-approval');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>✅ Human Approval</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  if (!rows.length) {
+    sec.innerHTML += '<div class="log-empty">No human approval events for the selected range.</div>';
+    return;
+  }
+
+  const ul = document.createElement('ul');
+  ul.className = 'activity-log';
+  rows.forEach(r => {
+    const action = r.action || r.event_type || 'Action';
+    const icon   = action.toLowerCase().includes('pdf') ? '📄'
+                 : action.toLowerCase().includes('bulk') ? '📦'
+                 : '✅';
+    const li = document.createElement('li');
+    li.innerHTML = `
+      <span class="act-icon">${icon}</span>
+      <span class="act-msg"><strong>${escHtml(action)}</strong>${r.username ? ' — ' + escHtml(r.username) : ''}${r.detail ? ': ' + escHtml(r.detail) : ''}</span>
+      <span class="act-time">${escHtml(r.timestamp || '—')}</span>`;
+    ul.appendChild(li);
+  });
+  sec.appendChild(ul);
+}
+
+// ── 7. Error Capture ─────────────────────────────────────────────────────────
+function renderErrorsSection(rows) {
+  const sec = document.getElementById('logSection-errors');
+  if (!sec) return;
+  sec.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'log-section-header';
+  hdr.innerHTML = `<h3>⚠️ Error Capture</h3><span class="log-count-badge">${rows.length}</span>`;
+  sec.appendChild(hdr);
+
+  if (!rows.length) {
+    sec.innerHTML += '<div class="log-empty">No errors captured for the selected range.</div>';
+    return;
+  }
+
+  // ── Error table ──────────────────────────────────────────────────────────
+  const wrap = document.createElement('div');
+  wrap.className = 'log-tbl-wrap';
+  const tbl = document.createElement('table');
+  tbl.innerHTML = `
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Severity</th>
+        <th>Source</th>
+        <th>Message (click to analyse)</th>
+      </tr>
+    </thead>`;
+  const tbody = document.createElement('tbody');
+  rows.forEach(r => {
+    const sev = (r.severity || 'info').toLowerCase();
+    const sevBadge = sev === 'critical'
+      ? '<span class="badge badge-critical">⛔ Critical</span>'
+      : sev === 'warning' || sev === 'warn'
+        ? '<span class="badge badge-warn">⚠️ Warning</span>'
+        : '<span class="badge badge-info">ℹ️ Info</span>';
+    const tr = document.createElement('tr');
+    if (sev === 'critical') tr.className = 'sev-critical';
+    else if (sev === 'warning' || sev === 'warn') tr.className = 'sev-warning';
+    const msgText = r.message || r.error || '';
+    tr.innerHTML = `
+      <td>${escHtml(r.timestamp || '—')}</td>
+      <td>${sevBadge}</td>
+      <td>${escHtml(r.source || r.endpoint || '—')}</td>
+      <td title="${escHtml(msgText)}">
+        <span class="error-row-link">${escHtml(truncateText(msgText, 100))}</span>
+      </td>`;
+    // Click on row → open Gemini analysis panel
+    tr.querySelector('.error-row-link').addEventListener('click', () => {
+      openErrorAnalysisPanel(sec, r);
+    });
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  sec.appendChild(wrap);
+
+  // ── Gemini analysis panel (hidden until row clicked) ─────────────────────
+  const panel = document.createElement('div');
+  panel.className = 'error-detail-panel';
+  panel.id = 'errorDetailPanel';
+  panel.style.display = 'none';
+  sec.appendChild(panel);
+}
+
+function openErrorAnalysisPanel(sec, errorEntry) {
+  const panel = document.getElementById('errorDetailPanel');
+  if (!panel) return;
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const msgText = errorEntry.message || errorEntry.error || '';
+  const src     = errorEntry.source   || errorEntry.endpoint || 'unknown';
+  const ts      = errorEntry.timestamp || '';
+
+  panel.innerHTML = `
+    <h4>🔍 Error Analysis — ${escHtml(src)}</h4>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${escHtml(ts)}</div>
+
+    <div style="margin-bottom:10px">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Raw Error</strong>
+      <div class="error-raw-box">${escHtml(msgText)}</div>
+    </div>
+
+    <button class="gemini-analyze-btn" id="geminiAnalyseBtn">
+      <span>✨</span> Analyse with Gemini
+    </button>
+
+    <div id="geminiExplanationWrap" style="margin-top:14px;display:none">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Gemini Explanation</strong>
+      <div class="gemini-output-box" id="geminiExplanationBox"></div>
+
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Suggested Fix</strong>
+      <div class="gemini-output-box" id="geminiFixBox"></div>
+
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Test Case</strong>
+      <div class="gemini-output-box" id="geminiTestCaseBox"></div>
+
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">
+        GitHub Copilot Prompt <span style="font-weight:400;color:var(--muted)">(copy &amp; paste into Copilot)</span>
+      </strong>
+      <div class="copilot-prompt-wrap">
+        <textarea class="copilot-prompt-box" id="copilotPromptBox" readonly></textarea>
+        <button class="copilot-copy-btn" id="copilotCopyBtn" title="Copy to clipboard">📋 Copy</button>
+      </div>
+    </div>`;
+
+  document.getElementById('geminiAnalyseBtn').addEventListener('click', () => {
+    runGeminiErrorAnalysis(msgText, src);
+  });
+
+  document.getElementById('copilotCopyBtn')?.addEventListener('click', () => {
+    const ta = document.getElementById('copilotPromptBox');
+    if (ta) {
+      navigator.clipboard.writeText(ta.value).then(() => toast('Copilot prompt copied ✓', 'success'))
+        .catch(() => { ta.select(); document.execCommand('copy'); toast('Copilot prompt copied ✓', 'success'); });
+    }
+  });
+}
+
+async function runGeminiErrorAnalysis(errorMessage, source) {
+  const btn   = document.getElementById('geminiAnalyseBtn');
+  const wrap  = document.getElementById('geminiExplanationWrap');
+  const expBox = document.getElementById('geminiExplanationBox');
+  const fixBox = document.getElementById('geminiFixBox');
+  const tcBox  = document.getElementById('geminiTestCaseBox');
+  const cpBox  = document.getElementById('copilotPromptBox');
+  if (!btn || !wrap || !expBox || !fixBox || !tcBox || !cpBox) return;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳</span> Analysing…';
+  wrap.style.display = '';
+  expBox.className = 'gemini-output-box loading';
+  expBox.textContent = 'Calling Gemini…';
+  fixBox.textContent = '';
+  if (tcBox) tcBox.textContent = '';
+  cpBox.value = '';
+
+  try {
+    const r = await fetch(`${API}/admin/logs/analyse-error`, {
+      method: 'POST',
+      headers: csrfHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify({ error_message: errorMessage, source }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      expBox.className = 'gemini-output-box';
+      expBox.textContent = data.explanation || '—';
+      fixBox.textContent = data.suggested_fix || '—';
+      if (tcBox) tcBox.textContent = data.test_case || '—';
+      cpBox.value = data.copilot_prompt || '';
+    } else if (r.status === 404) {
+      // Gemini not configured on the server (GEMINI_API_KEY not set) — fall back to client-side prompt
+      expBox.className = 'gemini-output-box error-state';
+      expBox.textContent = 'Gemini not available on this server (API key not configured). Copilot prompt generated locally.';
+      fixBox.textContent = '';
+      if (tcBox) tcBox.textContent = '';
+      cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '', '');
+    } else {
+      const data = await r.json().catch(() => ({}));
+      expBox.className = 'gemini-output-box error-state';
+      expBox.textContent = data.error || 'Analysis failed.';
+    }
+  } catch (err) {
+    expBox.className = 'gemini-output-box error-state';
+    expBox.textContent = 'Network error: ' + err.message + '\nCopilot prompt generated locally.';
+    cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '', '');
+    btn.disabled = false;
+    btn.innerHTML = '<span>✨</span> Re-analyse';
+  }
+}
+
+function _buildCopilotPrompt(errorMessage, source, explanation, suggestedFix, testCase) {
+  return [
+    '// GitHub Copilot — Error Fix Request',
+    `// Source: ${source}`,
+    '//',
+    '// === ERROR ===',
+    errorMessage,
+    explanation ? '\n// === EXPLANATION ===\n' + explanation : '',
+    suggestedFix ? '\n// === SUGGESTED FIX ===\n' + suggestedFix : '',
+    testCase ? '\n// === TEST CASE ===\n' + testCase : '',
+    '',
+    '// Please suggest a corrected implementation for the code above.',
+    '// Show the full corrected function / block, not just a diff.',
+  ].filter(Boolean).join('\n');
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+function exportLogsCsv() {
+  const cat  = _logsActiveCategory;
+  const rows = _logs[cat] || [];
+  if (!rows.length) { toast('No data in the current category to export', 'error'); return; }
+
+  // Use fixed column order for the category; supplement with any extra keys found in data
+  const fixedCols = LOG_CSV_COLS[cat] || [];
+  const extraCols = Array.from(new Set(rows.flatMap(r => Object.keys(r))))
+    .filter(k => !fixedCols.includes(k)).sort();
+  const keys = [...fixedCols, ...extraCols];
+
+  const csvLines = [keys.join(',')];
+  rows.forEach(r => {
+    csvLines.push(keys.map(k => {
+      const v = String(r[k] ?? '').replace(/"/g, '""');
+      return `"${v}"`;
+    }).join(','));
+  });
+
+  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.href     = url;
+  a.download = `system_logs_${cat}_${dateStr}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${rows.length} rows as CSV ✓`, 'success');
+}
+
+function exportLogsPdf() {
+  // Basic print-based PDF export of the visible section
+  const cat = _logsActiveCategory;
+  const sec = document.getElementById('logSection-' + cat);
+  if (!sec) return;
+  const printWin = window.open('', '_blank', 'width=900,height=600');
+  if (!printWin) { toast('Pop-up blocked — allow pop-ups to export PDF', 'error'); return; }
+  printWin.document.write(`
+    <!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <title>System Logs — ${escHtml(cat)}</title>
+    <style>
+      body { font-family:system-ui,Arial,sans-serif; font-size:12px; margin:20px; }
+      h2 { font-size:15px; margin-bottom:8px; }
+      table { border-collapse:collapse; width:100%; }
+      th, td { border:1px solid #ccc; padding:5px 8px; text-align:left; }
+      th { background:#f0f0f0; font-size:11px; }
+    </style>
+    </head><body>
+    <h2>System Logs — ${escHtml(cat)} — ${new Date().toLocaleString()}</h2>
+    ${sec.innerHTML}
+    </body></html>`);
+  printWin.document.close();
+  printWin.focus();
+  setTimeout(() => { printWin.print(); }, 400);
+  toast('Print dialog opened for PDF export ✓', 'success');
 }
 
 // ── Auto-redirect if already logged in ───────────────────────────────────────
