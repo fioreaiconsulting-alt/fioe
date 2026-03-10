@@ -6186,6 +6186,221 @@ def porting_export():
         return jsonify({"error": "Export failed", "detail": str(exc)}), 500
 
 
+# ── BYOK (Bring Your Own Keys) routes ─────────────────────────────────────────
+_BYOK_REQUIRED_KEYS = [
+    'GEMINI_API_KEY', 'GOOGLE_CSE_API_KEY', 'GOOGLE_API_KEY',
+    'GOOGLE_CSE_CX', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+]
+
+def _byok_path(username: str) -> str:
+    byok_dir = os.path.join(_PORTING_INPUT_DIR, 'byok')
+    os.makedirs(byok_dir, exist_ok=True)
+    return os.path.join(byok_dir, _porting_safe_name(username) + '.enc')
+
+
+@app.post("/api/porting/byok/activate")
+def byok_activate():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        body = request.get_json(silent=True) or {}
+        keys = {}
+        missing = []
+        for k in _BYOK_REQUIRED_KEYS:
+            val = str(body.get(k, '')).strip()
+            if not val:
+                missing.append(k)
+            else:
+                keys[k] = val
+        if missing:
+            return jsonify({"error": f"Missing required keys: {', '.join(missing)}"}), 400
+        raw = json.dumps({'username': username, 'keys': keys}).encode('utf-8')
+        encrypted = _porting_encrypt(raw)
+        dest = _byok_path(username)
+        with open(dest, 'wb') as fh:
+            fh.write(encrypted)
+        return jsonify({"ok": True, "byok_active": True})
+    except Exception as exc:
+        logger.exception("[porting/byok/activate]")
+        return jsonify({"error": "BYOK activation failed", "detail": str(exc)}), 500
+
+
+@app.get("/api/porting/byok/status")
+def byok_status():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        active = os.path.isfile(_byok_path(username))
+        return jsonify({"byok_active": active})
+    except Exception as exc:
+        logger.exception("[porting/byok/status]")
+        return jsonify({"error": "Could not check BYOK status", "detail": str(exc)}), 500
+
+
+@app.get("/api/porting/credentials/status")
+def porting_credentials_status():
+    """Return whether the user has any uploaded credential files on file."""
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        safe_prefix = _porting_safe_name(username) + "_"
+        has_creds = any(
+            f.startswith(safe_prefix) and f.endswith(".enc")
+            for f in os.listdir(_PORTING_INPUT_DIR)
+        ) if os.path.isdir(_PORTING_INPUT_DIR) else False
+        return jsonify({"credentials_on_file": has_creds})
+    except Exception as exc:
+        logger.exception("[porting/credentials/status]")
+        return jsonify({"error": "Could not check credential status", "detail": str(exc)}), 500
+
+
+@app.delete("/api/porting/byok/deactivate")
+def byok_deactivate():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        dest = _byok_path(username)
+        if os.path.isfile(dest):
+            os.remove(dest)
+        return jsonify({"ok": True, "byok_active": False})
+    except Exception as exc:
+        logger.exception("[porting/byok/deactivate]")
+        return jsonify({"error": "Could not deactivate BYOK", "detail": str(exc)}), 500
+
+
+@app.post("/api/porting/byok/validate")
+def byok_validate():
+    """Validate BYOK keys by probing live Google Cloud APIs + checking credential formats.
+    Steps:
+      1. Gemini API  — list models (validates GEMINI_API_KEY + billing)
+      2. Custom Search API — single query (validates GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX)
+      3. GOOGLE_API_KEY format check
+      4. OAuth client credential format check
+    Returns a structured results array without storing anything."""
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        import re
+        import urllib.request as _ureq
+        import urllib.parse as _uparse
+
+        body = request.get_json(silent=True) or {}
+        keys = {}
+        missing = []
+        for k in _BYOK_REQUIRED_KEYS:
+            raw = body.get(k)
+            if not isinstance(raw, (str, int, float)):
+                missing.append(k); continue
+            val = str(raw).strip()
+            if not val or len(val) > 512:
+                missing.append(k)
+            else:
+                keys[k] = val
+        if missing:
+            return jsonify({"error": f"Missing required keys: {', '.join(missing)}"}), 400
+
+        def _probe(url, timeout=8):
+            """GET url; returns (http_status_or_None, body_text)."""
+            try:
+                with _ureq.urlopen(url, timeout=timeout) as resp:
+                    return resp.status, resp.read().decode('utf-8', errors='replace')
+            except Exception as exc:
+                if hasattr(exc, 'code'):
+                    try:
+                        return exc.code, exc.read().decode('utf-8', errors='replace')
+                    except Exception:
+                        return exc.code, ''
+                return None, str(exc)
+
+        def _err_msg(body_text, fallback):
+            try:
+                return json.loads(body_text).get('error', {}).get('message', fallback)
+            except Exception:
+                return fallback
+
+        results = []
+
+        # ── Step 1: Gemini API (GEMINI_API_KEY + billing) ────────────────────────
+        gemini_url = (
+            "https://generativelanguage.googleapis.com/v1beta/models?key="
+            + _uparse.quote(keys['GEMINI_API_KEY'], safe='')
+        )
+        status, body_text = _probe(gemini_url)
+        if status == 200:
+            results.append({'step': 'gemini', 'label': 'Gemini API', 'status': 'ok',
+                            'detail': 'API key is valid and billing is active.'})
+        elif status == 403:
+            results.append({'step': 'gemini', 'label': 'Gemini API', 'status': 'error',
+                            'detail': _err_msg(body_text, 'Gemini API is not enabled or billing is inactive on this project.'),
+                            'consoleUrl': 'https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'})
+        elif status == 400:
+            results.append({'step': 'gemini', 'label': 'Gemini API', 'status': 'error',
+                            'detail': _err_msg(body_text, 'Invalid GEMINI_API_KEY.'),
+                            'consoleUrl': 'https://console.cloud.google.com/apis/credentials'})
+        else:
+            detail = f'Unexpected HTTP {status}' if status else f'Could not reach Google APIs: {body_text}'
+            results.append({'step': 'gemini', 'label': 'Gemini API', 'status': 'warn', 'detail': detail})
+
+        # ── Step 2: Custom Search API (GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX) ───────
+        cse_url = (
+            "https://customsearch.googleapis.com/customsearch/v1?key="
+            + _uparse.quote(keys['GOOGLE_CSE_API_KEY'], safe='')
+            + "&cx=" + _uparse.quote(keys['GOOGLE_CSE_CX'], safe='')
+            + "&q=test&num=1"
+        )
+        status, body_text = _probe(cse_url)
+        if status == 200:
+            results.append({'step': 'cse', 'label': 'Custom Search API', 'status': 'ok',
+                            'detail': 'CSE API key and Search Engine ID are valid.'})
+        elif status == 403:
+            results.append({'step': 'cse', 'label': 'Custom Search API', 'status': 'error',
+                            'detail': _err_msg(body_text, 'Custom Search API is not enabled or billing is required.'),
+                            'consoleUrl': 'https://console.cloud.google.com/apis/library/customsearch.googleapis.com'})
+        elif status == 400:
+            results.append({'step': 'cse', 'label': 'Custom Search API', 'status': 'error',
+                            'detail': _err_msg(body_text, 'Invalid GOOGLE_CSE_API_KEY or GOOGLE_CSE_CX Search Engine ID.'),
+                            'consoleUrl': 'https://console.cloud.google.com/apis/credentials'})
+        else:
+            detail = f'Unexpected HTTP {status}' if status else f'Could not reach Custom Search API: {body_text}'
+            results.append({'step': 'cse', 'label': 'Custom Search API', 'status': 'warn', 'detail': detail})
+
+        # ── Step 3: GOOGLE_API_KEY format ─────────────────────────────────────────
+        google_api_key_ok = bool(re.fullmatch(r'AIza[0-9A-Za-z\-_]{35}', keys['GOOGLE_API_KEY']))
+        results.append({
+            'step': 'google_api_key', 'label': 'GOOGLE_API_KEY Format',
+            'status': 'ok' if google_api_key_ok else 'warn',
+            'detail': ('Key format is valid (AIza… 39-character format).' if google_api_key_ok
+                       else 'Key format looks unusual — expected a 39-character key starting with "AIza".'),
+            **({'consoleUrl': 'https://console.cloud.google.com/apis/credentials'} if not google_api_key_ok else {}),
+        })
+
+        # ── Step 4: OAuth client credentials ──────────────────────────────────────
+        client_id_ok = bool(re.fullmatch(r'\d+-[a-zA-Z0-9]+\.apps\.googleusercontent\.com', keys['GOOGLE_CLIENT_ID']))
+        client_secret_ok = bool(re.match(r'^(GOCSPX-[A-Za-z0-9_\-]{28,}|[A-Za-z0-9_\-]{24,})$', keys['GOOGLE_CLIENT_SECRET']))
+        if not client_id_ok:
+            results.append({'step': 'oauth', 'label': 'OAuth Client Credentials', 'status': 'error',
+                            'detail': 'GOOGLE_CLIENT_ID must have the format <numbers>-<id>.apps.googleusercontent.com',
+                            'consoleUrl': 'https://console.cloud.google.com/apis/credentials'})
+        elif not client_secret_ok:
+            results.append({'step': 'oauth', 'label': 'OAuth Client Credentials', 'status': 'warn',
+                            'detail': 'GOOGLE_CLIENT_SECRET format looks unusual (expected "GOCSPX-…"). Verify it was copied from Google Cloud Console → Credentials → OAuth 2.0 Client.',
+                            'consoleUrl': 'https://console.cloud.google.com/apis/credentials'})
+        else:
+            results.append({'step': 'oauth', 'label': 'OAuth Client Credentials', 'status': 'ok',
+                            'detail': 'Client ID and Client Secret formats are valid.'})
+
+        all_ok = all(r['status'] in ('ok', 'warn') for r in results)
+        return jsonify({'ok': all_ok, 'results': results})
+    except Exception as exc:
+        logger.exception("[porting/byok/validate]")
+        return jsonify({"error": "Validation failed", "detail": str(exc)}), 500
+
+
 if __name__ == '__main__':
     port=int(os.getenv("PORT","8091"))
     logger.info(f"Starting AutoSourcing webbridge on :{port}")
