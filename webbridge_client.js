@@ -28,7 +28,40 @@
 /** Override this to point at a remote webbridge host, e.g. "https://api.example.com" */
 const WB_BASE_URL = (typeof window !== 'undefined' && window.__WB_BASE_URL) || '';
 
-/* ── Internal helpers ─────────────────────────────────────────────────────── */
+/* ── Client-side error reporter ──────────────────────────────────────────── */
+/**
+ * Report a client-side error to the server's Error Capture log.
+ * Fire-and-forget — never throws so it can be used safely in error handlers.
+ * @param {string} message  Error description
+ * @param {string} [source] Source identifier, e.g. the calling function name
+ * @param {'info'|'warning'|'error'|'critical'} [severity]
+ */
+function _reportClientError(message, source = 'webbridge_client.js', severity = 'error') {
+  try {
+    const username = (typeof document !== 'undefined' &&
+      document.cookie.match(/(?:^|;\s*)username=([^;]+)/)?.[1]) || '';
+    fetch(WB_BASE_URL + '/admin/client-error', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ source, message, severity, username }),
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+// Wire up global browser error handlers when running in a page context
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (ev) => {
+    const msg = ev.message || String(ev.error || '');
+    const src = ev.filename ? `${ev.filename}:${ev.lineno}` : 'window.onerror';
+    _reportClientError(msg, src, 'error');
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    const reason = (ev.reason && ev.reason.message) ? ev.reason.message : String(ev.reason || '');
+    _reportClientError(reason, 'unhandledRejection', 'error');
+  });
+}
+
 
 async function _post(path, body = {}) {
   const res = await fetch(WB_BASE_URL + path, {

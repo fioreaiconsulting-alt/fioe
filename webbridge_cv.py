@@ -17,6 +17,16 @@ from csv import DictWriter
 from datetime import datetime
 from flask import request, send_from_directory, jsonify, abort, Response, stream_with_context
 
+# Structured activity logger
+try:
+    from app_logger import log_agentic, log_approval, log_error as _log_error_cv
+    _CV_LOGGER_AVAILABLE = True
+except ImportError:
+    _CV_LOGGER_AVAILABLE = False
+    def log_agentic(**_kw): pass
+    def log_approval(**_kw): pass
+    def _log_error_cv(**_kw): pass
+
 # ---------------------------------------------------------------------------
 # __main__ / module-name fix
 # When webbridge.py is invoked directly (`python webbridge.py`) Python registers
@@ -558,6 +568,15 @@ def start_job():
                      args=(job_id, queries, fallback_queries, auto_expand, manual_urls,
                            search_results_only, country, dynamic_target, job_titles),
                      daemon=True).start()
+    # Log agentic intent event
+    _agentic_filters = []
+    if country: _agentic_filters.append(f"country:{country}")
+    if seniority: _agentic_filters.append(f"seniority:{seniority}")
+    if selected_sectors: _agentic_filters.extend([f"sector:{s}" for s in selected_sectors[:3]])
+    log_agentic(username=username, userid=userid,
+                query="; ".join(queries[:3]) if queries else "",
+                filters=_agentic_filters,
+                result_count=dynamic_target)
     return jsonify({'job_id': job_id}), 200
 
 @app.get('/job_status/<job_id>')
@@ -5031,12 +5050,18 @@ def process_bulk_assess():
             persist_job(job_id)
 
         threading.Thread(target=_bg_worker, args=(linkedinurls, job_id), daemon=True).start()
+        log_approval(action="bulk_assessment_triggered",
+                     username=username, userid=userid,
+                     detail=f"Async bulk assessment started for {len(linkedinurls)} profile(s); job_id={job_id}")
         return jsonify({"ok": True, "job_id": job_id}), 202
 
     # synchronous: do all and return results
     all_results = []
     for u in linkedinurls:
         all_results.append(_assess_and_persist(u))
+    log_approval(action="bulk_assessment_completed",
+                 username=username, userid=userid,
+                 detail=f"Synchronous bulk assessment completed for {len(linkedinurls)} profile(s)")
     return jsonify({"ok": True, "results": all_results}), 200
 
 
