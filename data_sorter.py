@@ -23,6 +23,16 @@ from name_origin import (
 # Added imports for authentication/password handling
 from werkzeug.security import check_password_hash
 
+# Structured activity logger (shared with webbridge)
+try:
+    from app_logger import log_error as _log_error_ds, log_approval as _log_approval_ds
+    _DS_LOGGER_AVAILABLE = True
+except ImportError:
+    _DS_LOGGER_AVAILABLE = False
+    def _log_error_ds(**_kw): pass
+    def _log_approval_ds(**_kw): pass
+
+
 app = Flask(__name__, static_folder='static')
 
 # Secret key for Flask session (use a secure value in production)
@@ -1954,6 +1964,16 @@ def generate_excel_route():
     def cleanup():
         try: os.remove(file_path)
         except OSError: pass
+    # Log the human-triggered export action
+    try:
+        _log_approval_ds(
+            action="export_excel_triggered",
+            username=session.get('username', ''),
+            detail="generate_excel export completed",
+            source="data_sorter.py",
+        )
+    except Exception:
+        pass
     return response
 
 def _serve_html_fallback(filename: str):
@@ -2024,3 +2044,34 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+@app.errorhandler(500)
+def _handle_500_ds(e):
+    _log_error_ds(source="data_sorter", message=str(e), severity="critical",
+                  endpoint=request.path if request else "")
+    return jsonify({"error": "Internal server error"}), 500
+
+@app.after_request
+def _capture_http_errors_ds(response):
+    """Log any HTTP 4xx/5xx response to the Error Capture log."""
+    _skip = ("/favicon.ico",)
+    if (response.status_code >= 400
+            and request.method != "OPTIONS"
+            and not any(request.path.startswith(p) for p in _skip)):
+        _sc = response.status_code
+        _sev = "critical" if _sc >= 500 else "warning"
+        _body_msg = ""
+        try:
+            if "json" in (response.content_type or ""):
+                _body_msg = response.get_data(as_text=True)[:500]
+        except Exception:
+            pass
+        _log_error_ds(
+            source="data_sorter",
+            message=f"{request.method} {request.path} → HTTP {_sc}",
+            severity=_sev,
+            endpoint=request.path,
+            http_status=_sc,
+            detail=_body_msg,
+        )
+    return response
