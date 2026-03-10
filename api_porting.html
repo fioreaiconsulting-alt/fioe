@@ -595,6 +595,46 @@
       color: var(--argent);
       border: 1px solid var(--border);
     }
+    /* ── BYOK validation panel ── */
+    .byok-validation-steps { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+    .byok-vstep {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      transition: border-color .15s, background .15s;
+    }
+    .byok-vstep.ok    { border-color: rgba(24,128,56,.3);  background: rgba(24,128,56,.05); }
+    .byok-vstep.warn  { border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.05); }
+    .byok-vstep.error { border-color: rgba(211,47,47,.3);   background: rgba(211,47,47,.05); }
+    .byok-vstep-icon { font-size: 15px; min-width: 18px; line-height: 1.6; text-align: center; }
+    .byok-vstep-content { flex: 1; }
+    .byok-vstep-label  { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 2px; }
+    .byok-vstep.ok    .byok-vstep-label { color: var(--success-600); }
+    .byok-vstep.warn  .byok-vstep-label { color: #b45309; }
+    .byok-vstep.error .byok-vstep-label { color: var(--danger); }
+    .byok-vstep.checking .byok-vstep-label { color: var(--argent); }
+    .byok-vstep-detail { font-size: 12px; color: var(--argent); line-height: 1.5; }
+    .byok-vstep-console-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-top: 5px; font-size: 11px; font-weight: 600;
+      color: var(--cool-blue); text-decoration: none;
+      border: 1px solid var(--cool-blue); border-radius: 4px;
+      padding: 2px 8px;
+    }
+    .byok-vstep-console-link:hover { background: rgba(var(--azure-rgb),.08); }
+    .byok-validation-summary {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px; border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .byok-validation-summary.all-ok    { background: rgba(24,128,56,.08);  color: var(--success-600); border: 1px solid rgba(24,128,56,.25); }
+    .byok-validation-summary.has-error { background: rgba(211,47,47,.07);  color: var(--danger);       border: 1px solid rgba(211,47,47,.25); }
+    .byok-validation-summary.has-warn  { background: rgba(251,191,36,.08); color: #92400e;             border: 1px solid rgba(251,191,36,.3); }
   </style>
 </head>
 <body>
@@ -851,7 +891,18 @@
           </div>
         </div>
 
+        <!-- Validation results panel (hidden until Validate is clicked) -->
+        <div id="byokValidationPanel" style="display:none;margin-bottom:18px">
+          <p class="section-label" style="margin-bottom:10px">🔍 Credential Validation</p>
+          <div id="byokValidationSummary" class="byok-validation-summary" style="display:none"></div>
+          <div id="byokValidationSteps" class="byok-validation-steps"></div>
+        </div>
+
         <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" id="byokValidateBtn" type="button" style="background:var(--panel);border:1px solid var(--border)">
+            <span class="spinner" id="byokValidateSpinner" style="display:none"></span>
+            🔍 Validate Keys
+          </button>
           <button class="btn btn-primary" id="byokActivateBtn" type="button">
             <span class="spinner" id="byokSpinner" style="display:none"></span>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
@@ -1397,6 +1448,11 @@ portBtn.addEventListener('click', async () => {
 });
 
 // ── BYOK tab ──────────────────────────────────────────────────────────────────
+const byokValidateBtn      = document.getElementById('byokValidateBtn');
+const byokValidateSpinner  = document.getElementById('byokValidateSpinner');
+const byokValidationPanel  = document.getElementById('byokValidationPanel');
+const byokValidationSteps  = document.getElementById('byokValidationSteps');
+const byokValidationSummary = document.getElementById('byokValidationSummary');
 const byokActivateBtn   = document.getElementById('byokActivateBtn');
 const byokDeactivateBtn = document.getElementById('byokDeactivateBtn');
 const byokSpinner       = document.getElementById('byokSpinner');
@@ -1435,6 +1491,125 @@ function updateByokStatusBadge(active) {
     byokStatusBadge.style.display = 'none';
   }
 })();
+
+/** Build the BYOK key payload from form fields. Returns { payload, missing }. */
+function _buildByokPayload() {
+  const payload = {}, missing = [];
+  for (const [key, fieldId] of Object.entries(BYOK_FIELD_MAP)) {
+    const val = document.getElementById(fieldId).value.trim();
+    if (!val) missing.push(key); else payload[key] = val;
+  }
+  return { payload, missing };
+}
+
+/**
+ * Renders structured validation results into #byokValidationPanel.
+ * Returns true when there are no hard errors (ok or warn only).
+ */
+function renderValidationResults(results) {
+  byokValidationSteps.innerHTML = '';
+  const ICONS = { ok: '✓', warn: '⚠', error: '✗', checking: '…' };
+  let hasError = false, hasWarn = false;
+  for (const step of results) {
+    if (step.status === 'error') hasError = true;
+    if (step.status === 'warn')  hasWarn  = true;
+    const el = document.createElement('div');
+    el.className = 'byok-vstep ' + (step.status || 'checking');
+
+    const iconEl = document.createElement('div');
+    iconEl.className = 'byok-vstep-icon';
+    iconEl.textContent = ICONS[step.status] || '…';
+
+    const contentEl = document.createElement('div');
+    contentEl.className = 'byok-vstep-content';
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'byok-vstep-label';
+    labelEl.textContent = step.label;
+
+    const detailEl = document.createElement('div');
+    detailEl.className = 'byok-vstep-detail';
+    detailEl.textContent = step.detail || '';
+
+    contentEl.appendChild(labelEl);
+    contentEl.appendChild(detailEl);
+
+    if (step.consoleUrl) {
+      const linkEl = document.createElement('a');
+      linkEl.href = step.consoleUrl;
+      linkEl.target = '_blank';
+      linkEl.rel = 'noopener noreferrer';
+      linkEl.className = 'byok-vstep-console-link';
+      linkEl.textContent = '→ Open Google Cloud Console';
+      contentEl.appendChild(linkEl);
+    }
+    el.appendChild(iconEl);
+    el.appendChild(contentEl);
+    byokValidationSteps.appendChild(el);
+  }
+
+  byokValidationSummary.style.display = 'flex';
+  if (hasError) {
+    byokValidationSummary.className = 'byok-validation-summary has-error';
+    byokValidationSummary.innerHTML = '✗ &nbsp;Validation failed — fix the errors above before activating BYOK.';
+  } else if (hasWarn) {
+    byokValidationSummary.className = 'byok-validation-summary has-warn';
+    byokValidationSummary.innerHTML = '⚠ &nbsp;Validation passed with warnings. Review the details above, then activate.';
+  } else {
+    byokValidationSummary.className = 'byok-validation-summary all-ok';
+    byokValidationSummary.innerHTML = '✓ &nbsp;All checks passed — keys are valid. Click "Activate Keys" to proceed.';
+  }
+  byokValidationPanel.style.display = '';
+  return !hasError;
+}
+
+// ── Validate Keys ─────────────────────────────────────────────────────────────
+byokValidateBtn.addEventListener('click', async () => {
+  showStatus(byokStatusEl, '');
+  const { payload, missing } = _buildByokPayload();
+  if (missing.length > 0) {
+    showStatus(byokStatusEl, '⚠ Please fill in all required fields: ' + missing.join(', '), 'warn');
+    return;
+  }
+  byokValidateBtn.disabled = true;
+  byokValidateSpinner.style.display = 'inline-block';
+  // Show skeleton "checking" rows immediately for feedback
+  byokValidationSteps.innerHTML = '';
+  byokValidationSummary.style.display = 'none';
+  byokValidationPanel.style.display = '';
+  ['Gemini API', 'Custom Search API', 'GOOGLE_API_KEY Format', 'OAuth Client Credentials'].forEach(label => {
+    const el = document.createElement('div');
+    el.className = 'byok-vstep checking';
+    el.innerHTML =
+      `<div class="byok-vstep-icon">…</div>` +
+      `<div class="byok-vstep-content">` +
+        `<div class="byok-vstep-label">${escHtml(label)}</div>` +
+        `<div class="byok-vstep-detail">Checking…</div>` +
+      `</div>`;
+    byokValidationSteps.appendChild(el);
+  });
+  try {
+    const r = await fetch('/api/porting/byok/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      byokValidationPanel.style.display = 'none';
+      showStatus(byokStatusEl, data.error || 'Validation failed.', 'error');
+      return;
+    }
+    renderValidationResults(data.results || []);
+  } catch (err) {
+    byokValidationPanel.style.display = 'none';
+    showStatus(byokStatusEl, 'Network error: ' + err.message, 'error');
+  } finally {
+    byokValidateBtn.disabled = false;
+    byokValidateSpinner.style.display = 'none';
+  }
+});
 
 byokActivateBtn.addEventListener('click', async () => {
   showStatus(byokStatusEl, '');
