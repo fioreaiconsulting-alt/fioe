@@ -15,6 +15,10 @@
   <script src="nav-sidebar.js" defer></script>
 
   <style>
+    /* ── Root overrides ── */
+    :root {
+      --azure-rgb: 7, 54, 121;
+    }
     /* ── Page-level layout ── */
     .page-main {
       flex: 1;
@@ -642,7 +646,7 @@
       border: 1px solid var(--cool-blue); border-radius: 4px;
       padding: 2px 8px;
     }
-    .byok-vstep-console-link:hover { background: rgba(7,54,121,.08); }
+    .byok-vstep-console-link:hover { background: rgba(var(--azure-rgb),.08); }
     .byok-validation-summary {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 14px; border-radius: var(--radius-sm);
@@ -835,24 +839,24 @@
   <div class="page-content">
 
     <!-- Tab bar -->
-    <div class="tabs-bar">
-      <button class="tab-btn active" data-tab="tab-upload" data-workflow-step="wf-step-1">🔑 Upload Credentials</button>
-      <button class="tab-btn" data-tab="tab-port" data-workflow-step="wf-step-2">🚀 Port Data</button>
-      <button class="tab-btn" data-tab="tab-byok" data-workflow-step="wf-step-3">☁️ BYOK</button>
+    <div class="tabs-bar" role="tablist" aria-label="API Porting sections">
+      <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-upload" data-tab="tab-upload" data-workflow-step="wf-step-1">🔑 Upload Credentials</button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-port" data-tab="tab-port" data-workflow-step="wf-step-2">🚀 Port Data</button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-byok" data-tab="tab-byok" data-workflow-step="wf-step-3">☁️ BYOK</button>
     </div>
 
     <!-- Workflow guide strip -->
-    <div class="workflow-strip">
+    <div class="workflow-strip" aria-hidden="true">
       <div class="workflow-step active" id="wf-step-1">
         <span class="wf-num">1</span>
         <span class="wf-label">Upload Credentials</span>
       </div>
-      <div class="wf-arrow">›</div>
+      <div class="wf-arrow" aria-hidden="true">›</div>
       <div class="workflow-step" id="wf-step-2">
         <span class="wf-num">2</span>
         <span class="wf-label">Port Data</span>
       </div>
-      <div class="wf-arrow">›</div>
+      <div class="wf-arrow" aria-hidden="true">›</div>
       <div class="workflow-step" id="wf-step-3">
         <span class="wf-num">3</span>
         <span class="wf-label">Activate BYOK</span>
@@ -1128,7 +1132,6 @@
       // Inject user chip into the page header on the right side (next to Admin link)
       const pageHeader = document.querySelector('.page-header');
       if (pageHeader) {
-        bar.style.cssText = 'display:flex;align-items:center;gap:10px;flex-shrink:0';
         const adminLink = pageHeader.querySelector('.header-admin');
         if (adminLink) {
           pageHeader.insertBefore(bar, adminLink);
@@ -1166,9 +1169,13 @@
 // ── Tab switching ─────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+    });
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
     document.getElementById(btn.dataset.tab).classList.add('active');
     // Sync workflow strip
     document.querySelectorAll('.workflow-step').forEach(s => s.classList.remove('active'));
