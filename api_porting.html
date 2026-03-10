@@ -603,7 +603,7 @@
 <div class="modal-overlay hidden" id="modeModal" role="dialog" aria-modal="true" aria-labelledby="modeModalTitle">
   <div class="modal-box">
     <h3 id="modeModalTitle">How would you like to use these keys?</h3>
-    <p class="modal-sub">Choose how these API keys will be applied. You can change this later.</p>
+    <p class="modal-sub" id="modeModalSub">Choose how these API keys will be applied. You can change this later.</p>
     <div class="modal-choices">
       <button class="modal-choice-btn selected" id="modePortingBtn" type="button">
         <div class="mcb-icon">🚀</div>
@@ -612,8 +612,8 @@
       </button>
       <button class="modal-choice-btn" id="modeByokBtn" type="button">
         <div class="mcb-icon">🔑</div>
-        <div class="mcb-title">BYOK — Bring Your Own Keys</div>
-        <div class="mcb-desc">Use your own Google Cloud keys for unlimited access. Usage is billed to your account.</div>
+        <div class="mcb-title">BYOK — Bring Your Own Keys <span id="byokDetectedBadge" style="display:none;font-size:10px;background:rgba(24,128,56,.12);color:#188038;border:1px solid rgba(24,128,56,.3);border-radius:10px;padding:2px 8px;font-family:'Roboto Condensed',sans-serif;font-weight:700;letter-spacing:.3px;vertical-align:middle">✓ Keys detected</span></div>
+        <div class="mcb-desc" id="byokModalDesc">Use your own Google Cloud keys for unlimited access. Usage is billed to your account.</div>
       </button>
     </div>
     <div class="status-msg" id="modeModalStatus"></div>
@@ -1031,30 +1031,109 @@ function setFile(file) {
   chosenName.textContent = '✓ ' + file.name;
   chosenName.style.display = '';
   apiKeyText.value = '';
+  // Read file content and attempt BYOK autofill
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const text = atob(reader.result.split(',')[1]);
+      checkAndAutofillByok(text);
+    } catch (e) {
+      // File could not be decoded as text — not a critical error, autofill simply won't happen
+      console.warn('[BYOK autofill] Could not decode file for key detection:', e.message);
+    }
+  };
+  reader.readAsDataURL(file);
 }
 
-// ── Mode selection modal ──────────────────────────────────────────────────────
-const modeModal       = document.getElementById('modeModal');
-const modeModalStatus = document.getElementById('modeModalStatus');
-const modeModalCancel = document.getElementById('modeModalCancel');
-const modeModalConfirm = document.getElementById('modeModalConfirm');
-const modePortingBtn  = document.getElementById('modePortingBtn');
-const modeByokBtn     = document.getElementById('modeByokBtn');
+// Live-parse textarea as user types (debounced)
+let _byokDebounce = null;
+apiKeyText.addEventListener('input', () => {
+  clearTimeout(_byokDebounce);
+  _byokDebounce = setTimeout(() => checkAndAutofillByok(apiKeyText.value), 400);
+});
 
+// ── BYOK autofill helpers ─────────────────────────────────────────────────────
 const BYOK_REQUIRED = [
   'GEMINI_API_KEY', 'GOOGLE_CSE_API_KEY', 'GOOGLE_API_KEY',
   'GOOGLE_CSE_CX', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'
 ];
+
+// Maps BYOK key name → input field ID in the BYOK tab
+const BYOK_FIELD_MAP = {
+  GEMINI_API_KEY:       'byok_gemini',
+  GOOGLE_CSE_API_KEY:   'byok_cse_api',
+  GOOGLE_API_KEY:       'byok_google_api',
+  GOOGLE_CSE_CX:        'byok_cse_cx',
+  GOOGLE_CLIENT_ID:     'byok_client_id',
+  GOOGLE_CLIENT_SECRET: 'byok_client_secret',
+};
+
+let _detectedByokKeys = null; // null = not all required keys detected; object = all 6 required keys present
+
+/**
+ * Parse text for KEY=VALUE pairs.  If all 6 required BYOK keys are found,
+ * auto-populate the BYOK tab fields and set _detectedByokKeys.
+ */
+function checkAndAutofillByok(text) {
+  const parsed = parseKeyValueText(text);
+  const foundAll = BYOK_REQUIRED.every(k => parsed[k]);
+  if (foundAll) {
+    _detectedByokKeys = parsed;
+    // Populate BYOK tab inputs (user can review before clicking Activate)
+    for (const [key, fieldId] of Object.entries(BYOK_FIELD_MAP)) {
+      const el = document.getElementById(fieldId);
+      if (el && parsed[key]) el.value = parsed[key];
+    }
+    // Show autofill notification on the upload tab
+    showStatus(uploadStatus,
+      '✓ Google Cloud API keys detected — BYOK tab fields have been pre-filled. ' +
+      'Review them in the ☁️ BYOK tab and click "Activate Keys" to enable BYOK mode.',
+      'success');
+  } else {
+    _detectedByokKeys = null;
+  }
+}
+
+// ── Mode selection modal ──────────────────────────────────────────────────────
+const modeModal        = document.getElementById('modeModal');
+const modeModalStatus  = document.getElementById('modeModalStatus');
+const modeModalSub     = document.getElementById('modeModalSub');
+const modeModalCancel  = document.getElementById('modeModalCancel');
+const modeModalConfirm = document.getElementById('modeModalConfirm');
+const modePortingBtn   = document.getElementById('modePortingBtn');
+const modeByokBtn      = document.getElementById('modeByokBtn');
+const byokDetectedBadge = document.getElementById('byokDetectedBadge');
+const byokModalDesc    = document.getElementById('byokModalDesc');
 
 let _selectedMode = 'porting'; // 'porting' | 'byok'
 let _pendingBody  = null;      // body to submit after modal confirm
 
 function openModeModal(body) {
   _pendingBody  = body;
-  _selectedMode = 'porting';
-  modePortingBtn.classList.add('selected');
-  modeByokBtn.classList.remove('selected');
   showStatus(modeModalStatus, '');
+
+  const hasAllByokKeys = _detectedByokKeys && BYOK_REQUIRED.every(k => _detectedByokKeys[k]);
+
+  if (hasAllByokKeys) {
+    // Pre-select BYOK and show "keys detected" badge
+    _selectedMode = 'byok';
+    modeByokBtn.classList.add('selected');
+    modePortingBtn.classList.remove('selected');
+    byokDetectedBadge.style.display = '';
+    byokModalDesc.textContent =
+      'All required Google Cloud keys are present. Activate BYOK for unlimited access — billed to your account.';
+    modeModalSub.textContent =
+      'Google Cloud API keys detected in your input. Choose how to proceed.';
+  } else {
+    _selectedMode = 'porting';
+    modePortingBtn.classList.add('selected');
+    modeByokBtn.classList.remove('selected');
+    byokDetectedBadge.style.display = 'none';
+    byokModalDesc.textContent =
+      'Use your own Google Cloud keys for unlimited access. Usage is billed to your account.';
+    modeModalSub.textContent = 'Choose how these API keys will be applied. You can change this later.';
+  }
+
   modeModal.classList.remove('hidden');
 }
 
@@ -1191,7 +1270,11 @@ async function doUpload(body) {
     });
     const data = await r.json();
     if (!r.ok) { showStatus(uploadStatus, data.error || 'Upload failed.', 'error'); return; }
-    showStatus(uploadStatus, '✓ Credentials encrypted and submitted successfully.', 'success');
+    // If BYOK keys were detected during input, add a hint to go to the BYOK tab
+    const byokHint = _detectedByokKeys && BYOK_REQUIRED.every(k => _detectedByokKeys[k])
+      ? ' Google Cloud API keys were detected and pre-filled in the ☁️ BYOK tab — click "Activate Keys" there to enable BYOK mode.'
+      : '';
+    showStatus(uploadStatus, '✓ Credentials encrypted and submitted successfully.' + byokHint, 'success');
     clearUploadForm();
   } catch (err) {
     showStatus(uploadStatus, 'Network error: ' + err.message, 'error');
@@ -1206,6 +1289,7 @@ function clearUploadForm() {
   fileInput.value = '';
   chosenName.style.display = 'none';
   apiKeyText.value = '';
+  _detectedByokKeys = null;
 }
 
 submitBtn.addEventListener('click', async () => {
@@ -1321,14 +1405,7 @@ const byokStatusBadge   = document.getElementById('byokStatusBadge');
 const byokStatusDot     = document.getElementById('byokStatusDot');
 const byokStatusText    = document.getElementById('byokStatusText');
 
-const BYOK_FIELDS = {
-  GEMINI_API_KEY:       'byok_gemini',
-  GOOGLE_CSE_API_KEY:   'byok_cse_api',
-  GOOGLE_API_KEY:       'byok_google_api',
-  GOOGLE_CSE_CX:        'byok_cse_cx',
-  GOOGLE_CLIENT_ID:     'byok_client_id',
-  GOOGLE_CLIENT_SECRET: 'byok_client_secret',
-};
+// BYOK_FIELD_MAP is defined above in the Upload tab section (shared reference)
 
 function updateByokStatusBadge(active) {
   byokStatusBadge.style.display = 'inline-flex';
@@ -1363,7 +1440,7 @@ byokActivateBtn.addEventListener('click', async () => {
   showStatus(byokStatusEl, '');
   const payload = {};
   const missing = [];
-  for (const [key, fieldId] of Object.entries(BYOK_FIELDS)) {
+  for (const [key, fieldId] of Object.entries(BYOK_FIELD_MAP)) {
     const val = document.getElementById(fieldId).value.trim();
     if (!val) missing.push(key);
     else payload[key] = val;
@@ -1393,8 +1470,9 @@ byokActivateBtn.addEventListener('click', async () => {
       'Unlimited access is enabled — usage is billed to your Google Cloud account.',
       'success');
     updateByokStatusBadge(true);
+    _detectedByokKeys = null;
     // Clear input fields for security
-    Object.values(BYOK_FIELDS).forEach(id => { document.getElementById(id).value = ''; });
+    Object.values(BYOK_FIELD_MAP).forEach(id => { document.getElementById(id).value = ''; });
   } catch (err) {
     showStatus(byokStatusEl, 'Network error: ' + err.message, 'error');
   } finally {

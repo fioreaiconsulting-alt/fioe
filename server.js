@@ -3977,6 +3977,77 @@ app.post('/api/porting/export', requireLogin, dashboardRateLimit, async (req, re
   }
 });
 
+// ========== BYOK (Bring Your Own Keys) Endpoints ==========
+const BYOK_REQUIRED_KEYS = [
+  'GEMINI_API_KEY', 'GOOGLE_CSE_API_KEY', 'GOOGLE_API_KEY',
+  'GOOGLE_CSE_CX', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+];
+
+function byokFilePath(username) {
+  const dir = path.join(PORTING_INPUT_DIR, 'byok');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${safeName(username)}.enc`);
+}
+
+// POST /api/porting/byok/activate
+// Body: { GEMINI_API_KEY, GOOGLE_CSE_API_KEY, GOOGLE_API_KEY, GOOGLE_CSE_CX, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET }
+// Validates all required keys are present, encrypts them, and stores per-user.
+app.post('/api/porting/byok/activate', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const keys = {};
+    const missing = [];
+    for (const k of BYOK_REQUIRED_KEYS) {
+      const raw = req.body[k];
+      if (typeof raw !== 'string' && typeof raw !== 'number') {
+        missing.push(k);
+        continue;
+      }
+      const val = String(raw).trim();
+      // Enforce a reasonable value length limit (512 chars covers all known Google key formats)
+      if (!val || val.length > 512) {
+        missing.push(k);
+      } else {
+        keys[k] = val;
+      }
+    }
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Missing required keys: ${missing.join(', ')}` });
+    }
+    const raw = Buffer.from(JSON.stringify({ username: req.user.username, keys }), 'utf8');
+    const encrypted = encryptBuffer(raw);
+    fs.writeFileSync(byokFilePath(req.user.username), encrypted);
+    res.json({ ok: true, byok_active: true });
+  } catch (err) {
+    console.error('[porting/byok/activate]', err);
+    res.status(500).json({ error: 'BYOK activation failed', detail: err.message });
+  }
+});
+
+// GET /api/porting/byok/status
+// Returns whether BYOK is currently active for the logged-in user.
+app.get('/api/porting/byok/status', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const active = fs.existsSync(byokFilePath(req.user.username));
+    res.json({ byok_active: active });
+  } catch (err) {
+    console.error('[porting/byok/status]', err);
+    res.status(500).json({ error: 'Could not check BYOK status', detail: err.message });
+  }
+});
+
+// DELETE /api/porting/byok/deactivate
+// Removes the stored BYOK key file for the current user.
+app.delete('/api/porting/byok/deactivate', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const dest = byokFilePath(req.user.username);
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    res.json({ ok: true, byok_active: false });
+  } catch (err) {
+    console.error('[porting/byok/deactivate]', err);
+    res.status(500).json({ error: 'Could not deactivate BYOK', detail: err.message });
+  }
+});
+
 // ========== Dashboard Save / Load / Delete State ==========
 // Files are stored in SAVE_STATE_DIR (env var) or a 'save state' sub-directory of __dirname.
 // The target Windows path can be configured via: SAVE_STATE_DIR=F:\Recruiting Tools\...
