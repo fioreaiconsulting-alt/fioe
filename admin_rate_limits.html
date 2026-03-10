@@ -257,6 +257,54 @@
     .log-empty { text-align:center; padding:24px; color:var(--muted); font-style:italic; font-size:13px; }
 
     .log-tbl-wrap { overflow-x:auto; }
+
+    /* ── Error → Gemini analysis panel ── */
+    .error-detail-panel {
+      background:#f9fbfd; border:1px solid var(--border); border-radius:10px;
+      margin-top:20px; padding:18px 20px;
+    }
+    .error-detail-panel h4 {
+      margin:0 0 10px; font-size:14px; color:var(--primary); font-weight:700;
+    }
+    .error-raw-box {
+      background:#fff; border:1px solid var(--border); border-radius:7px;
+      padding:10px 14px; font-size:12px; font-family:monospace;
+      white-space:pre-wrap; word-break:break-all; max-height:120px; overflow-y:auto;
+      color:#333; margin-bottom:12px;
+    }
+    .gemini-output-box {
+      background:#fff; border:1px solid var(--border); border-radius:7px;
+      padding:10px 14px; font-size:13px; line-height:1.6;
+      min-height:60px; margin-bottom:12px; color:#222;
+      white-space:pre-wrap;
+    }
+    .gemini-output-box.loading { color:var(--muted); font-style:italic; }
+    .gemini-output-box.error-state { color:var(--danger); }
+    .copilot-prompt-wrap { position:relative; }
+    .copilot-prompt-box {
+      width:100%; min-height:90px; padding:10px 42px 10px 12px;
+      border:1px solid var(--border); border-radius:7px;
+      font-size:12px; font-family:monospace; resize:vertical;
+      background:#f5f7fa; color:#222; line-height:1.5;
+    }
+    .copilot-copy-btn {
+      position:absolute; top:8px; right:8px;
+      background:var(--primary); color:#fff; border:none;
+      border-radius:5px; padding:4px 9px; font-size:11px; font-weight:700;
+      cursor:pointer; transition:background .15s;
+    }
+    .copilot-copy-btn:hover { background:#084d94; }
+    .gemini-analyze-btn {
+      display:inline-flex; align-items:center; gap:6px;
+      background:linear-gradient(135deg,#4285f4,#34a853);
+      color:#fff; border:none; border-radius:7px;
+      padding:7px 16px; font-size:13px; font-weight:600; cursor:pointer;
+      transition:opacity .15s;
+    }
+    .gemini-analyze-btn:hover { opacity:.88; }
+    .gemini-analyze-btn:disabled { opacity:.5; cursor:default; }
+    .error-row-link { cursor:pointer; text-decoration:underline; color:var(--primary); }
+    .error-row-link:hover { color:#084d94; }
   </style>
 </head>
 <body>
@@ -1775,6 +1823,7 @@ function renderErrorsSection(rows) {
     return;
   }
 
+  // ── Error table ──────────────────────────────────────────────────────────
   const wrap = document.createElement('div');
   wrap.className = 'log-tbl-wrap';
   const tbl = document.createElement('table');
@@ -1784,7 +1833,7 @@ function renderErrorsSection(rows) {
         <th>Timestamp</th>
         <th>Severity</th>
         <th>Source</th>
-        <th>Message</th>
+        <th>Message (click to analyse)</th>
       </tr>
     </thead>`;
   const tbody = document.createElement('tbody');
@@ -1798,16 +1847,147 @@ function renderErrorsSection(rows) {
     const tr = document.createElement('tr');
     if (sev === 'critical') tr.className = 'sev-critical';
     else if (sev === 'warning' || sev === 'warn') tr.className = 'sev-warning';
+    const msgText = r.message || r.error || '';
     tr.innerHTML = `
       <td>${escHtml(r.timestamp || '—')}</td>
       <td>${sevBadge}</td>
       <td>${escHtml(r.source || r.endpoint || '—')}</td>
-      <td title="${escHtml(r.message || r.error || '')}">${escHtml(truncateText(r.message || r.error, 120))}</td>`;
+      <td title="${escHtml(msgText)}">
+        <span class="error-row-link">${escHtml(truncateText(msgText, 100))}</span>
+      </td>`;
+    // Click on row → open Gemini analysis panel
+    tr.querySelector('.error-row-link').addEventListener('click', () => {
+      openErrorAnalysisPanel(sec, r);
+    });
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
   sec.appendChild(wrap);
+
+  // ── Gemini analysis panel (hidden until row clicked) ─────────────────────
+  const panel = document.createElement('div');
+  panel.className = 'error-detail-panel';
+  panel.id = 'errorDetailPanel';
+  panel.style.display = 'none';
+  sec.appendChild(panel);
+}
+
+function openErrorAnalysisPanel(sec, errorEntry) {
+  const panel = document.getElementById('errorDetailPanel');
+  if (!panel) return;
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const msgText = errorEntry.message || errorEntry.error || '';
+  const src     = errorEntry.source   || errorEntry.endpoint || 'unknown';
+  const ts      = errorEntry.timestamp || '';
+
+  panel.innerHTML = `
+    <h4>🔍 Error Analysis — ${escHtml(src)}</h4>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${escHtml(ts)}</div>
+
+    <div style="margin-bottom:10px">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Raw Error</strong>
+      <div class="error-raw-box">${escHtml(msgText)}</div>
+    </div>
+
+    <button class="gemini-analyze-btn" id="geminiAnalyseBtn">
+      <span>✨</span> Analyse with Gemini
+    </button>
+
+    <div id="geminiExplanationWrap" style="margin-top:14px;display:none">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Gemini Explanation</strong>
+      <div class="gemini-output-box" id="geminiExplanationBox"></div>
+
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Suggested Fix</strong>
+      <div class="gemini-output-box" id="geminiFixBox"></div>
+
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">
+        GitHub Copilot Prompt <span style="font-weight:400;color:var(--muted)">(copy &amp; paste into Copilot)</span>
+      </strong>
+      <div class="copilot-prompt-wrap">
+        <textarea class="copilot-prompt-box" id="copilotPromptBox" readonly></textarea>
+        <button class="copilot-copy-btn" id="copilotCopyBtn" title="Copy to clipboard">📋 Copy</button>
+      </div>
+    </div>`;
+
+  document.getElementById('geminiAnalyseBtn').addEventListener('click', () => {
+    runGeminiErrorAnalysis(msgText, src);
+  });
+
+  document.getElementById('copilotCopyBtn')?.addEventListener('click', () => {
+    const ta = document.getElementById('copilotPromptBox');
+    if (ta) {
+      navigator.clipboard.writeText(ta.value).then(() => toast('Copilot prompt copied ✓', 'success'))
+        .catch(() => { ta.select(); document.execCommand('copy'); toast('Copilot prompt copied ✓', 'success'); });
+    }
+  });
+}
+
+async function runGeminiErrorAnalysis(errorMessage, source) {
+  const btn   = document.getElementById('geminiAnalyseBtn');
+  const wrap  = document.getElementById('geminiExplanationWrap');
+  const expBox = document.getElementById('geminiExplanationBox');
+  const fixBox = document.getElementById('geminiFixBox');
+  const cpBox  = document.getElementById('copilotPromptBox');
+  if (!btn || !wrap || !expBox || !fixBox || !cpBox) return;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳</span> Analysing…';
+  wrap.style.display = '';
+  expBox.className = 'gemini-output-box loading';
+  expBox.textContent = 'Calling Gemini…';
+  fixBox.textContent = '';
+  cpBox.value = '';
+
+  try {
+    const r = await fetch(`${API}/admin/logs/analyse-error`, {
+      method: 'POST',
+      headers: csrfHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify({ error_message: errorMessage, source }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      expBox.className = 'gemini-output-box';
+      expBox.textContent = data.explanation || '—';
+      fixBox.textContent = data.suggested_fix || '—';
+      cpBox.value = data.copilot_prompt || '';
+    } else if (r.status === 404) {
+      // Gemini not configured on the server (GEMINI_API_KEY not set) — fall back to client-side prompt
+      expBox.className = 'gemini-output-box error-state';
+      expBox.textContent = 'Gemini not available on this server (API key not configured). Copilot prompt generated locally.';
+      fixBox.textContent = '';
+      cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '');
+    } else {
+      const data = await r.json().catch(() => ({}));
+      expBox.className = 'gemini-output-box error-state';
+      expBox.textContent = data.error || 'Analysis failed.';
+    }
+  } catch (err) {
+    expBox.className = 'gemini-output-box error-state';
+    expBox.textContent = 'Network error: ' + err.message + '\nCopilot prompt generated locally.';
+    cpBox.value = _buildCopilotPrompt(errorMessage, source, '', '');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span>✨</span> Re-analyse';
+  }
+}
+
+function _buildCopilotPrompt(errorMessage, source, explanation, suggestedFix) {
+  return [
+    '// GitHub Copilot — Error Fix Request',
+    `// Source: ${source}`,
+    '//',
+    '// === ERROR ===',
+    errorMessage,
+    explanation ? '\n// === EXPLANATION ===\n' + explanation : '',
+    suggestedFix ? '\n// === SUGGESTED FIX ===\n' + suggestedFix : '',
+    '',
+    '// Please suggest a corrected implementation for the code above.',
+    '// Show the full corrected function / block, not just a diff.',
+  ].filter(Boolean).join('\n');
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────

@@ -23,6 +23,15 @@ from name_origin import (
 # Added imports for authentication/password handling
 from werkzeug.security import check_password_hash
 
+# Structured activity logger (shared with webbridge)
+try:
+    from app_logger import log_error as _log_error_ds
+    _DS_LOGGER_AVAILABLE = True
+except ImportError:
+    _DS_LOGGER_AVAILABLE = False
+    def _log_error_ds(**_kw): pass
+
+
 app = Flask(__name__, static_folder='static')
 
 # Secret key for Flask session (use a secure value in production)
@@ -2024,3 +2033,9 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+@app.errorhandler(500)
+def _handle_500_ds(e):
+    _log_error_ds(source="data_sorter", message=str(e), severity="critical",
+                  endpoint=request.path if request else "")
+    return jsonify({"error": "Internal server error"}), 500

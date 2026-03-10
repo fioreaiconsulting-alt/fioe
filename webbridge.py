@@ -1,6 +1,23 @@
 import logging
 import os
 
+# Structured activity logger (writes daily .txt / JSONL files to log dir)
+try:
+    from app_logger import (
+        log_identity, log_infrastructure, log_financial,
+        log_security, log_error, log_approval, read_all_logs,
+    )
+    _APP_LOGGER_AVAILABLE = True
+except ImportError:
+    _APP_LOGGER_AVAILABLE = False
+    def log_identity(**_kw): pass
+    def log_infrastructure(**_kw): pass
+    def log_financial(**_kw): pass
+    def log_security(**_kw): pass
+    def log_error(**_kw): pass
+    def log_approval(**_kw): pass
+    def read_all_logs(**_kw): return {}
+
 # Load .env file using python-dotenv if available, otherwise fall back to a
 # simple built-in parser so DB credentials work without any extra packages.
 def _load_dotenv():
@@ -208,6 +225,9 @@ def _check_user_rate(feature: str):
             )
             username = username.strip()
             if username and not _user_limiter.is_allowed(username, feature):
+                _ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+                log_security("rate_limit_triggered", username=username, ip_address=_ip,
+                             detail=f"Feature: {feature}", severity="warning")
                 return jsonify({"error": f"Rate limit exceeded for feature '{feature}'"}), 429
             return f(*args, **kwargs)
         return wrapper
@@ -600,9 +620,122 @@ def admin_appeal_action():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ── CORS ───────────────────────────────────────────────────────────────────────
-# Credentialed CORS is only granted to origins in the allowlist.
-# Non-allowlisted origins receive no ACAO header (browser blocks the request).
+@app.get("/admin/logs")
+@_require_admin
+def admin_get_logs():
+    """Return structured log entries for the System Logs dashboard tab.
+
+    Query params (both optional):
+      from  — start date  YYYY-MM-DD (inclusive)
+      to    — end date    YYYY-MM-DD (inclusive)
+
+    Response: { identity: [...], infrastructure: [...], agentic: [...],
+                financial: [...], security: [...], approval: [...], errors: [...] }
+    """
+    from_date = request.args.get("from") or None
+    to_date   = request.args.get("to")   or None
+    # Validate date format and value using datetime.strptime
+    from datetime import datetime as _dt
+    def _valid_date(s):
+        try:
+            _dt.strptime(s, "%Y-%m-%d")
+            return True
+        except (ValueError, TypeError):
+            return False
+    if from_date and not _valid_date(from_date):
+        return jsonify({"error": "Invalid 'from' date; expected YYYY-MM-DD"}), 400
+    if to_date and not _valid_date(to_date):
+        return jsonify({"error": "Invalid 'to' date; expected YYYY-MM-DD"}), 400
+    logs = read_all_logs(from_date=from_date, to_date=to_date)
+    return jsonify(logs), 200
+
+
+@app.post("/admin/client-error")
+@_csrf_required
+def admin_client_error():
+    """Accept a client-side error report from webbridge_client.js and write it
+    to the Error Capture log.  No admin role required — any authenticated user
+    (or the browser global handler) can submit errors."""
+    body = request.get_json(force=True, silent=True) or {}
+    message  = str(body.get("message",  "") or "")[:2000]
+    source   = str(body.get("source",   "") or "")[:200]
+    severity = str(body.get("severity", "") or "error")
+    username = str(body.get("username", "") or "")[:200]
+    if severity not in ("info", "warning", "warn", "error", "critical"):
+        severity = "error"
+    if message:
+        log_error(source=source or "client", message=message, severity=severity,
+                  username=username, endpoint="client-side")
+    return jsonify({"ok": True}), 200
+
+
+@app.post("/admin/logs/analyse-error")
+@_csrf_required
+@_require_admin
+def admin_analyse_error():
+    """Use Gemini to explain an error message and generate a Copilot-ready fix prompt.
+
+    Body: { "error_message": "...", "source": "..." }
+    Response: { "explanation": "...", "suggested_fix": "...", "copilot_prompt": "..." }
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    error_message = str(body.get("error_message", "") or "")[:3000]
+    source        = str(body.get("source",        "") or "")[:200]
+    if not error_message:
+        return jsonify({"error": "error_message required"}), 400
+
+    # Require Gemini to be available
+    if not (genai and GEMINI_API_KEY):
+        return jsonify({"error": "Gemini API not configured on server"}), 503
+
+    prompt = f"""You are an expert software engineer and debugger.
+A production error was captured from the AutoSourcing platform:
+
+Source: {source or "unknown"}
+Error:
+{error_message}
+
+Provide a JSON response with exactly three keys:
+1. "explanation" — a clear, plain-language explanation of what this error means and why it occurs (2-4 sentences, no markdown).
+2. "suggested_fix" — a concrete, developer-ready description of how to fix it (bullet list, no markdown code fences).
+3. "copilot_prompt" — a ready-to-paste prompt for GitHub Copilot that includes the raw error, the explanation, the suggested fix, and asks Copilot to generate the corrected implementation.
+
+Respond ONLY with valid JSON. No extra commentary."""
+
+    try:
+        model = genai.GenerativeModel(GEMINI_SUGGEST_MODEL)
+        resp  = model.generate_content(prompt)
+        raw   = (resp.text or "").strip()
+
+        # Strip markdown code fences if present
+        raw = re.sub(r'^```[a-z]*\s*', '', raw, flags=re.MULTILINE)
+        raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
+
+        parsed = json.loads(raw)
+        explanation   = str(parsed.get("explanation",   "") or "")
+        suggested_fix = str(parsed.get("suggested_fix", "") or "")
+        copilot_prompt = str(parsed.get("copilot_prompt", "") or "")
+        if not copilot_prompt:
+            copilot_prompt = (
+                f"// GitHub Copilot — Error Fix Request\n"
+                f"// Source: {source}\n//\n"
+                f"// === ERROR ===\n{error_message}\n\n"
+                f"// === EXPLANATION ===\n{explanation}\n\n"
+                f"// === SUGGESTED FIX ===\n{suggested_fix}\n\n"
+                f"// Please suggest a corrected implementation."
+            )
+        return jsonify({
+            "ok": True,
+            "explanation":    explanation,
+            "suggested_fix":  suggested_fix,
+            "copilot_prompt": copilot_prompt,
+        }), 200
+    except Exception as exc:
+        logger.warning(f"[admin/analyse-error] Gemini call failed: {exc}")
+        return jsonify({"error": f"Gemini analysis failed: {exc}"}), 500
+
+
+
 # A wildcard ACAO is never sent — that would bypass credential isolation.
 def _apply_cors_headers(response):
     try:
@@ -3955,6 +4088,7 @@ def login_account():
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
+    _ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
     if not (username and password):
         return jsonify({"error":"username and password required"}), 400
 
@@ -3979,6 +4113,8 @@ def login_account():
         row=cur.fetchone()
         cur.close(); conn.close()
         if not row:
+            log_security("login_failed", username=username, ip_address=_ip,
+                         detail="User not found", severity="warning")
             return jsonify({"error":"Invalid credentials"}), 401
         stored_pw, userid, cemail, fullname, role_tag, token_val = row
         stored_pw = stored_pw or ""
@@ -3990,6 +4126,8 @@ def login_account():
             except Exception:
                 ok = False
             if not ok:
+                log_security("login_failed", username=username, ip_address=_ip,
+                             detail="Password mismatch", severity="warning")
                 return jsonify({"error":"Invalid credentials"}), 401
         else:
             def _local_hash_password(p: str) -> str:
@@ -3998,8 +4136,12 @@ def login_account():
                 return hashlib.sha256((salt + p).encode("utf-8")).hexdigest()
             hashed = hash_password_fn(password) if hash_password_fn else _local_hash_password(password)
             if stored_pw != hashed and stored_pw != password:
+                log_security("login_failed", username=username, ip_address=_ip,
+                             detail="Password mismatch", severity="warning")
                 return jsonify({"error":"Invalid credentials"}), 401
 
+        log_identity(userid=str(userid or ""), username=username,
+                     ip_address=_ip, mfa_status="N/A")
         resp = jsonify({"ok": True, "userid": userid or "", "username": username, "cemail": cemail or "", "fullname": fullname or "", "role_tag": role_tag or "", "token": int(token_val or 0)})
         # httponly=False: AutoSourcing.html (and other pages) read the username
         # cookie via document.cookie to identify the logged-in user.  This
@@ -4010,6 +4152,8 @@ def login_account():
         resp.set_cookie("userid", str(userid or ""), **_cookie_opts)
         return resp, 200
     except Exception as e:
+        log_error(source="login", message=str(e), severity="error",
+                  username=username, endpoint="/login")
         return jsonify({"error": str(e)}), 500
 
 @app.post("/logout")
@@ -6180,9 +6324,13 @@ def porting_export():
         resp = make_response(json_str)
         resp.headers["Content-Type"] = "application/json"
         resp.headers["Content-Disposition"] = f'attachment; filename="porting_export_{_porting_safe_name(username)}.json"'
+        log_approval(action="export_pdf_triggered", username=username,
+                     detail=f"Data export triggered; {len(exported)} row(s)")
         return resp
     except Exception as exc:
         logger.exception("[porting/export]")
+        log_error(source="porting_export", message=str(exc), severity="error",
+                  username=username, endpoint="/api/porting/export")
         return jsonify({"error": "Export failed", "detail": str(exc)}), 500
 
 
@@ -6220,9 +6368,13 @@ def byok_activate():
         dest = _byok_path(username)
         with open(dest, 'wb') as fh:
             fh.write(encrypted)
+        log_infrastructure("byok_activated", username=username,
+                           detail="BYOK keys activated", status="success")
         return jsonify({"ok": True, "byok_active": True})
     except Exception as exc:
         logger.exception("[porting/byok/activate]")
+        log_error(source="byok_activate", message=str(exc), severity="error",
+                  username=username, endpoint="/api/porting/byok/activate")
         return jsonify({"error": "BYOK activation failed", "detail": str(exc)}), 500
 
 
@@ -6395,9 +6547,16 @@ def byok_validate():
                             'detail': 'Client ID and Client Secret formats are valid.'})
 
         all_ok = all(r['status'] in ('ok', 'warn') for r in results)
+        overall_status = "success" if all_ok else "fail"
+        failed_steps = [r['label'] for r in results if r['status'] == 'error']
+        log_infrastructure("byok_validation", username=username,
+                           detail="; ".join(failed_steps) if failed_steps else "All checks passed",
+                           status=overall_status)
         return jsonify({'ok': all_ok, 'results': results})
     except Exception as exc:
         logger.exception("[porting/byok/validate]")
+        log_error(source="byok_validate", message=str(exc), severity="error",
+                  username=username, endpoint="/api/porting/byok/validate")
         return jsonify({"error": "Validation failed", "detail": str(exc)}), 500
 
 

@@ -13,6 +13,18 @@ const dns = require('dns').promises; // Built-in DNS for MX checks
 const net = require('net'); // Built-in Net for SMTP handshake
 const nodemailer = require('nodemailer'); // Added for sending emails
 
+// ── Structured error logger (writes JSONL to shared log dir) ─────────────────
+const _LOG_DIR = process.env.AUTOSOURCING_LOG_DIR || String.raw`F:\Recruiting Tools\Autosourcing\log`;
+function _writeErrorLog(entry) {
+  try {
+    fs.mkdirSync(_LOG_DIR, { recursive: true });
+    const date = new Date().toISOString().slice(0, 10);
+    const logFile = path.join(_LOG_DIR, `error_capture_${date}.txt`);
+    const line = JSON.stringify({ timestamp: new Date().toISOString(), ...entry });
+    fs.appendFileSync(logFile, line + '\n', 'utf8');
+  } catch (_) { /* never crash the server over a log write */ }
+}
+
 // Lazy-load Gemini SDK so the server still boots if it isn't installed
 let GoogleGenerativeAIClass = null;
 try {
@@ -4261,6 +4273,25 @@ app.delete('/dashboard/delete-state', dashboardRateLimit, requireLogin, (req, re
 
 // Create HTTP server
 const server = http.createServer(app);
+
+// ── Global Express error handler ──────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const msg = (err && err.message) ? err.message : String(err);
+  _writeErrorLog({ source: 'server.js', severity: 'critical', endpoint: req.path, message: msg });
+  console.error('[ERROR]', req.path, msg);
+  if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+});
+
+// ── Process-level uncaught exception / rejection handlers ────────────────────
+process.on('uncaughtException', (err) => {
+  _writeErrorLog({ source: 'server.js', severity: 'critical', endpoint: '', message: String(err) });
+  console.error('[UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  _writeErrorLog({ source: 'server.js', severity: 'error', endpoint: '', message: String(reason) });
+  console.error('[UNHANDLED REJECTION]', reason);
+});
 
 // START SERVER
 server.listen(port, () => {
