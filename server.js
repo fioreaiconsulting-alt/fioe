@@ -3977,6 +3977,218 @@ app.post('/api/porting/export', requireLogin, dashboardRateLimit, async (req, re
   }
 });
 
+// ========== BYOK (Bring Your Own Keys) Endpoints ==========
+const BYOK_REQUIRED_KEYS = [
+  'GEMINI_API_KEY', 'GOOGLE_CSE_API_KEY', 'GOOGLE_API_KEY',
+  'GOOGLE_CSE_CX', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+];
+
+function byokFilePath(username) {
+  const dir = path.join(PORTING_INPUT_DIR, 'byok');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${safeName(username)}.enc`);
+}
+
+// POST /api/porting/byok/activate
+// Body: { GEMINI_API_KEY, GOOGLE_CSE_API_KEY, GOOGLE_API_KEY, GOOGLE_CSE_CX, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET }
+// Validates all required keys are present, encrypts them, and stores per-user.
+app.post('/api/porting/byok/activate', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const keys = {};
+    const missing = [];
+    for (const k of BYOK_REQUIRED_KEYS) {
+      const raw = req.body[k];
+      if (typeof raw !== 'string' && typeof raw !== 'number') {
+        missing.push(k);
+        continue;
+      }
+      const val = String(raw).trim();
+      // Enforce a reasonable value length limit (512 chars covers all known Google key formats)
+      if (!val || val.length > 512) {
+        missing.push(k);
+      } else {
+        keys[k] = val;
+      }
+    }
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Missing required keys: ${missing.join(', ')}` });
+    }
+    const raw = Buffer.from(JSON.stringify({ username: req.user.username, keys }), 'utf8');
+    const encrypted = encryptBuffer(raw);
+    fs.writeFileSync(byokFilePath(req.user.username), encrypted);
+    res.json({ ok: true, byok_active: true });
+  } catch (err) {
+    console.error('[porting/byok/activate]', err);
+    res.status(500).json({ error: 'BYOK activation failed', detail: err.message });
+  }
+});
+
+// GET /api/porting/byok/status
+// Returns whether BYOK is currently active for the logged-in user.
+app.get('/api/porting/byok/status', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const active = fs.existsSync(byokFilePath(req.user.username));
+    res.json({ byok_active: active });
+  } catch (err) {
+    console.error('[porting/byok/status]', err);
+    res.status(500).json({ error: 'Could not check BYOK status', detail: err.message });
+  }
+});
+
+// GET /api/porting/credentials/status
+// Returns whether the user has any uploaded credential files stored on disk.
+app.get('/api/porting/credentials/status', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const prefix = safeName(req.user.username) + '_';
+    let credentialsOnFile = false;
+    if (fs.existsSync(PORTING_INPUT_DIR)) {
+      credentialsOnFile = fs.readdirSync(PORTING_INPUT_DIR)
+        .some(f => f.startsWith(prefix) && f.endsWith('.enc'));
+    }
+    res.json({ credentials_on_file: credentialsOnFile });
+  } catch (err) {
+    console.error('[porting/credentials/status]', err);
+    res.status(500).json({ error: 'Could not check credential status', detail: err.message });
+  }
+});
+
+
+// Removes the stored BYOK key file for the current user.
+app.delete('/api/porting/byok/deactivate', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const dest = byokFilePath(req.user.username);
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    res.json({ ok: true, byok_active: false });
+  } catch (err) {
+    console.error('[porting/byok/deactivate]', err);
+    res.status(500).json({ error: 'Could not deactivate BYOK', detail: err.message });
+  }
+});
+
+// POST /api/porting/byok/validate
+// Validates the supplied BYOK keys by probing live Google Cloud APIs and checking
+// credential formats.  Returns a structured results array without storing anything.
+// Steps:
+//  1. Gemini API  — list models (validates GEMINI_API_KEY + billing)
+//  2. Custom Search API — single query (validates GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX)
+//  3. GOOGLE_API_KEY format check
+//  4. OAuth client credential format check (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET)
+app.post('/api/porting/byok/validate', requireLogin, dashboardRateLimit, async (req, res) => {
+  try {
+    const keys = {};
+    const missing = [];
+    for (const k of BYOK_REQUIRED_KEYS) {
+      const raw = req.body[k];
+      if (typeof raw !== 'string' && typeof raw !== 'number') { missing.push(k); continue; }
+      const val = String(raw).trim();
+      if (!val || val.length > 512) missing.push(k); else keys[k] = val;
+    }
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Missing required keys: ${missing.join(', ')}` });
+    }
+
+    /** Make a GET request and return { status, body }. Rejects on network error. */
+    function httpsGet(url, timeoutMs = 8000) {
+      return new Promise((resolve, reject) => {
+        const req = https.get(url, (r) => {
+          let body = '';
+          r.on('data', d => { body += d; });
+          r.on('end', () => resolve({ status: r.statusCode, body }));
+        });
+        req.on('error', reject);
+        req.setTimeout(timeoutMs, () => { req.destroy(new Error('timeout')); });
+      });
+    }
+
+    function errorMsg(body, fallback) {
+      try { return JSON.parse(body).error?.message || fallback; } catch (_) { return fallback; }
+    }
+
+    const results = [];
+
+    // ── Step 1: Gemini API (GEMINI_API_KEY + billing) ──────────────────────────
+    try {
+      const { status, body } = await httpsGet(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(keys.GEMINI_API_KEY)}`
+      );
+      if (status === 200) {
+        results.push({ step: 'gemini', label: 'Gemini API', status: 'ok',
+          detail: 'API key is valid and billing is active.' });
+      } else if (status === 403) {
+        results.push({ step: 'gemini', label: 'Gemini API', status: 'error',
+          detail: errorMsg(body, 'Gemini API is not enabled or billing is inactive on this project.'),
+          consoleUrl: 'https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com' });
+      } else if (status === 400) {
+        results.push({ step: 'gemini', label: 'Gemini API', status: 'error',
+          detail: errorMsg(body, 'Invalid GEMINI_API_KEY.'),
+          consoleUrl: 'https://console.cloud.google.com/apis/credentials' });
+      } else {
+        results.push({ step: 'gemini', label: 'Gemini API', status: 'warn',
+          detail: `Unexpected HTTP ${status} — could not definitively confirm API status.` });
+      }
+    } catch (e) {
+      results.push({ step: 'gemini', label: 'Gemini API', status: 'warn',
+        detail: `Could not reach Google APIs: ${e.message}` });
+    }
+
+    // ── Step 2: Custom Search API (GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX) ─────────
+    try {
+      const cseUrl = `https://customsearch.googleapis.com/customsearch/v1?key=${encodeURIComponent(keys.GOOGLE_CSE_API_KEY)}&cx=${encodeURIComponent(keys.GOOGLE_CSE_CX)}&q=test&num=1`;
+      const { status, body } = await httpsGet(cseUrl);
+      if (status === 200) {
+        results.push({ step: 'cse', label: 'Custom Search API', status: 'ok',
+          detail: 'CSE API key and Search Engine ID are valid.' });
+      } else if (status === 403) {
+        results.push({ step: 'cse', label: 'Custom Search API', status: 'error',
+          detail: errorMsg(body, 'Custom Search API is not enabled or billing is required.'),
+          consoleUrl: 'https://console.cloud.google.com/apis/library/customsearch.googleapis.com' });
+      } else if (status === 400) {
+        results.push({ step: 'cse', label: 'Custom Search API', status: 'error',
+          detail: errorMsg(body, 'Invalid GOOGLE_CSE_API_KEY or GOOGLE_CSE_CX Search Engine ID.'),
+          consoleUrl: 'https://console.cloud.google.com/apis/credentials' });
+      } else {
+        results.push({ step: 'cse', label: 'Custom Search API', status: 'warn',
+          detail: `Unexpected HTTP ${status} — could not definitively confirm API status.` });
+      }
+    } catch (e) {
+      results.push({ step: 'cse', label: 'Custom Search API', status: 'warn',
+        detail: `Could not reach Custom Search API: ${e.message}` });
+    }
+
+    // ── Step 3: GOOGLE_API_KEY format ──────────────────────────────────────────
+    const googleApiKeyOk = /^AIza[0-9A-Za-z\-_]{35}$/.test(keys.GOOGLE_API_KEY);
+    results.push({ step: 'google_api_key', label: 'GOOGLE_API_KEY Format',
+      status: googleApiKeyOk ? 'ok' : 'warn',
+      detail: googleApiKeyOk
+        ? 'Key format is valid (AIza… 39-character format).'
+        : 'Key format looks unusual — expected a 39-character key starting with "AIza".',
+      consoleUrl: googleApiKeyOk ? undefined : 'https://console.cloud.google.com/apis/credentials',
+    });
+
+    // ── Step 4: OAuth client credentials (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET) ─
+    const clientIdOk = /^\d+-[a-zA-Z0-9]+\.apps\.googleusercontent\.com$/.test(keys.GOOGLE_CLIENT_ID);
+    const clientSecretOk = /^(GOCSPX-[A-Za-z0-9_\-]{28,}|[A-Za-z0-9_\-]{24,})$/.test(keys.GOOGLE_CLIENT_SECRET);
+    if (!clientIdOk) {
+      results.push({ step: 'oauth', label: 'OAuth Client Credentials', status: 'error',
+        detail: 'GOOGLE_CLIENT_ID must have the format <numbers>-<id>.apps.googleusercontent.com',
+        consoleUrl: 'https://console.cloud.google.com/apis/credentials' });
+    } else if (!clientSecretOk) {
+      results.push({ step: 'oauth', label: 'OAuth Client Credentials', status: 'warn',
+        detail: 'GOOGLE_CLIENT_SECRET format looks unusual (expected "GOCSPX-…"). Verify it was copied from Google Cloud Console → Credentials → OAuth 2.0 Client.',
+        consoleUrl: 'https://console.cloud.google.com/apis/credentials' });
+    } else {
+      results.push({ step: 'oauth', label: 'OAuth Client Credentials', status: 'ok',
+        detail: 'Client ID and Client Secret formats are valid.' });
+    }
+
+    const allOk = results.every(r => r.status === 'ok' || r.status === 'warn');
+    res.json({ ok: allOk, results });
+  } catch (err) {
+    console.error('[porting/byok/validate]', err);
+    res.status(500).json({ error: 'Validation failed', detail: err.message });
+  }
+});
+
 // ========== Dashboard Save / Load / Delete State ==========
 // Files are stored in SAVE_STATE_DIR (env var) or a 'save state' sub-directory of __dirname.
 // The target Windows path can be configured via: SAVE_STATE_DIR=F:\Recruiting Tools\...
