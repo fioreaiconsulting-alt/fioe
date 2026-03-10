@@ -462,6 +462,89 @@
       font-family: monospace;
     }
 
+    /* ── Pre-flight check panel ── */
+    .preflight-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      border-left: 3px solid var(--cool-blue);
+      background: var(--panel-alt);
+      padding: 14px 16px;
+      margin-bottom: 4px;
+    }
+    .preflight-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .preflight-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--cool-blue);
+      font-family: "Roboto Condensed", sans-serif;
+    }
+    .preflight-recheck {
+      font-size: 11px;
+      padding: 4px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--text-soft);
+    }
+    .preflight-rows { display: flex; flex-direction: column; gap: 6px; }
+    .preflight-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .preflight-icon {
+      width: 18px; height: 18px;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+    .preflight-icon.pending {
+      background: var(--desired-dawn); color: var(--argent);
+      font-size: 9px; letter-spacing: .5px;
+    }
+    .preflight-icon.ok { background: #e6f4ea; color: #188038; }
+    .preflight-icon.warn { background: #fef7e0; color: #b06000; }
+    .preflight-icon.error { background: #fce8e6; color: #c5221f; }
+    .preflight-row-body { flex: 1; }
+    .preflight-row-label {
+      font-weight: 600;
+      color: var(--text);
+      font-family: "Roboto Condensed", sans-serif;
+    }
+    .preflight-row-detail {
+      font-size: 12px;
+      color: var(--text-soft);
+      margin-top: 2px;
+    }
+    .preflight-row-fix {
+      margin-top: 5px;
+    }
+    .preflight-row-fix a {
+      font-size: 11px;
+      color: var(--cool-blue);
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .preflight-row-fix a:hover { text-decoration: underline; }
+
     /* ── Session banner (injected by JS) ── */
     #sessionBanner {
       display: flex;
@@ -964,13 +1047,31 @@
             using the active field mapping. Optionally provide a target URL to push the data directly.
           </p>
 
-          <p class="section-label">Target URL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-soft)">(optional)</span></p>
+          <!-- Pre-flight validation panel -->
+          <div class="preflight-panel" id="portPreflightPanel">
+            <div class="preflight-header">
+              <div class="preflight-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                Pre-flight Check
+              </div>
+              <button class="btn-ghost preflight-recheck" id="portRecheckBtn" type="button">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Re-check
+              </button>
+            </div>
+            <div class="preflight-rows" id="portPreflightRows">
+              <!-- populated by JS -->
+            </div>
+            <div class="status-msg" id="portPreflightStatus"></div>
+          </div>
+
+          <p class="section-label" style="margin-top:18px">Target URL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-soft)">(optional)</span></p>
           <input type="url" id="targetUrl" placeholder="https://your-system.example.com/api/import">
           <p class="field-hint">If provided, the JSON payload will be POST-ed to this URL in addition to being downloaded.</p>
 
-          <button class="btn btn-primary" id="portBtn" style="margin-top:20px">
+          <button class="btn btn-primary" id="portBtn" style="margin-top:20px" disabled>
             <span class="spinner" id="portSpinner" style="display:none"></span>
-            🚀 Port Data
+            Port Data
           </button>
           <div class="status-msg" id="portStatus"></div>
         </div>
@@ -1217,6 +1318,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (stepId) {
       const el = document.getElementById(stepId);
       if (el) el.classList.add('active');
+    }
+    // Auto-run preflight when Port Data tab is selected
+    if (btn.dataset.tab === 'tab-port') {
+      // Use a short delay so the panel is visible before checks start
+      setTimeout(() => runPortPreflight(), 100);
     }
   });
 });
@@ -1547,14 +1653,128 @@ function readFileAsBase64(file) {
 }
 
 // ── Porting tab ───────────────────────────────────────────────────────────────
-const mappingPreview   = document.getElementById('mappingPreview');
-const mappingInfoStrip = document.getElementById('mappingInfoStrip');
-const mappingInfoText  = document.getElementById('mappingInfoText');
-const portBtn          = document.getElementById('portBtn');
-const portSpinner      = document.getElementById('portSpinner');
-const targetUrlInput   = document.getElementById('targetUrl');
-const portStatus       = document.getElementById('portStatus');
+const mappingPreview      = document.getElementById('mappingPreview');
+const mappingInfoStrip    = document.getElementById('mappingInfoStrip');
+const mappingInfoText     = document.getElementById('mappingInfoText');
+const portBtn             = document.getElementById('portBtn');
+const portSpinner         = document.getElementById('portSpinner');
+const targetUrlInput      = document.getElementById('targetUrl');
+const portStatus          = document.getElementById('portStatus');
+const portPreflightRows   = document.getElementById('portPreflightRows');
+const portPreflightStatus = document.getElementById('portPreflightStatus');
+const portRecheckBtn      = document.getElementById('portRecheckBtn');
 
+// Track per-check results so portBtn is only enabled when all pass
+let _portCheckResults = { credentials: null, mapping: null };
+
+function _renderPreflightRow(id, label, state, detail, fixHref, fixLabel) {
+  const existing = document.getElementById('pfr-' + id);
+  const icons = {
+    pending: '…',
+    ok: '✓',
+    warn: '!',
+    error: '✗',
+  };
+  const html = `
+    <div class="preflight-row" id="pfr-${id}">
+      <div class="preflight-icon ${state}">${icons[state] || '…'}</div>
+      <div class="preflight-row-body">
+        <div class="preflight-row-label">${escHtml(label)}</div>
+        ${detail ? `<div class="preflight-row-detail">${escHtml(detail)}</div>` : ''}
+        ${fixHref ? `<div class="preflight-row-fix"><a href="${escHtml(fixHref)}" target="_blank" rel="noopener noreferrer">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          ${escHtml(fixLabel || 'Fix this →')}
+        </a></div>` : ''}
+      </div>
+    </div>`;
+  if (existing) {
+    existing.outerHTML = html;
+  } else {
+    portPreflightRows.insertAdjacentHTML('beforeend', html);
+  }
+}
+
+function _updatePortBtnState() {
+  const allPassed = Object.values(_portCheckResults).every(v => v === true);
+  portBtn.disabled = !allPassed;
+}
+
+async function runPortPreflight() {
+  portPreflightRows.innerHTML = '';
+  showStatus(portPreflightStatus, '');
+  _portCheckResults = { credentials: null, mapping: null };
+  portBtn.disabled = true;
+
+  // Skeleton rows
+  _renderPreflightRow('credentials', 'API credentials on file', 'pending', 'Checking…');
+  _renderPreflightRow('mapping', 'Field mapping configured', 'pending', 'Checking…');
+  _renderPreflightRow('byok', 'Porting mode ready', 'pending', 'Checking…');
+
+  // Check 1: credentials on file
+  try {
+    const r = await fetch('/api/porting/credentials/status', { credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.credentials_on_file) {
+      _renderPreflightRow('credentials', 'API credentials on file', 'ok', 'Encrypted credential file found.');
+      _portCheckResults.credentials = true;
+    } else {
+      _renderPreflightRow('credentials', 'API credentials on file', 'error',
+        'No credentials uploaded yet. Go to the Upload Credentials tab to submit your API keys.',
+        null, null);
+      _portCheckResults.credentials = false;
+    }
+  } catch (e) {
+    _renderPreflightRow('credentials', 'API credentials on file', 'error', 'Check failed: ' + e.message);
+    _portCheckResults.credentials = false;
+  }
+
+  // Check 2: mapping configured — reuse the already-loaded mapping data
+  try {
+    const r = await fetch('/api/porting/mapping', { credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.mapping && Object.keys(d.mapping).length > 0) {
+      const count = Object.keys(d.mapping).length;
+      _renderPreflightRow('mapping', 'Field mapping configured', 'ok',
+        `${count} field${count > 1 ? 's' : ''} mapped and ready.`);
+      _portCheckResults.mapping = true;
+    } else {
+      _renderPreflightRow('mapping', 'Field mapping configured', 'error',
+        'No field mapping confirmed. Configure one in Admin → Porting tab before exporting.',
+        '/admin_rate_limits.html', 'Open Admin → Porting tab');
+      _portCheckResults.mapping = false;
+    }
+  } catch (e) {
+    _renderPreflightRow('mapping', 'Field mapping configured', 'error', 'Check failed: ' + e.message);
+    _portCheckResults.mapping = false;
+  }
+
+  // Check 3: BYOK / system active
+  try {
+    const r = await fetch('/api/porting/byok/status', { credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.byok_active) {
+      _renderPreflightRow('byok', 'Porting mode ready', 'ok',
+        'BYOK active — usage billed directly to your Google Cloud account.');
+    } else {
+      _renderPreflightRow('byok', 'Porting mode ready', 'ok',
+        'Using platform API keys — standard credit usage applies.');
+    }
+  } catch (e) {
+    _renderPreflightRow('byok', 'Porting mode ready', 'warn', 'Could not verify service status — ' + e.message);
+  }
+
+  _updatePortBtnState();
+
+  const allPassed = Object.values(_portCheckResults).every(v => v === true);
+  const anyFailed = Object.values(_portCheckResults).some(v => v === false);
+  if (allPassed) {
+    showStatus(portPreflightStatus, '✓ All checks passed — ready to port.', 'success');
+  } else if (anyFailed) {
+    showStatus(portPreflightStatus, 'One or more checks failed. Resolve the issues above before porting.', 'error');
+  }
+}
+
+// Load mapping preview and run preflight checks
 (async () => {
   try {
     const r = await fetch('/api/porting/mapping', { credentials: 'same-origin' });
@@ -1567,16 +1787,18 @@ const portStatus       = document.getElementById('portStatus');
       mappingPreview.innerHTML = '<span class="no-mapping">No mapping confirmed yet.</span>';
       mappingInfoStrip.style.display = 'flex';
       mappingInfoText.textContent = 'No field mapping has been confirmed. Go to Admin → Porting tab to set one up before porting.';
-      portBtn.disabled = true; return;
+    } else {
+      const lines = Object.entries(data.mapping)
+        .map(([ext, proc]) => `${ext}  →  ${proc ?? '(skip)'}`)
+        .join('\n');
+      mappingPreview.textContent = lines;
     }
-    const lines = Object.entries(data.mapping)
-      .map(([ext, proc]) => `${ext}  →  ${proc ?? '(skip)'}`)
-      .join('\n');
-    mappingPreview.textContent = lines;
   } catch (err) {
     mappingPreview.innerHTML = `<span class="no-mapping">Could not load mapping: ${escHtml(err.message)}</span>`;
   }
 })();
+
+portRecheckBtn.addEventListener('click', () => runPortPreflight());
 
 portBtn.addEventListener('click', async () => {
   showStatus(portStatus, '');

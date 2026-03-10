@@ -4035,7 +4035,24 @@ app.get('/api/porting/byok/status', requireLogin, dashboardRateLimit, (req, res)
   }
 });
 
-// DELETE /api/porting/byok/deactivate
+// GET /api/porting/credentials/status
+// Returns whether the user has any uploaded credential files stored on disk.
+app.get('/api/porting/credentials/status', requireLogin, dashboardRateLimit, (req, res) => {
+  try {
+    const prefix = safeName(req.user.username) + '_';
+    let credentialsOnFile = false;
+    if (fs.existsSync(PORTING_INPUT_DIR)) {
+      credentialsOnFile = fs.readdirSync(PORTING_INPUT_DIR)
+        .some(f => f.startsWith(prefix) && f.endsWith('.enc'));
+    }
+    res.json({ credentials_on_file: credentialsOnFile });
+  } catch (err) {
+    console.error('[porting/credentials/status]', err);
+    res.status(500).json({ error: 'Could not check credential status', detail: err.message });
+  }
+});
+
+
 // Removes the stored BYOK key file for the current user.
 app.delete('/api/porting/byok/deactivate', requireLogin, dashboardRateLimit, (req, res) => {
   try {

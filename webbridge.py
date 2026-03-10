@@ -6239,6 +6239,24 @@ def byok_status():
         return jsonify({"error": "Could not check BYOK status", "detail": str(exc)}), 500
 
 
+@app.get("/api/porting/credentials/status")
+def porting_credentials_status():
+    """Return whether the user has any uploaded credential files on file."""
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        safe_prefix = _porting_safe_name(username) + "_"
+        has_creds = any(
+            f.startswith(safe_prefix) and f.endswith(".enc")
+            for f in os.listdir(_PORTING_INPUT_DIR)
+        ) if os.path.isdir(_PORTING_INPUT_DIR) else False
+        return jsonify({"credentials_on_file": has_creds})
+    except Exception as exc:
+        logger.exception("[porting/credentials/status]")
+        return jsonify({"error": "Could not check credential status", "detail": str(exc)}), 500
+
+
 @app.delete("/api/porting/byok/deactivate")
 def byok_deactivate():
     username, err = _porting_login_required()
