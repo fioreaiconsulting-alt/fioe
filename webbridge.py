@@ -6186,6 +6186,74 @@ def porting_export():
         return jsonify({"error": "Export failed", "detail": str(exc)}), 500
 
 
+# ── BYOK (Bring Your Own Keys) routes ─────────────────────────────────────────
+_BYOK_REQUIRED_KEYS = [
+    'GEMINI_API_KEY', 'GOOGLE_CSE_API_KEY', 'GOOGLE_API_KEY',
+    'GOOGLE_CSE_CX', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+]
+
+def _byok_path(username: str) -> str:
+    byok_dir = os.path.join(_PORTING_INPUT_DIR, 'byok')
+    os.makedirs(byok_dir, exist_ok=True)
+    return os.path.join(byok_dir, _porting_safe_name(username) + '.enc')
+
+
+@app.post("/api/porting/byok/activate")
+def byok_activate():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        body = request.get_json(silent=True) or {}
+        keys = {}
+        missing = []
+        for k in _BYOK_REQUIRED_KEYS:
+            val = str(body.get(k, '')).strip()
+            if not val:
+                missing.append(k)
+            else:
+                keys[k] = val
+        if missing:
+            return jsonify({"error": f"Missing required keys: {', '.join(missing)}"}), 400
+        raw = json.dumps({'username': username, 'keys': keys}).encode('utf-8')
+        encrypted = _porting_encrypt(raw)
+        dest = _byok_path(username)
+        with open(dest, 'wb') as fh:
+            fh.write(encrypted)
+        return jsonify({"ok": True, "byok_active": True})
+    except Exception as exc:
+        logger.exception("[porting/byok/activate]")
+        return jsonify({"error": "BYOK activation failed", "detail": str(exc)}), 500
+
+
+@app.get("/api/porting/byok/status")
+def byok_status():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        active = os.path.isfile(_byok_path(username))
+        return jsonify({"byok_active": active})
+    except Exception as exc:
+        logger.exception("[porting/byok/status]")
+        return jsonify({"error": "Could not check BYOK status", "detail": str(exc)}), 500
+
+
+@app.delete("/api/porting/byok/deactivate")
+def byok_deactivate():
+    username, err = _porting_login_required()
+    if err:
+        return err
+    try:
+        dest = _byok_path(username)
+        if os.path.isfile(dest):
+            os.remove(dest)
+        return jsonify({"ok": True, "byok_active": False})
+    except Exception as exc:
+        logger.exception("[porting/byok/deactivate]")
+        return jsonify({"error": "Could not deactivate BYOK", "detail": str(exc)}), 500
+
+
 if __name__ == '__main__':
     port=int(os.getenv("PORT","8091"))
     logger.info(f"Starting AutoSourcing webbridge on :{port}")
