@@ -795,6 +795,37 @@ def _apply_cors(response):
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     # Control the Referer header sent with outbound requests.
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+
+    # ── HTTP error capture: log 4xx as warning, 5xx as critical ──────────────
+    # Skip OPTIONS pre-flight and the logging/static endpoints themselves.
+    _skip_paths = ("/admin/client-error", "/admin/logs", "/favicon.ico")
+    if (response.status_code >= 400
+            and request.method != "OPTIONS"
+            and not any(request.path.startswith(p) for p in _skip_paths)):
+        _sc = response.status_code
+        _sev = "critical" if _sc >= 500 else "warning"
+        _username = (request.cookies.get("username") or "").strip()
+        _ip = (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+               or request.remote_addr or "")
+        # Best-effort: read JSON error message without consuming the body stream
+        _body_msg = ""
+        try:
+            _ct = response.content_type or ""
+            if "json" in _ct:
+                _body_msg = response.get_data(as_text=True)[:500]
+        except Exception:
+            pass
+        log_error(
+            source="webbridge.py",
+            message=f"{request.method} {request.path} → HTTP {_sc}",
+            severity=_sev,
+            username=_username,
+            endpoint=request.path,
+            http_status=_sc,
+            ip_address=_ip,
+            detail=_body_msg,
+        )
+
     return _apply_cors_headers(response)
 
 @app.route('/', methods=['OPTIONS'])

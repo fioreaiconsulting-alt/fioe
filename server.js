@@ -51,6 +51,31 @@ app.use(cookieParser());
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
+// ── HTTP error capture middleware ─────────────────────────────────────────────
+// Intercepts every response after it is sent. Responses with status >= 400 are
+// written to the Error Capture log (4xx → warning, 5xx → critical).
+const _HTTP_ERROR_SKIP = new Set(['/favicon.ico', '/admin/client-error', '/admin/logs']);
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    const sc = res.statusCode;
+    if (sc >= 400 && req.method !== 'OPTIONS' && !_HTTP_ERROR_SKIP.has(req.path)) {
+      const sev = sc >= 500 ? 'critical' : 'warning';
+      const username = (req.cookies && req.cookies.username) || '';
+      const ip = (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+      _writeErrorLog({
+        source: 'server.js',
+        severity: sev,
+        endpoint: req.path,
+        message: `${req.method} ${req.path} → HTTP ${sc}`,
+        http_status: sc,
+        username,
+        ip_address: ip,
+      });
+    }
+  });
+  next();
+});
+
 // NEW: Serve images from 'image' directory
 app.use('/image', express.static(path.join(__dirname, 'image')));
 

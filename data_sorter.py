@@ -2039,3 +2039,28 @@ def _handle_500_ds(e):
     _log_error_ds(source="data_sorter", message=str(e), severity="critical",
                   endpoint=request.path if request else "")
     return jsonify({"error": "Internal server error"}), 500
+
+@app.after_request
+def _capture_http_errors_ds(response):
+    """Log any HTTP 4xx/5xx response to the Error Capture log."""
+    _skip = ("/favicon.ico",)
+    if (response.status_code >= 400
+            and request.method != "OPTIONS"
+            and not any(request.path.startswith(p) for p in _skip)):
+        _sc = response.status_code
+        _sev = "critical" if _sc >= 500 else "warning"
+        _body_msg = ""
+        try:
+            if "json" in (response.content_type or ""):
+                _body_msg = response.get_data(as_text=True)[:500]
+        except Exception:
+            pass
+        _log_error_ds(
+            source="data_sorter",
+            message=f"{request.method} {request.path} → HTTP {_sc}",
+            severity=_sev,
+            endpoint=request.path,
+            http_status=_sc,
+            detail=_body_msg,
+        )
+    return response
