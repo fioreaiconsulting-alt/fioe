@@ -1004,9 +1004,14 @@ function _applyWeightLockState() {
         }
       }
     } else {
-      // Valid save — mark that 100% has been achieved and reset the attempt counter.
+      // Valid save — mark that 100% has been achieved, reset the attempt counter, and lock.
       _weightsEverSetTo100 = true;
       _adjAttempts = 0;
+      const activeRole = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+      if (activeRole && !isWeightLockedForRole(activeRole)) {
+        lockWeightForRole(activeRole);
+        _applyWeightLockState();
+      }
     }
   };
 
@@ -1046,12 +1051,8 @@ function _applyWeightLockState() {
       if (sum === 100) {
         if (display) { display.classList.remove('invalid'); display.style.color = '#10b981'; }
         try { localStorage.setItem('sv_assessment_weights', JSON.stringify(config)); } catch(_) {}
-        // Lock weights for the active role_tag on first valid save.
-        const activeRole = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-        if (activeRole && !isWeightLockedForRole(activeRole)) {
-          lockWeightForRole(activeRole);
-          _applyWeightLockState();
-        }
+        // Lock is applied in validateWeightsOnClose (not here) so that programmatic
+        // calls from loadWeights()/restorePrevWeights() do not trigger locking prematurely.
       } else {
         if (display) { display.classList.add('invalid'); display.style.color = '#ef4444'; }
         // do not save invalid totals

@@ -2916,6 +2916,44 @@ async function checkPendingAssessmentsOnLoad() {
 
     if (okBtn) {
       okBtn.onclick = function() {
+        // Second confirmation — inform the user what will happen
+        var confirmMsg =
+          'All unassessed profiles (' + unassessed.length + ') will be removed from Talent Evaluation ' +
+          'and an Excel sheet with the search result profiles will be downloaded for your reference.\n\n' +
+          'Do you wish to proceed?';
+        if (!confirm(confirmMsg)) return;
+
+        // Download an Excel of the unassessed profiles for the user's reference.
+        try {
+          var escXml = function(s) {
+            return (s == null ? '' : String(s))
+              .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          };
+          var dataRows = unassessed.map(function(r) {
+            var cell = function(v) { return '<Cell><Data ss:Type="String">' + escXml(v) + '</Data></Cell>'; };
+            return '<Row>' + cell(r.name) + cell(r.company) + cell(r.jobtitle) + cell(r.country) + cell(r.linkedinurl) + '</Row>';
+          }).join('');
+          var xlsXml =
+            '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
+            '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+            '<Worksheet ss:Name="Search Results"><Table>' +
+            '<Row><Cell><Data ss:Type="String">Name</Data></Cell>' +
+            '<Cell><Data ss:Type="String">Company</Data></Cell>' +
+            '<Cell><Data ss:Type="String">Job Title</Data></Cell>' +
+            '<Cell><Data ss:Type="String">Country</Data></Cell>' +
+            '<Cell><Data ss:Type="String">LinkedIn URL</Data></Cell></Row>' +
+            dataRows + '</Table></Worksheet></Workbook>';
+          var blob = new Blob([xlsXml], { type: 'application/vnd.ms-excel' });
+          var dlA = document.createElement('a');
+          dlA.href = URL.createObjectURL(blob);
+          dlA.download = 'search_results_reference_' + new Date().toISOString().slice(0,10) + '.xlsx';
+          document.body.appendChild(dlA);
+          dlA.click();
+          setTimeout(function() { dlA.remove(); URL.revokeObjectURL(dlA.href); }, 1000);
+        } catch(dlErr) {
+          console.warn('[PendingAssessments] Download failed:', dlErr);
+        }
+
         // Persist ineligibility in localStorage for front-end checks.
         try {
           const existing = JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]');
