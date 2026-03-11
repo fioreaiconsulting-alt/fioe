@@ -322,6 +322,8 @@ const webbridge = {
 
   /**
    * List sourcing candidates (with optional filters).
+   * Each row now includes a `role_tag` field reflecting the sourcing record's
+   * role_tag from the database, which can be used to validate role matching.
    * @param {{ username?: string, role_tag?: string, [key: string]: any }} params
    */
   sourcingList: (params = {}) => _get('/sourcing/list', params),

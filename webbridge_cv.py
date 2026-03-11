@@ -867,7 +867,8 @@ def sourcing_list():
                    s.linkedinurl,
                    {pic_col}
                    p.rating,
-                   {relevance_expr}
+                   {relevance_expr},
+                   COALESCE(s.role_tag, '') AS role_tag
             FROM sourcing s
             LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
             WHERE {where_sql}
@@ -885,8 +886,9 @@ def sourcing_list():
         # ------------------------------------------------------------------
         import base64
         rows = []
-        # Column index for relevance_score is after rating
+        # Column index for relevance_score is after rating; role_tag follows it
         relevance_col_idx = (rating_idx + 1)
+        role_tag_col_idx = relevance_col_idx + 1
 
         for r in cur.fetchall():
             row_dict = {
@@ -901,6 +903,7 @@ def sourcing_list():
                 "rating_stars": "",
                 "rating_level": "",
                 "relevance_score": float(r[relevance_col_idx]) if r[relevance_col_idx] is not None else 0.0,
+                "role_tag": r[role_tag_col_idx] or "",
             }
             if has_pic and pic_idx is not None:
                 pic_data = r[pic_idx]

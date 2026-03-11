@@ -1783,16 +1783,10 @@ async function finalizeBulk(action, specificList = null) {
                 if (ok) successCount++;
                 
             } else if (action === 'rebate') {
-                // Rebate flow: Token +1, Delete Row, Token -1 (net 0 cost if purely deleting, or rebate logic)
-                // Assuming rebate logic:
-                // 1. Credit token (rebate)
+                // Rebate flow: credit 1 token per valid rebated result, then delete.
                 await applyTokenDelta(1);
                 rebateTokens += 1;
-                // 2. Delete
                 await deleteBackendRow(url);
-                // 3. Debit token (cleanup cost?) - logic in main script implies this dance.
-                // Actually the prompt logic was: apply +1, update display, delete, apply -1.
-                try { await applyTokenDelta(-1); } catch(e){}
                 successCount++;
             }
         } catch(e) {
@@ -1845,11 +1839,23 @@ async function runBulkAssessmentFromSearch() {
     const allRows = document.querySelectorAll('#sourcingTable tbody tr');
     const linkedinurls = [];
     const alreadyAssessedUrls = [];
-    
+    const skippedRoleTagUrls = [];
+
+    // Current session role_tag for validation
+    const currentRoleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim().toLowerCase();
+
     allRows.forEach(tr => {
         if (tr.dataset.linkedinurl) {
             const linkedinurl = tr.dataset.linkedinurl;
-            
+
+            // Validate that the sourcing record's role_tag matches the current session role_tag.
+            // Records with a mismatched role_tag are ignored for assessment.
+            const rowRoleTag = (tr.dataset.roleTag || '').trim().toLowerCase();
+            if (currentRoleTag && rowRoleTag && rowRoleTag !== currentRoleTag) {
+                skippedRoleTagUrls.push(linkedinurl);
+                return;
+            }
+
             // Check if profile already has an assessment score
             const hasAssessment = tr.classList.contains('assessment-complete') || 
                                   (tr.dataset.rating && tr.dataset.rating !== 'null' && tr.dataset.rating !== '{}');
@@ -1868,11 +1874,17 @@ async function runBulkAssessmentFromSearch() {
             }
         }
     });
+
+    if (skippedRoleTagUrls.length > 0) {
+        console.log(`[Bulk Assessment] Skipped ${skippedRoleTagUrls.length} record(s) whose role_tag does not match current session role_tag "${currentRoleTag}".`);
+    }
     
     // Check if there are any profiles to assess
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
             alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
+        } else if (skippedRoleTagUrls.length > 0) {
+            alert(`No profiles match the current search role. ${skippedRoleTagUrls.length} record(s) were skipped because their role_tag does not match the current session.`);
         } else {
             alert('No profiles found to assess');
         }
@@ -2134,11 +2146,10 @@ async function finalizeBulkFromSearch(action) {
                 if (ok) successCount++;
                 
             } else if (action === 'rebate') {
-                // Rebate flow
+                // Rebate flow: credit 1 token per valid rebated result, then delete.
                 await applyTokenDelta(1);
                 rebateTokens += 1;
                 await deleteBackendRow(url);
-                try { await applyTokenDelta(-1); } catch(e){}
                 successCount++;
             }
         } catch(e) {
@@ -2202,11 +2213,10 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
             }
             
         } else if (action === 'rebate') {
-            // Rebate flow
+            // Rebate flow: credit 1 token per valid rebated result, then delete.
             await applyTokenDelta(1);
             rebateTokens += 1;
             await deleteBackendRow(linkedinurl);
-            try { await applyTokenDelta(-1); } catch(e){}
             
             if(statusEl) setStatus('Profile rebated and deleted', 'success');
             updateRebateTokenDisplay();
@@ -2531,8 +2541,8 @@ let __metricsInitialized = false;
 let __prevResults = null;
 async function persistFinalToken(_left){}
 function schedulePersist(_left){}
-// Updated syncMetricTokens: don't persist to TOKEN_UPDATE_API when backend token is unknown.
-// Wait until account_token is available to call the backend, preventing double-deductions.
+// Updated syncMetricTokens: total results no longer deduct tokens.
+// The display simply shows the current account balance without any deduction.
 function syncMetricTokens(backendToken){
   const totalTokenEl = document.getElementById('totalToken');
   const tokensLeftEl = document.getElementById('tokensLeft');
@@ -2541,50 +2551,21 @@ function syncMetricTokens(backendToken){
   const effectiveTotal = typeof totalRowCount === 'number' && totalRowCount > 0 ? totalRowCount : rowsData.length;
   totalResultsEl.textContent = String(effectiveTotal);
 
-  // If backendToken is not available or not numeric, just update UI and defer persistence.
-  // This avoids sending a "deduction" based on the local fallback TOTAL_SEARCH_TOKEN_BASE.
+  // If backendToken is not available or not numeric, show fallback base but do NOT deduct.
   const acctTokenRaw = backendToken;
   const acctTokenNum = (acctTokenRaw == null || acctTokenRaw === '') ? NaN : Number(acctTokenRaw);
 
   if (Number.isNaN(acctTokenNum)) {
-    // Update UI from fallback base but DO NOT persist to server
     totalTokenEl.textContent = String(TOTAL_SEARCH_TOKEN_BASE);
-    const leftComputed = Math.max(0, TOTAL_SEARCH_TOKEN_BASE - effectiveTotal);
-    tokensLeftEl.textContent = String(leftComputed);
+    tokensLeftEl.textContent = String(TOTAL_SEARCH_TOKEN_BASE);
     // Do not call backend update when we don't have authoritative backend token.
-    return leftComputed;
+    return TOTAL_SEARCH_TOKEN_BASE;
   }
 
-  // We have authoritative backend token -> compute left and possibly persist.
-  // Token deduction rule: if the user's target limit exceeded 50, the search is heavier and costs
-  // 2 tokens per result row; otherwise the standard rate is 1 token per result row.
-  // The target limit is saved to sessionStorage by AutoSourcing.html as 'last_job_target_limit'.
-  const _savedTarget = parseInt(sessionStorage.getItem('last_job_target_limit') || '0', 10);
-  const _deductionRate = (_savedTarget > 50) ? 2 : 1;
+  // Total results no longer deduct tokens — simply reflect the current balance.
   totalTokenEl.textContent = String(acctTokenNum);
-  const leftComputed = Math.max(0, acctTokenNum - (effectiveTotal * _deductionRate));
-  tokensLeftEl.textContent = String(leftComputed);
-
-  // Session guard key prevents repeated persists for same result_count within this browser session/tab.
-  const _lastCountKey = 'sv_token_last_result_count';
-  const _storedCount = sessionStorage.getItem(_lastCountKey);
-  if (_storedCount === null || parseInt(_storedCount, 10) !== effectiveTotal) {
-    // Persist the new result_count and leftComputed to the backend.
-    // Include role_tag (may be empty string) to support compound idempotency guard.
-    try {
-      sessionStorage.setItem(_lastCountKey, String(effectiveTotal));
-    } catch (e) {
-      console.warn('[Token update] sessionStorage write failed:', e);
-    }
-    const _roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-    fetch(TOKEN_UPDATE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ userid: window.__SV_ACTIVE_USERID || '', username: window.__SV_ACTIVE_USERNAME || '', token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag })
-    }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
-  }
-  return leftComputed;
+  tokensLeftEl.textContent = String(acctTokenNum);
+  return acctTokenNum;
 }
 
 function updateDisplayCounters() {
@@ -3188,6 +3169,8 @@ function buildRow(row) {
   const tr = document.createElement('tr');
   tr.classList.add('fade-in');
   tr.dataset.linkedinurl = row.linkedinurl;
+  // Store the sourcing record's role_tag so assessment can validate it matches the current session.
+  tr.dataset.roleTag = row.role_tag || '';
 
   const checkboxCell = document.createElement('td');
   checkboxCell.className = 'checkbox-cell';
@@ -4128,7 +4111,6 @@ async function triggerLevel1Assessment(tr, anchor) {
                         updateRebateTokenDisplay();
                         await deleteBackendRow(anchor);
                         autoDeleteRow(anchor);
-                        try { await applyTokenDelta(-1); } catch(e){}
                         setStatus('Rebate confirmed & profile removed.', 'success');
                         refreshAccountTokens();
                         await loadRows(currentPage);
@@ -4217,7 +4199,16 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     // All assessments use the bulk workflow: the backend fetches all profile data from DB,
     // runs vskillset generation, and performs L2 (inference) assessment.
     // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
-    
+
+    // Validate role_tag: the sourcing record's role_tag must match the current session role_tag.
+    const currentRoleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim().toLowerCase();
+    const rowRoleTag = (tr.dataset.roleTag || '').trim().toLowerCase();
+    if (currentRoleTag && rowRoleTag && rowRoleTag !== currentRoleTag) {
+        console.warn(`[Assessment] Skipping ${anchor}: role_tag "${rowRoleTag}" does not match current session role_tag "${currentRoleTag}".`);
+        setStatus(`Skipped: profile role ("${rowRoleTag}") does not match current search role ("${currentRoleTag}").`, 'info');
+        return;
+    }
+
     // GUARD
     if (window.__sv_assessment_in_flight && window.__sv_assessment_in_flight.has(anchor)) {
         console.warn("Combined assessment skipped; already in flight for", anchor);
@@ -4401,7 +4392,6 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
                         updateRebateTokenDisplay();
                         await deleteBackendRow(anchor);
                         autoDeleteRow(anchor);
-                        try { await applyTokenDelta(-1); } catch(e){}
                         setStatus('Rebate confirmed & profile removed.', 'success');
                         refreshAccountTokens();
                         await loadRows(currentPage);
@@ -5136,7 +5126,6 @@ function renderTable(){
                         updateRebateTokenDisplay();
                         await deleteBackendRow(anchor);
                         autoDeleteRow(anchor); // Helper to remove from UI table
-                        try { await applyTokenDelta(-1); } catch(e){}
                         
                         alert('Rebate processed successfully.');
                         switchTab('tab-search'); // Go back to search
