@@ -4612,6 +4612,48 @@ def user_token_update():
     data = request.get_json(force=True, silent=True) or {}
     userid = (data.get("userid") or "").strip()
     token_val = data.get("token")
+    delta_val = data.get("delta")
+
+    # Delta mode: increment/decrement by a relative amount (used by rebate flow to restore +1 token).
+    if delta_val is not None and token_val is None:
+        try:
+            delta_int = int(delta_val)
+        except (TypeError, ValueError):
+            return jsonify({"error": "delta must be a number"}), 400
+        if not userid:
+            return jsonify({"error": "userid is required"}), 400
+        try:
+            import psycopg2
+            pg_host = os.getenv("PGHOST", "localhost")
+            pg_port = int(os.getenv("PGPORT", "5432"))
+            pg_user = os.getenv("PGUSER", "postgres")
+            pg_password = os.getenv("PGPASSWORD", "")
+            pg_db = os.getenv("PGDATABASE", "candidate_db")
+            conn = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user,
+                                    password=pg_password, dbname=pg_db)
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE login SET token = COALESCE(token, 0) + %s WHERE userid = %s RETURNING token, username",
+                (delta_int, userid)
+            )
+            row = cur.fetchone()
+            conn.commit()
+            cur.close(); conn.close()
+            if not row:
+                return jsonify({"error": "user not found"}), 404
+            new_token, _uname = int(row[0]), (row[1] or "")
+            if _LOGGER_AVAILABLE:
+                log_financial(
+                    username=_uname, userid=userid, feature="token_update",
+                    transaction_type="credit" if delta_int > 0 else "spend",
+                    token_before=new_token - delta_int, token_after=new_token,
+                    transaction_amount=abs(delta_int),
+                )
+            return jsonify({"ok": True, "token": new_token}), 200
+        except Exception as e:
+            logger.error(f"[TokenUpdate/delta] {e}")
+            return jsonify({"error": str(e)}), 500
+
     if not userid or token_val is None:
         return jsonify({"error": "userid and token are required"}), 400
     try:

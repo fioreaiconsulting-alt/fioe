@@ -890,9 +890,13 @@ def sourcing_list():
         relevance_col_idx = (rating_idx + 1)
         role_tag_col_idx = relevance_col_idx + 1
 
+        def _strip_nim(name: str) -> str:
+            """Strip the Korean honorific suffix '님' (U+B2D8) and surrounding whitespace from a name."""
+            return (name or "").strip().rstrip('\uB2D8').strip()
+
         for r in cur.fetchall():
             row_dict = {
-                "name": r[0] or "",
+                "name": _strip_nim(r[0]),
                 "company": r[1] or "",
                 "jobtitle": r[2] or "",
                 "country": r[3] or "",
@@ -4810,10 +4814,44 @@ def process_bulk_assess():
                     if proc_row and proc_row[0]:
                         role_tag = proc_row[0]
             
+            # --- Role-tag gate: compare login.role_tag (recruiter) vs sourcing.role_tag (candidate) ---
+            # The authoritative comparison is always DB-to-DB: read the recruiter's role_tag directly
+            # from the login table and compare against the sourcing record's role_tag.
+            # If both are populated and they don't match, skip this candidate.
+            recruiter_username_for_rt = username or username_db
+            if recruiter_username_for_rt:
+                try:
+                    cur.execute(
+                        "SELECT role_tag FROM login WHERE username = %s LIMIT 1",
+                        (recruiter_username_for_rt,)
+                    )
+                    _login_rt_row = cur.fetchone()
+                    _login_role_tag = (_login_rt_row[0] or "").strip().lower() if _login_rt_row else ""
+                    _sourcing_role_tag = role_tag.strip().lower() if role_tag else ""
+                    if _login_role_tag and _sourcing_role_tag and _login_role_tag != _sourcing_role_tag:
+                        logger.info(
+                            f"[BULK_ASSESS] Skipped {linkedinurl[:50]}: login role_tag "
+                            f"{_login_role_tag!r} != sourcing role_tag {_sourcing_role_tag!r}"
+                        )
+                        try:
+                            cur.close()
+                        finally:
+                            conn.close()
+                        return {
+                            "linkedinurl": linkedinurl,
+                            "result": {
+                                "_skipped": True,
+                                "error": (
+                                    f"Assessment skipped: role tag mismatch "
+                                    f"(recruiter={_login_role_tag!r}, candidate={_sourcing_role_tag!r})"
+                                )
+                            }
+                        }
+                except Exception as _rt_err:
+                    logger.debug(f"[BULK_ASSESS] Role-tag comparison skipped: {_rt_err}")
+
             cur.close()
             conn.close()
-            
-            # Fetch target skills (jskillset/jskill)
             # Sync from login to process first so the latest job skillset is available.
             # IMPORTANT: use the recruiter's `username` from the request payload (outer scope),
             # NOT username_db (which is the candidate's username from the process row).
