@@ -799,8 +799,10 @@ _CSP = (
     "font-src 'self' https://fonts.gstatic.com; "
     # img-src includes https: for Leaflet map tiles (loaded from tile CDNs).
     "img-src 'self' data: blob: https:; "
-    # connect-src: all API calls go through the same origin (WB_BASE_URL).
-    "connect-src 'self'; "
+    # connect-src: API calls go through the same origin; CDN source-map fetches
+    # (leaflet.js.map, chart.umd.js.map) require the same CDN origins that are
+    # already trusted in script-src.
+    "connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net; "
     "worker-src 'self' blob:; "
     # frame-ancestors 'self' is consistent with X-Frame-Options: SAMEORIGIN.
     "frame-ancestors 'self';"
