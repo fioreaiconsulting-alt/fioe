@@ -3276,13 +3276,25 @@ function updateSectorEnabledState(){
               const k = canonicalKey(s);
               return vizKeywords.some(v => k.indexOf(v) !== -1);
             }
+            // Reject sentence fragments: > 5 words, or starting with connectors/articles/prepositions
+            // Keep in sync with _SKILL_INVALID_PREFIXES / _SKILL_MAX_WORDS in webbridge.py
+            const _skillFragmentRe = /^(and|or|the|a|an|but|with|of|to|in|for|by|at|we|be|is|are|our|its)\b|\d+[.)]/i;
+            function isValidSkillToken(s){
+              if(!s || typeof s !== 'string') return false;
+              const t = s.trim();
+              if(!t) return false;
+              if(t.split(/\s+/).length > 5) return false;
+              if(_skillFragmentRe.test(t)) return false;
+              return true;
+            }
 
-            if (Array.isArray(analyzeData.skills) && analyzeData.skills.length) {
+            if (Array.isArray(analyzeData.skills)) {
               userSkills.length = 0;
               userSkillIndex.clear();
               analyzeData.skills.forEach(function(sk){
                 const t = normalizeSpaces(sk);
                 if (!t) return;
+                if (!isValidSkillToken(t)) return; // skip sentence fragments
                 if (isVisualizationSkill(t)) return; // skip visualization skills
                 const k = canonicalKey(t);
                 if (!userSkillIndex.has(k)) {
@@ -3482,6 +3494,7 @@ function updateSectorEnabledState(){
                 data.skills.forEach(function(s){
                   const t = normalizeSpaces(s);
                   if (!t) return;
+                  if (typeof isValidSkillToken === 'function' && !isValidSkillToken(t)) return;
                   const k = canonicalKey(t);
                   if (!userSkillIndex.has(k)) {
                     const isViz = ['presentation','presentations','presentation skills','powerpoint','ppt','excel','data visualization','visualization','slide','slides','chart','charts']

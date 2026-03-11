@@ -1752,24 +1752,6 @@ def gemini_analyze_jd():
             skills = [s.strip() for s in skills.split(",") if s.strip()]
 
         # Filter out skill strings that are clearly sentence fragments, not skill keywords
-        _SKILL_MAX_WORDS = 5
-        _SKILL_INVALID_PREFIXES = re.compile(
-            r'^(and|or|the|a|an|but|with|of|to|in|for|by|at)\b|\d+[\.\)]',
-            re.I
-        )
-        def _is_valid_skill_token(s):
-            if not isinstance(s, str):
-                return False
-            s = s.strip()
-            if not s:
-                return False
-            # Reject strings that are too long (more than 5 words = likely a sentence fragment)
-            if len(s.split()) > _SKILL_MAX_WORDS:
-                return False
-            # Reject strings starting with conjunctions, articles, prepositions, or numbered list markers
-            if _SKILL_INVALID_PREFIXES.match(s):
-                return False
-            return True
         skills = [s.strip() for s in skills if _is_valid_skill_token(s)]
         suggestions = parsed_obj.get("suggestions") or []
         summary = parsed_obj.get("summary") or ""
@@ -2306,6 +2288,21 @@ def gemini_analyze_jd():
         # End enhanced workflow
         # -------------------------
 
+        # Build a fallback summary from extracted fields when Gemini didn't return one
+        if not summary:
+            parts = []
+            if job_title:
+                parts.append(job_title)
+            if seniority:
+                parts.append(seniority)
+            if sectors:
+                sector_names = sectors if isinstance(sectors, list) else ([sectors] if sectors else [])
+                parts.append(", ".join(str(s) for s in sector_names if s))
+            if country:
+                parts.append(country)
+            if parts:
+                summary = " · ".join(parts)
+
         out = {
             "job_title": job_title,  # Keep single job_title for backward compatibility
             "job_titles": job_titles,  # NEW: Array of at least 2 job titles
@@ -2448,6 +2445,30 @@ def chat_upload_jd():
             except Exception:
                 pass
 
+# ---------------------------------------------------------------------------
+# Module-level skill token validator
+# Rejects sentence fragments extracted by Gemini as skill strings.
+# Used by both _persist_jskillset and gemini_analyze_jd.
+# ---------------------------------------------------------------------------
+_SKILL_MAX_WORDS = 5
+_SKILL_INVALID_PREFIXES = re.compile(
+    r'^(and|or|the|a|an|but|with|of|to|in|for|by|at|we|be|is|are|our|its)\b|\d+[\.\)]',
+    re.I
+)
+
+def _is_valid_skill_token(s: str) -> bool:
+    """Return True only for short keyword-style skill strings, False for sentence fragments."""
+    if not isinstance(s, str):
+        return False
+    s = s.strip()
+    if not s:
+        return False
+    if len(s.split()) > _SKILL_MAX_WORDS:
+        return False
+    if _SKILL_INVALID_PREFIXES.match(s):
+        return False
+    return True
+
 # Helper: persist jskillset (and fallback columns) for a username
 def _persist_jskillset(username: str, skills):
     """
@@ -2480,6 +2501,9 @@ def _persist_jskillset(username: str, skills):
         if k not in seen:
             seen.add(k)
             deduped.append(s)
+
+    # Filter out sentence fragments — keep only keyword-style skill tokens
+    deduped = [s for s in deduped if _is_valid_skill_token(s)]
 
     # Ensure a JSON-serializable list
     final_skills = [str(s) for s in deduped]
