@@ -962,26 +962,50 @@ function _applyWeightLockState() {
   }
 
   // Track how many times the panel has been closed with an invalid total.
+  // _adjAttempts only starts counting after weights have been successfully saved at 100% once.
   let _adjAttempts = 0;
+  let _weightsEverSetTo100 = false;
+
+  // Reopen the weight panel so the user can readjust after a reset.
+  function _reopenWeightPanel() {
+    const content = document.getElementById('searchConfigContent');
+    const arrow   = document.getElementById('searchConfigArrow');
+    if (content && !content.classList.contains('open')) {
+      content.classList.add('open');
+      if (arrow) arrow.textContent = '▲';
+    }
+  }
 
   // Global function to validate weights when panel closes
   window.validateWeightsOnClose = function() {
     const sum = Array.from(document.querySelectorAll('.weight-sliders input[type=range]'))
                      .reduce((acc, el) => acc + (parseInt(el.value) || 0), 0);
     if (sum !== 100) {
-      _adjAttempts++;
-      if (_adjAttempts > 1) {
-        // More than one failed attempt — reset to defaults so 100% is always achievable.
-        _adjAttempts = 0;
-        localStorage.removeItem('sv_assessment_weights');
-        localStorage.removeItem('sv_assessment_weights_prev');
-        loadWeights();
-      } else {
-        // First failed attempt — revert to previous snapshot.
+      if (!_weightsEverSetTo100) {
+        // Weights have never been successfully set to 100% — revert to previous snapshot
+        // but do not start counting attempts yet.
         restorePrevWeights();
-        alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
+        alert('Weight total must equal 100%. Please adjust the sliders so the total equals 100%.');
+      } else {
+        _adjAttempts++;
+        if (_adjAttempts > 1) {
+          // More than one failed attempt after a valid save — reset to defaults and reopen
+          // the panel so the user can readjust.
+          _adjAttempts = 0;
+          localStorage.removeItem('sv_assessment_weights');
+          localStorage.removeItem('sv_assessment_weights_prev');
+          loadWeights();
+          alert('Weights have been reset to default values. Please readjust them to total 100%.');
+          _reopenWeightPanel();
+        } else {
+          // First failed attempt — revert to previous snapshot.
+          restorePrevWeights();
+          alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
+        }
       }
     } else {
+      // Valid save — mark that 100% has been achieved and reset the attempt counter.
+      _weightsEverSetTo100 = true;
       _adjAttempts = 0;
     }
   };
