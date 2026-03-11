@@ -4786,31 +4786,6 @@ async function loadRows(page=1){
 function renderTable(){
   tableBody.innerHTML='';
   rowsData.forEach(r=> tableBody.appendChild(buildRow(r)));
-  // Restore last-viewed View Details only once per page load (on the first
-  // renderTable() call after navigation back to this page).  Subsequent calls
-  // — e.g. triggered by bulk-assessment reloads — must NOT jump the user back
-  // to View Details, which also prevents spurious getProcessGeography requests
-  // that hit the 429 rate limit.
-  if (!window.__sv_view_details_restored) {
-    window.__sv_view_details_restored = true;
-    try {
-      const _lastAnchor = localStorage.getItem('sv_last_viewed_anchor');
-      if (_lastAnchor) {
-        const _detailsPane = document.getElementById('tab-details');
-        if (_detailsPane && !_detailsPane.classList.contains('active')) {
-          // Iterate rows to avoid CSS selector injection issues with special URL characters
-          let _matchingTr = null;
-          const _rows = tableBody.querySelectorAll('tr[data-linkedinurl]');
-          for (let i = 0; i < _rows.length; i++) {
-            if (_rows[i].dataset.linkedinurl === _lastAnchor) { _matchingTr = _rows[i]; break; }
-          }
-          if (_matchingTr && window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
-            window.__sv_namecard.toggleNameCard(_matchingTr);
-          }
-        }
-      }
-    } catch(err) { console.error('[SV] Failed to restore last viewed profile:', err); }
-  }
 }
 
 /* --- AFFECTED: Namecard UI injection modified for Tab Layout --- */

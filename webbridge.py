@@ -4913,7 +4913,7 @@ def user_update_role_tag():
         login_session_ts = login_row[1] if login_row else None
         # Step 3: Update sourcing role_tag for all records of this user
         cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
-        cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag, username))
+        cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (role_tag, username))
         # Step 4: Validate that role_tag matches in both login and sourcing, then transfer
         # the session timestamp from login to sourcing for consistency and traceability.
         if login_role_tag == role_tag and login_session_ts is not None:
