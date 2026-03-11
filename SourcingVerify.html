@@ -99,11 +99,30 @@ html, body {
   width: auto;
 }
 
-/* Tooltip icon hover/focus: show tooltip */
-#searchConfigTooltipIcon:hover #searchConfigTooltip,
-#searchConfigTooltipIcon:focus #searchConfigTooltip,
-#searchConfigTooltipIcon:focus-within #searchConfigTooltip {
+/* Search & Assessment Configuration bar — show tooltip on hover of the header */
+#searchConfigHeader {
+  position: relative;
+}
+#searchConfigHeader:hover #searchConfigTooltip {
   display: block !important;
+}
+
+/* Tooltip panel — appears below the bar, fully in front */
+#searchConfigTooltip {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 10000;
+  width: 400px;
+  background: #1e2a3a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 12px 16px;
+  border-radius: 8px;
+  pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
 }
 
 /* Locked weights indicator */
@@ -236,36 +255,19 @@ html, body {
 
   <!-- Combined Search & Assessment Configuration panel (hidden by default) -->
   <div class="weight-config-panel" id="searchConfigPanel">
-    <div class="weight-config-header" id="searchConfigHeader" onclick="toggleSearchConfig()" style="cursor:pointer; position:relative;">
+    <!-- Tooltip is triggered by hovering over the whole header bar -->
+    <div class="weight-config-header" id="searchConfigHeader" onclick="toggleSearchConfig()" style="cursor:pointer;">
       <span>🔍 Search &amp; Assessment Configuration</span>
-      <!-- Tooltip icon — does not propagate click so it doesn't toggle the panel -->
-      <button id="searchConfigTooltipIcon"
-              type="button"
-              onclick="event.stopPropagation();"
-              tabindex="0"
-              aria-label="Search &amp; Assessment Configuration help"
-              aria-describedby="searchConfigTooltip"
-              style="display:inline-flex; align-items:center; justify-content:center;
-                     width:16px; height:16px; border-radius:50%; background:#0969da;
-                     color:#fff; font-size:10px; font-weight:700; cursor:default;
-                     margin-left:6px; vertical-align:middle; position:relative;
-                     border:none; padding:0; box-shadow:none;">?
-        <div id="searchConfigTooltip"
-             role="tooltip"
-             style="display:none; position:absolute; left:calc(100% + 10px); top:50%;
-                    transform:translateY(-50%); z-index:9999; width:320px;
-                    background:#1e2a3a; color:#e2e8f0; font-size:12px; line-height:1.55;
-                    padding:12px 14px; border-radius:8px; pointer-events:none;
-                    box-shadow:0 4px 16px rgba(0,0,0,0.3);">
-          <strong style="color:#93c5fd; display:block; margin-bottom:6px;">Search &amp; Assessment Configuration</strong>
-          <strong style="color:#fbbf24;">Candidate Search:</strong><br>
-          Search your sourcing pool by name, job title, company or skills.
-          Results are filtered to the active search role (<em>Profiles found for your search</em>).<br><br>
-          <strong style="color:#fbbf24;">Assessment Weightage:</strong><br>
-          Adjust the scoring weights for each assessment dimension. Weights must sum to 100%.
-          <strong style="color:#f87171;">These weights can only be set once per unique role</strong> — once saved they are locked for that role to ensure consistent scoring across all candidates.
-        </div>
-      </button>
+      <!-- Tooltip panel — shown via CSS when the header is hovered -->
+      <div id="searchConfigTooltip" role="tooltip">
+        <strong style="color:#93c5fd; display:block; margin-bottom:6px;">Search &amp; Assessment Configuration</strong>
+        <strong style="color:#fbbf24;">Candidate Search:</strong><br>
+        Search your sourcing pool by name, job title, company or skills.
+        Results are filtered to the active search role (<em>Profiles found for your search</em>).<br><br>
+        <strong style="color:#fbbf24;">Assessment Weightage:</strong><br>
+        Adjust the scoring weights for each assessment dimension. Weights must sum to 100%.
+        <strong style="color:#f87171;">These weights can only be set once per unique role</strong> — once saved they are locked for that role to ensure consistent scoring across all candidates.
+      </div>
       <span id="searchConfigArrow">▼</span>
     </div>
     <div class="weight-config-content" id="searchConfigContent">
@@ -1128,6 +1130,12 @@ function updateUploadButtonToView(linkedinurl) {
                 viewBtn.title = "Assessment Complete - Click to View";
                 viewBtn.onclick = () => { 
                     if (window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
+                        // Clear the local cache so the View Details tab loads fresh data
+                        // directly from the process table (Postgres) rather than relying on
+                        // the front-end cache that may be stale.
+                        if (window.__sv_namecard.clearCardCache) {
+                            window.__sv_namecard.clearCardCache(tr.dataset.linkedinurl);
+                        }
                         window.__sv_namecard.toggleNameCard(tr);
                     }
                 };
@@ -3541,7 +3549,13 @@ function buildRow(row) {
                 btn.textContent = 'View';
                 btn.className = 'view-btn assessment-complete';
                 btn.title = isLevel2 ? "View - L2 Complete" : "View - L1 Complete";
-                btn.onclick = () => { window.__sv_namecard.toggleNameCard(tr); };
+                btn.onclick = () => {
+                    // Clear cache so View Details always loads fresh from the process table (Postgres).
+                    if (window.__sv_namecard && window.__sv_namecard.clearCardCache) {
+                        window.__sv_namecard.clearCardCache(tr.dataset.linkedinurl);
+                    }
+                    window.__sv_namecard.toggleNameCard(tr);
+                };
                 // Revert to previous button styling (default gray button)
                 btn.style.cssText = 'width:100%; padding:6px 12px; font-size:13px; cursor:pointer;';
                 td.appendChild(btn);
@@ -3706,6 +3720,10 @@ function buildRow(row) {
           btn.title = "Assessment Complete - Click to View";
           btn.onclick = () => { 
             if (window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
+              // Clear cache so View Details loads fresh from the process table (Postgres).
+              if (window.__sv_namecard.clearCardCache) {
+                window.__sv_namecard.clearCardCache(tr.dataset.linkedinurl);
+              }
               window.__sv_namecard.toggleNameCard(tr);
             }
           };
@@ -4791,6 +4809,15 @@ function renderTable(){
   function getCardCache(anchor) {
     const cache = readCache();
     return cache[anchor] || null;
+  }
+  /** Remove a single entry from the namecard cache so the next render fetches fresh from DB. */
+  function clearCardCache(anchor) {
+    if (!anchor) return;
+    const cache = readCache();
+    if (Object.prototype.hasOwnProperty.call(cache, anchor)) {
+      delete cache[anchor];
+      writeCache(cache);
+    }
   }
   
   function formatExperienceHtml(raw) {
@@ -6275,7 +6302,8 @@ function renderTable(){
     ensureProductColumn,
     renderProducts,
     setCardCache,
-    getCardCache
+    getCardCache,
+    clearCardCache
   };
 })();
 

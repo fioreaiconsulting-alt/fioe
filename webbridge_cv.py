@@ -1108,6 +1108,76 @@ def sourcing_delete():
         logger.warning(f"[Sourcing Delete] {e}")
         return jsonify({"error":str(e)}), 500
 
+@app.post("/sourcing/mark_ineligible")
+@_csrf_required
+def sourcing_mark_ineligible():
+    """Mark a list of sourcing candidates as ineligible for assessment.
+
+    This is called when the user proceeds to AutoSourcing.html with unassessed
+    candidates still in Talent Evaluation.  Any subsequent call to
+    /process/bulk_assess for one of these URLs will be skipped server-side.
+
+    Request JSON:
+        {"userid": "...", "linkedinurls": ["https://..."]}
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    userid = (data.get("userid") or "").strip()
+    linkedinurls = data.get("linkedinurls") or []
+    if isinstance(linkedinurls, str):
+        linkedinurls = [linkedinurls]
+    cleaned = [(u or "").strip() for u in linkedinurls if (u or "").strip()]
+    if not cleaned:
+        return jsonify({"error": "linkedinurls list required"}), 400
+
+    try:
+        import psycopg2
+        from psycopg2 import sql as pgsql
+        pg_host = os.getenv("PGHOST", "localhost")
+        pg_port = int(os.getenv("PGPORT", "5432"))
+        pg_user = os.getenv("PGUSER", "postgres")
+        pg_password = os.getenv("PGPASSWORD", "")
+        pg_db = os.getenv("PGDATABASE", "candidate_db")
+        conn = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user,
+                                password=pg_password, dbname=pg_db)
+        cur = conn.cursor()
+
+        # Ensure the ineligible column exists (ALTER TABLE is idempotent here)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sourcing'
+                      AND column_name='assessment_ineligible'
+                ) THEN
+                    ALTER TABLE sourcing ADD COLUMN assessment_ineligible BOOLEAN DEFAULT FALSE;
+                END IF;
+            END$$;
+        """)
+        conn.commit()
+
+        # Scope update to the owning user if provided, else update by URL only
+        if userid:
+            cur.execute(
+                "UPDATE sourcing SET assessment_ineligible = TRUE "
+                "WHERE linkedinurl = ANY(%s) AND userid = %s",
+                (cleaned, userid)
+            )
+        else:
+            cur.execute(
+                "UPDATE sourcing SET assessment_ineligible = TRUE WHERE linkedinurl = ANY(%s)",
+                (cleaned,)
+            )
+        updated = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"[mark_ineligible] Marked {updated} rows ineligible for userid={userid!r}")
+        return jsonify({"marked": updated})
+    except Exception as e:
+        logger.warning(f"[mark_ineligible] {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.post("/process/delete")
 @_csrf_required
 def process_delete_entry():
@@ -4542,7 +4612,34 @@ def process_bulk_assess():
                 normalized = _normalize_linkedin_to_path(linkedinurl)
             except Exception:
                 normalized = None
-            
+
+            # --- Backend ineligibility check ---
+            # If the candidate was marked ineligible in the sourcing table (because the user
+            # proceeded to AutoSourcing with this profile unassessed), block the assessment
+            # server-side regardless of what the front end sends.
+            try:
+                cur.execute("""
+                    SELECT assessment_ineligible FROM sourcing
+                    WHERE linkedinurl = %s LIMIT 1
+                """, (linkedinurl,))
+                _inelig_row = cur.fetchone()
+                if _inelig_row and _inelig_row[0]:
+                    logger.info(f"[BULK_ASSESS] Blocked ineligible candidate (url truncated: {linkedinurl[:40]}…)")
+                    try:
+                        cur.close()
+                    finally:
+                        conn.close()
+                    return {
+                        "linkedinurl": linkedinurl,
+                        "result": {
+                            "_skipped": True,
+                            "error": "Assessment blocked: candidate marked ineligible (AutoSourcing accessed with pending assessments)."
+                        }
+                    }
+            except Exception as _inelig_err:
+                # If the column does not exist yet, skip silently – the front end still enforces it
+                logger.debug(f"[BULK_ASSESS] Ineligibility check skipped: {_inelig_err}")
+
             # Fetch by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
             cur.execute("""
                 SELECT jobtitle, company, country, seniority, sector, experience, skillset, username, role_tag, cv, tenure, product

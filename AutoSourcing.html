@@ -2914,13 +2914,29 @@ async function checkPendingAssessmentsOnLoad() {
 
     if (okBtn) {
       okBtn.onclick = function() {
-        // Mark all currently-unassessed candidates as ineligible for future assessment.
-        // This persists across page loads so SourcingVerify won't re-surface them.
+        // Persist ineligibility in localStorage for front-end checks.
         try {
           const existing = JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]');
           const merged = Array.from(new Set(existing.concat(unassessedUrls)));
           localStorage.setItem('sv_assessment_ineligible', JSON.stringify(merged));
         } catch(_) {}
+
+        // Also persist ineligibility at the backend level (sourcing table) so server-side
+        // assessment checks cannot be bypassed.
+        if (unassessedUrls.length > 0) {
+          try {
+            const userid = uid || '';
+            fetch('/sourcing/mark_ineligible', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userid: userid, linkedinurls: unassessedUrls })
+            }).catch(function(err) {
+              console.warn('[PendingAssessments] Backend mark_ineligible failed:', err);
+            });
+          } catch(_) {}
+        }
+
         // Suppress this popout for the current session so it does not reappear.
         try { sessionStorage.setItem('autosourcing_pending_suppress', '1'); } catch(_) {}
         overlay.classList.add('hidden');
