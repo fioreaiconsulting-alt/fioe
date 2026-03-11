@@ -2642,12 +2642,14 @@ function primaryButtonHandler(e){
     if(state === 'idle'){
       try { generateAndStart(); } catch(err){ if(btn){ btn.dataset.state='idle'; btn.textContent='Sourcing'; btn.disabled=false; removeSearchingSpinner(btn); } }
     } else if(state === 'ready'){
-      try {
-        const rt = buildRoleTagFromJobTitles();
-        persistRoleTag(rt);
-        updateRoleTagOnServer(rt).catch(()=>{});
-      } catch(e){ }
-      try { window.location='http://127.0.0.1:8091/login.html?next=%2FSourcingVerify.html'; } catch(e){ }
+      (async () => {
+        try {
+          const rt = buildRoleTagFromJobTitles();
+          persistRoleTag(rt);
+          await updateRoleTagOnServer(rt);
+        } catch(e){ }
+        try { window.location = '/SourcingVerify.html'; } catch(e){ }
+      })();
     }
   } catch(e){ }
 }
