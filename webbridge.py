@@ -4570,15 +4570,11 @@ def user_resolve():
             cur.close(); conn.close()
             return jsonify({"error":"not found"}), 404
         userid, fullname, login_role_tag, token_val, target_limit_val, useraccess_val = row
-        # Prefer role_tag from sourcing table (authoritative source) over login table
+        # Use login.role_tag as the authoritative current session role for the recruiter.
+        # sourcing.role_tag is per-candidate (for matching) and must not override the recruiter's
+        # current active role — old sourcing records from previous searches would cause the session
+        # badge to show a stale role even after the recruiter has started a new search.
         resolved_role_tag = login_role_tag or ""
-        try:
-            cur.execute("SELECT role_tag FROM sourcing WHERE username=%s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username,))
-            src_row = cur.fetchone()
-            if src_row and src_row[0]:
-                resolved_role_tag = src_row[0]
-        except Exception:
-            pass
         cur.close(); conn.close()
         return jsonify({"userid": userid or "", "fullname": fullname or "", "role_tag": resolved_role_tag, "token": int(token_val or 0), "target_limit": int(target_limit_val or 10), "useraccess": (useraccess_val or "").strip()}), 200
     except Exception as e:
