@@ -1750,6 +1750,27 @@ def gemini_analyze_jd():
         skills = parsed.get("skills") or parsed_obj.get("skills") or []
         if isinstance(skills, str) and skills.strip():
             skills = [s.strip() for s in skills.split(",") if s.strip()]
+
+        # Filter out skill strings that are clearly sentence fragments, not skill keywords
+        _SKILL_MAX_WORDS = 5
+        _SKILL_INVALID_PREFIXES = re.compile(
+            r'^(and|or|the|a|an|but|with|of|to|in|for|by|at)\b|\d+[\.\)]',
+            re.I
+        )
+        def _is_valid_skill_token(s):
+            if not isinstance(s, str):
+                return False
+            s = s.strip()
+            if not s:
+                return False
+            # Reject strings that are too long (more than 5 words = likely a sentence fragment)
+            if len(s.split()) > _SKILL_MAX_WORDS:
+                return False
+            # Reject strings starting with conjunctions, articles, prepositions, or numbered list markers
+            if _SKILL_INVALID_PREFIXES.match(s):
+                return False
+            return True
+        skills = [s.strip() for s in skills if _is_valid_skill_token(s)]
         suggestions = parsed_obj.get("suggestions") or []
         summary = parsed_obj.get("summary") or ""
         missing = parsed_obj.get("missing") if isinstance(parsed_obj.get("missing"), list) else []

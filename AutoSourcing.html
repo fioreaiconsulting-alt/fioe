@@ -3245,7 +3245,7 @@ function updateSectorEnabledState(){
 
           // Render the analysis to the JD Analysis box
           if (analyzeData) {
-            if (summaryEl) summaryEl.innerHTML = analyzeData.summary || (analyzeData.observation || '');
+            if (summaryEl) summaryEl.innerHTML = analyzeData.summary || '';
             let tagHtml = '';
             // Display job titles (multiple if available)
             if (analyzeData.job_titles && analyzeData.job_titles.length > 0) {
