@@ -4374,10 +4374,13 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         }
     } catch(_) {}
 
-    // NOTE: Role-tag validation is intentionally NOT applied here. Role-tag filtering is
-    // handled upstream in runBulkAssessmentFromSearch (bulk path). Individual assessment
-    // (Upload CV or Browse File) must always be allowed so the user can assess any candidate
-    // they have explicitly chosen.
+    // Role-tag gate: block assessment if recruiter's session role_tag differs from the
+    // candidate's sourcing role_tag (both must be set and differ to block).
+    if (isRoleTagMismatch(tr)) {
+        console.warn(`[Assessment] Blocked ${anchor}: role_tag mismatch.`);
+        setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
+        return false;
+    }
 
     // GUARD
     if (window.__sv_assessment_in_flight && window.__sv_assessment_in_flight.has(anchor)) {

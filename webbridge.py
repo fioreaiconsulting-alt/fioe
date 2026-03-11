@@ -5409,6 +5409,30 @@ def _clean_list(items, limit=20):
         if len(out)>=limit: break
     return out
 
+# Regex to match trailing corporate entity type suffixes (legal entity words, not brand words).
+_CORP_SUFFIX_RE = re.compile(
+    r'(\s*,?\s*'
+    r'(?:Co\.\s*,?\s*Ltd\.?|Co\.?,?|Ltd\.?|Inc\.?|K\.K\.?|Corp\.?|Corporation|GmbH'
+    r'|S\.A\.?|N\.V\.?|B\.V\.?|A\.G\.?|PLC|Plc|L\.L\.C\.?|LLC|Company,?)'
+    r'\s*[,.]?\s*)$',
+    re.IGNORECASE
+)
+
+def _strip_corp_suffix(name: str) -> str:
+    """Strip trailing corporate entity suffixes (Co., Ltd., Inc., K.K., etc.) from a company name."""
+    if not name:
+        return name
+    result = name.strip().rstrip(',').rstrip('.').strip()
+    # Run up to 3 passes to handle compound suffixes such as "Co., Ltd." — each pass strips
+    # one suffix token (e.g. pass 1 removes "Ltd.", pass 2 removes the trailing "Co.").
+    for _ in range(3):
+        new = _CORP_SUFFIX_RE.sub('', result).strip().rstrip(',').rstrip('.').strip()
+        if new == result:
+            break
+        result = new
+    # If stripping removed the entire name (edge case), fall back to the original.
+    return result if result else name.strip()
+
 def _country_to_region(country: str):
     c=(country or "").strip().lower()
     if not c: return None
@@ -5929,8 +5953,13 @@ def sector_suggest():
     normalized=[n for n in normalized if n]
     gem=_gemini_multi_sector(normalized, user_job_title, user_company, languages)
     if gem and (gem.get("job",{}).get("related") or gem.get("company",{}).get("related")):
+        comp_rel = gem.get("company",{}).get("related") or []
+        gem["company"]["related"] = [_strip_corp_suffix(c) for c in comp_rel if c]
         return jsonify(gem), 200
-    return jsonify(_heuristic_multi_sector(normalized, user_job_title, user_company, languages)), 200
+    result = _heuristic_multi_sector(normalized, user_job_title, user_company, languages)
+    comp_rel = result.get("company",{}).get("related") or []
+    result["company"]["related"] = [_strip_corp_suffix(c) for c in comp_rel if c]
+    return jsonify(result), 200
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
