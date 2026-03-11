@@ -3289,7 +3289,7 @@ function updateSectorEnabledState(){
             // JD is too long — show a popout and stop analysis
             let errData = null;
             try { errData = await analyzeResp.json(); } catch(_) {}
-            const maxWords = (errData && errData.max_words) ? errData.max_words.toLocaleString() : '1,500'; // keep in sync with JD_MAX_WORDS in webbridge.py
+            const maxWords = (errData && errData.max_words) ? errData.max_words.toLocaleString() : '700'; // keep in sync with JD_MAX_WORDS in webbridge.py
             const wordCount = (errData && errData.word_count) ? errData.word_count.toLocaleString() : '';
             _showJdTooLongPopout(wordCount, maxWords);
             if (summaryEl) summaryEl.innerHTML = '';
@@ -3422,29 +3422,27 @@ function updateSectorEnabledState(){
                     const sel = document.getElementById('senioritySelect');
                     if (sel) {
                       const s = rawSen.toLowerCase();
-                      // Mapping logic: conservative mapping consistent with server heuristics
+                      // Mapping rules:
+                      // Junior / Mid / Senior → Associate
+                      // Manager → Manager
+                      // Director / Expert → Director
+                      // Above Director (VP, C-suite, Head, Principal, Staff) → None (leave empty)
                       let mapped = '';
-                      if (/\b(director|vice president|vice-president|vp|principal|head of|head |chief |cxo|executive director|group director|principal|staff|expert)\b/i.test(s)) {
+                      if (/\b(vice\s*president|vp|chief|cxo|c-suite|head\s+of|executive director|group director|principal|staff)\b/i.test(s)) {
+                        // Above-Director level → None
+                        mapped = '';
+                      } else if (/\b(director)\b/i.test(s) || s.indexOf('director') !== -1) {
                         mapped = 'Director';
-                      } else if (/\b(manager|mgr|team lead|lead|supervisor|senior|sr\.?|team-lead|teamlead)\b/i.test(s)) {
-                        // map 'senior' to Manager (server uses similar conservative mapping)
+                      } else if (/\b(expert)\b/i.test(s)) {
+                        mapped = 'Director';
+                      } else if (/\b(manager|mgr|team\s*lead|supervisor)\b/i.test(s)) {
                         mapped = 'Manager';
-                      } else if (/\b(associate|junior|intern|entry-level|trainee|graduate)\b/i.test(s)) {
+                      } else if (/\b(senior|sr\.?|mid|middle|junior|jr\.?|intern|entry|trainee|graduate|associate)\b/i.test(s)) {
+                        // Junior / Mid / Senior → Associate
                         mapped = 'Associate';
-                      } else {
-                        // handle common single-word responses like "Senior", "Mid-Senior"
-                        if (s.indexOf('senior') !== -1 || s.indexOf('mid-senior') !== -1 || s.indexOf('mid senior') !== -1) {
-                          mapped = 'Manager';
-                        } else if (s.indexOf('director') !== -1) {
-                          mapped = 'Director';
-                        } else if (s.indexOf('associate') !== -1 || s.indexOf('jr') !== -1) {
-                          mapped = 'Associate';
-                        }
                       }
-                      if (mapped) {
-                        sel.value = mapped;
-                        try { sel.dispatchEvent(new Event('change')); } catch(_) {}
-                      }
+                      sel.value = mapped;
+                      try { sel.dispatchEvent(new Event('change')); } catch(_) {}
                     }
                   }
                 }

@@ -1116,6 +1116,36 @@ def _map_gemini_seniority_to_dropdown(seniority_text: str, total_experience_year
 
     return ""
 
+def _normalize_seniority_single(seniority_text: str) -> str:
+    """
+    Collapse compound seniority labels (e.g. 'Mid-Senior', 'Senior Manager') to a single
+    canonical token. Picks the *highest* seniority in the compound so the search query
+    is not under-targeted.
+    """
+    if not seniority_text:
+        return seniority_text
+    s = seniority_text.strip()
+    sl = s.lower()
+    # Already a clean single level from the canonical set
+    if sl in {"junior", "mid", "senior", "manager", "director", "associate", "intern",
+              "entry-level", "entry level", "lead", "principal", "vp", "staff", "expert",
+              "c-suite", "head"}:
+        return s
+    # Compound: pick highest level present
+    if any(tok in sl for tok in ["director", "vp", "vice president", "principal", "head", "chief", "staff", "expert"]):
+        return "Director"
+    if any(tok in sl for tok in ["manager", "lead", "supervisor"]):
+        return "Manager"
+    if "senior" in sl:
+        return "Senior"
+    if any(tok in sl for tok in ["mid", "middle"]):
+        return "Mid"
+    if any(tok in sl for tok in ["junior", "entry", "intern", "trainee", "graduate", "associate"]):
+        return "Junior"
+    # Return first word as best guess if still compound
+    parts = re.split(r'[-/\s]+', s)
+    return parts[0] if parts else s
+
 # Helper for deduplication (Needed for heuristics)
 def dedupe(seq):
     out=[]; seen=set()
@@ -1626,7 +1656,7 @@ def gemini_analyze_jd():
         return jsonify({"error":"No JD text provided or found for user"}), 400
 
     # Word-count guard: reject JDs that are too long for reliable Gemini analysis
-    JD_MAX_WORDS = 1500
+    JD_MAX_WORDS = 700
     jd_word_count = len(text_input.split())
     if jd_word_count > JD_MAX_WORDS:
         return jsonify({
@@ -1734,6 +1764,7 @@ def gemini_analyze_jd():
             "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
             "IMPORTANT:\n"
             "- job_title: extract the EXACT role name from the JD (e.g., 'Cloud Engineer', 'Site Activation Manager'). NEVER use generic labels like 'Gaming Professional' or 'Technology Professional'.\n"
+            "- seniority: return EXACTLY ONE single-word or two-word level (e.g. 'Junior', 'Mid', 'Senior', 'Manager', 'Director'). Do NOT combine levels (e.g. do NOT return 'Mid-Senior' or 'Senior-Manager'). Choose the closest single level.\n"
             "- You MUST identify at least one sector. Use your best judgment if unclear.\n"
             "- Multiple sectors may be assigned if the role spans multiple domains.\n"
             "- Match sectors to the AVAILABLE SECTORS list provided below.\n"
@@ -1753,7 +1784,7 @@ def gemini_analyze_jd():
         # Normalize output
         # Use Step 1 job title as fallback when Step 2 model returns empty
         job_title = (parsed.get("job_title") or parsed.get("role") or step1_job_title or "").strip()
-        seniority = (parsed.get("seniority") or "").strip()
+        seniority = _normalize_seniority_single((parsed.get("seniority") or "").strip())
         sector = parsed.get("sector") or ""
         sectors = parsed.get("sectors") or ([sector] if sector else [])
         if not country:  # Use country from analysis if not provided in request
