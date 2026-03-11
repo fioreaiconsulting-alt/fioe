@@ -2851,6 +2851,8 @@ function _showJdTooLongPopout(wordCount, maxWords) {
 // complete assessments before starting a new sourcing run (which would
 // overwrite the outstanding candidates).
 async function checkPendingAssessmentsOnLoad() {
+  // Skip if the user already dismissed the popout this session ("OK, proceed anyway")
+  if (sessionStorage.getItem('autosourcing_pending_suppress') === '1') return;
   try {
     const uid = window.__ACTIVE_USERID
       || sessionStorage.getItem('userid')
@@ -2871,8 +2873,17 @@ async function checkPendingAssessmentsOnLoad() {
     // Unassessed = records that have no rating_score from the process table.
     // rating_score is populated by the assessment pipeline; an empty/falsy value
     // means the candidate has not yet been assessed.
+    // Exclude candidates already marked ineligible from a prior "proceed anyway" click.
+    let ineligibleSet;
+    try {
+      ineligibleSet = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]'));
+    } catch(_) { ineligibleSet = new Set(); }
+
+    // Unassessed = rows with no rating_score that have a valid linkedinurl
+    // and are not already in the ineligible set (previously dismissed).
+    // r.linkedinurl is required because the ineligible set uses it as the key.
     const unassessed = rows.filter(function(r) {
-      return !r.rating_score;
+      return !r.rating_score && r.linkedinurl && !ineligibleSet.has(r.linkedinurl);
     });
     if (unassessed.length === 0) return;
 
@@ -2898,8 +2909,22 @@ async function checkPendingAssessmentsOnLoad() {
 
     overlay.classList.remove('hidden');
 
+    // Collect the linkedinurls of all unassessed candidates so we can mark them ineligible
+    const unassessedUrls = unassessed.map(function(r){ return r.linkedinurl; }).filter(Boolean);
+
     if (okBtn) {
-      okBtn.onclick = function() { overlay.classList.add('hidden'); };
+      okBtn.onclick = function() {
+        // Mark all currently-unassessed candidates as ineligible for future assessment.
+        // This persists across page loads so SourcingVerify won't re-surface them.
+        try {
+          const existing = JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]');
+          const merged = Array.from(new Set(existing.concat(unassessedUrls)));
+          localStorage.setItem('sv_assessment_ineligible', JSON.stringify(merged));
+        } catch(_) {}
+        // Suppress this popout for the current session so it does not reappear.
+        try { sessionStorage.setItem('autosourcing_pending_suppress', '1'); } catch(_) {}
+        overlay.classList.add('hidden');
+      };
     }
     overlay.onclick = function(e) {
       if (e.target === overlay) overlay.classList.add('hidden');

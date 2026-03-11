@@ -99,6 +99,27 @@ html, body {
   width: auto;
 }
 
+/* Tooltip icon hover/focus: show tooltip */
+#searchConfigTooltipIcon:hover #searchConfigTooltip,
+#searchConfigTooltipIcon:focus #searchConfigTooltip,
+#searchConfigTooltipIcon:focus-within #searchConfigTooltip {
+  display: block !important;
+}
+
+/* Locked weights indicator */
+.weights-locked-banner {
+  font-size: 11px;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Bubble tags for role tags display */
 .role-bubble {
   display: inline-block;
@@ -215,8 +236,36 @@ html, body {
 
   <!-- Combined Search & Assessment Configuration panel (hidden by default) -->
   <div class="weight-config-panel" id="searchConfigPanel">
-    <div class="weight-config-header" id="searchConfigHeader" onclick="toggleSearchConfig()" style="cursor:pointer;">
+    <div class="weight-config-header" id="searchConfigHeader" onclick="toggleSearchConfig()" style="cursor:pointer; position:relative;">
       <span>🔍 Search &amp; Assessment Configuration</span>
+      <!-- Tooltip icon — does not propagate click so it doesn't toggle the panel -->
+      <button id="searchConfigTooltipIcon"
+              type="button"
+              onclick="event.stopPropagation();"
+              tabindex="0"
+              aria-label="Search &amp; Assessment Configuration help"
+              aria-describedby="searchConfigTooltip"
+              style="display:inline-flex; align-items:center; justify-content:center;
+                     width:16px; height:16px; border-radius:50%; background:#0969da;
+                     color:#fff; font-size:10px; font-weight:700; cursor:default;
+                     margin-left:6px; vertical-align:middle; position:relative;
+                     border:none; padding:0; box-shadow:none;">?
+        <div id="searchConfigTooltip"
+             role="tooltip"
+             style="display:none; position:absolute; left:calc(100% + 10px); top:50%;
+                    transform:translateY(-50%); z-index:9999; width:320px;
+                    background:#1e2a3a; color:#e2e8f0; font-size:12px; line-height:1.55;
+                    padding:12px 14px; border-radius:8px; pointer-events:none;
+                    box-shadow:0 4px 16px rgba(0,0,0,0.3);">
+          <strong style="color:#93c5fd; display:block; margin-bottom:6px;">Search &amp; Assessment Configuration</strong>
+          <strong style="color:#fbbf24;">Candidate Search:</strong><br>
+          Search your sourcing pool by name, job title, company or skills.
+          Results are filtered to the active search role (<em>Profiles found for your search</em>).<br><br>
+          <strong style="color:#fbbf24;">Assessment Weightage:</strong><br>
+          Adjust the scoring weights for each assessment dimension. Weights must sum to 100%.
+          <strong style="color:#f87171;">These weights can only be set once per unique role</strong> — once saved they are locked for that role to ensure consistent scoring across all candidates.
+        </div>
+      </button>
       <span id="searchConfigArrow">▼</span>
     </div>
     <div class="weight-config-content" id="searchConfigContent">
@@ -795,6 +844,75 @@ function resetWeightsToDefault() {
 
 document.addEventListener('DOMContentLoaded', loadWeights);
 
+// ── Weight Lock: one adjustment allowed per unique role_tag ──────────────────
+// Once the user saves valid weights (sum === 100) for a role_tag, the sliders
+// are locked for that role_tag so all candidates are assessed consistently.
+const SV_WEIGHTS_LOCKED_KEY = 'sv_weights_locked_roles'; // JSON: { [role_tag]: true }
+
+/** Normalize a role tag for case-insensitive, trimmed comparison/storage. */
+function normalizeRoleTag(roleTag) {
+  return (roleTag || '').trim().toLowerCase();
+}
+
+function getLockedWeightRoles() {
+  try { return JSON.parse(localStorage.getItem(SV_WEIGHTS_LOCKED_KEY) || '{}'); } catch(_) { return {}; }
+}
+
+function isWeightLockedForRole(roleTag) {
+  if (!roleTag) return false;
+  return !!getLockedWeightRoles()[normalizeRoleTag(roleTag)];
+}
+
+function lockWeightForRole(roleTag) {
+  if (!roleTag) return;
+  const map = getLockedWeightRoles();
+  map[normalizeRoleTag(roleTag)] = true;
+  try { localStorage.setItem(SV_WEIGHTS_LOCKED_KEY, JSON.stringify(map)); } catch(_) {}
+}
+
+function _applyWeightLockState() {
+  const roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+  const locked = isWeightLockedForRole(roleTag);
+  const sliders = document.querySelectorAll('.weight-sliders input[type=range]');
+  const resetBtn = document.querySelector('.btn-reset-weights');
+  let banner = document.getElementById('weightsLockedBanner');
+
+  if (locked) {
+    sliders.forEach(inp => { inp.disabled = true; });
+    if (resetBtn) resetBtn.disabled = true;
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'weightsLockedBanner';
+      banner.className = 'weights-locked-banner';
+      banner.innerHTML = '🔒 Assessment Weightage is locked for role <strong id="weightsLockedRoleLabel"></strong>. Weights can only be set once per role to ensure consistent scoring.';
+      const weightTotal = document.querySelector('.weight-total');
+      if (weightTotal) weightTotal.insertAdjacentElement('afterend', banner);
+    }
+    const roleLabel = document.getElementById('weightsLockedRoleLabel');
+    if (roleLabel) roleLabel.textContent = '"' + roleTag + '"';
+    banner.style.display = 'flex';
+  } else {
+    sliders.forEach(inp => { inp.disabled = false; });
+    if (resetBtn) resetBtn.disabled = false;
+    if (banner) banner.style.display = 'none';
+  }
+}
+
+// Hook into validateTotalWeight: lock the role_tag the first time weights are saved at 100%
+(function _initWeightLock() {
+  document.addEventListener('DOMContentLoaded', function() {
+    _applyWeightLockState();
+
+    // Whenever role_tag changes, re-apply lock state after storage has been updated.
+    const _origPersistRoleTag = window.persistRoleTag;
+    window.persistRoleTag = function(val) {
+      if (typeof _origPersistRoleTag === 'function') _origPersistRoleTag(val);
+      // Small delay to allow sessionStorage/localStorage writes to settle before re-checking lock
+      setTimeout(_applyWeightLockState, 100);
+    };
+  });
+})();
+
 // Weight snapshot + enforcement (restore previous weights if total != 100)
 (function() {
   // previous weights snapshot (in-memory and persisted briefly)
@@ -858,6 +976,7 @@ document.addEventListener('DOMContentLoaded', loadWeights);
   });
 
   // Wrap/extend validateTotalWeight so it only writes to localStorage when sum === 100
+  // and locks weights for the active role_tag on first valid save.
   const _origValidateTotalWeight = window.validateTotalWeight;
   window.validateTotalWeight = function() {
     // If original exists, use it to update labels; otherwise run current implementation
@@ -878,6 +997,12 @@ document.addEventListener('DOMContentLoaded', loadWeights);
       if (sum === 100) {
         if (display) { display.classList.remove('invalid'); display.style.color = '#10b981'; }
         try { localStorage.setItem('sv_assessment_weights', JSON.stringify(config)); } catch(_) {}
+        // Lock weights for the active role_tag on first valid save.
+        const activeRole = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+        if (activeRole && !isWeightLockedForRole(activeRole)) {
+          lockWeightForRole(activeRole);
+          _applyWeightLockState();
+        }
       } else {
         if (display) { display.classList.add('invalid'); display.style.color = '#ef4444'; }
         // do not save invalid totals
@@ -1841,17 +1966,27 @@ async function runBulkAssessmentFromSearch() {
     const alreadyAssessedUrls = [];
     const skippedRoleTagUrls = [];
 
+    // Ineligible set: candidates blocked because the user proceeded to AutoSourcing
+    // without completing their assessment for them.
+    let _bulkIneligible;
+    try { _bulkIneligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]')); }
+    catch(_) { _bulkIneligible = new Set(); }
+
     // Current session role_tag for validation
-    const currentRoleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim().toLowerCase();
+    const currentRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
 
     allRows.forEach(tr => {
         if (tr.dataset.linkedinurl) {
             const linkedinurl = tr.dataset.linkedinurl;
 
-            // Validate that the sourcing record's role_tag matches the current session role_tag.
-            // Records with a mismatched role_tag are ignored for assessment.
-            const rowRoleTag = (tr.dataset.roleTag || '').trim().toLowerCase();
-            if (currentRoleTag && rowRoleTag && rowRoleTag !== currentRoleTag) {
+            // Block ineligible candidates.
+            if (_bulkIneligible.has(linkedinurl)) return;
+
+            // Validate that the sourcing record's role_tag exactly matches the current session
+            // role_tag. When a session role_tag is active, profiles that lack a role_tag or
+            // have a different one must be skipped — they belong to a different search session.
+            const rowRoleTag = normalizeRoleTag(tr.dataset.roleTag);
+            if (currentRoleTag && rowRoleTag !== currentRoleTag) {
                 skippedRoleTagUrls.push(linkedinurl);
                 return;
             }
@@ -4200,12 +4335,25 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     // runs vskillset generation, and performs L2 (inference) assessment.
     // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
 
-    // Validate role_tag: the sourcing record's role_tag must match the current session role_tag.
-    const currentRoleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim().toLowerCase();
-    const rowRoleTag = (tr.dataset.roleTag || '').trim().toLowerCase();
-    if (currentRoleTag && rowRoleTag && rowRoleTag !== currentRoleTag) {
+    // Block candidates marked ineligible because the user proceeded to AutoSourcing without
+    // completing their assessment (stored in sv_assessment_ineligible via AutoSourcing).
+    try {
+        const ineligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]'));
+        if (ineligible.has(anchor)) {
+            console.warn(`[Assessment] Blocked ${anchor}: marked ineligible after AutoSourcing was accessed with pending assessments.`);
+            setStatus('Assessment blocked: this candidate was skipped when AutoSourcing was accessed with pending assessments.', 'info');
+            return;
+        }
+    } catch(_) {}
+
+    // Validate role_tag: the sourcing record's role_tag must exactly match the current session
+    // role_tag. When a session role_tag is active, profiles that lack a role_tag or have a
+    // different one must not be assessed.
+    const currentRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
+    const rowRoleTag = normalizeRoleTag(tr.dataset.roleTag);
+    if (currentRoleTag && rowRoleTag !== currentRoleTag) {
         console.warn(`[Assessment] Skipping ${anchor}: role_tag "${rowRoleTag}" does not match current session role_tag "${currentRoleTag}".`);
-        setStatus(`Skipped: profile role ("${rowRoleTag}") does not match current search role ("${currentRoleTag}").`, 'info');
+        setStatus(`Skipped: profile role ("${rowRoleTag || '(none)'}") does not match current search role ("${currentRoleTag}").`, 'info');
         return;
     }
 
