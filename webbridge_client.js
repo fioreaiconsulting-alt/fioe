@@ -141,6 +141,8 @@ const webbridge = {
   /**
    * Resolve a user by username or LinkedIn URL.
    * @param {{ username?: string, linkedinurl?: string }} params
+   * @returns {{ userid: string, fullname: string, role_tag: string, token: number, target_limit: number, useraccess: string }}
+   *   `useraccess` is `"admin"` for admin users, empty string otherwise.
    */
   userResolve: (params) => _get('/user/resolve', params),
 
