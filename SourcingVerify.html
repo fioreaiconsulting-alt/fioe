@@ -961,15 +961,28 @@ function _applyWeightLockState() {
     validateTotalWeight(); // update total display and saved state
   }
 
+  // Track how many times the panel has been closed with an invalid total.
+  let _adjAttempts = 0;
+
   // Global function to validate weights when panel closes
   window.validateWeightsOnClose = function() {
     const sum = Array.from(document.querySelectorAll('.weight-sliders input[type=range]'))
                      .reduce((acc, el) => acc + (parseInt(el.value) || 0), 0);
     if (sum !== 100) {
-      // Revert to snapshot and prompt user
-      restorePrevWeights();
-      // Show alert when panel is toggled off with invalid total
-      alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
+      _adjAttempts++;
+      if (_adjAttempts > 1) {
+        // More than one failed attempt — reset to defaults so 100% is always achievable.
+        _adjAttempts = 0;
+        localStorage.removeItem('sv_assessment_weights');
+        localStorage.removeItem('sv_assessment_weights_prev');
+        loadWeights();
+      } else {
+        // First failed attempt — revert to previous snapshot.
+        restorePrevWeights();
+        alert('Weight total must equal 100%. Your change was reverted to the previous values. Please re-adjust the sliders so the total equals 100%.');
+      }
+    } else {
+      _adjAttempts = 0;
     }
   };
 
