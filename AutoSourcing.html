@@ -479,6 +479,68 @@ pre {
   margin-top: 16px;
 }
 
+/* Notification Modal Overlay */
+.notif-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.2);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.notif-modal-overlay.hidden { display: none !important; }
+.notif-modal-box {
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+  padding: 16px 20px;
+  max-width: 300px;
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.notif-modal-box .notif-msg { font-size: 13px; color: var(--text, #1e293b); line-height: 1.55; }
+.notif-modal-box .notif-suppress { display: flex; align-items: center; gap: 5px; font-size: 7px; color: var(--text-soft, #94a3b8); cursor: pointer; user-select: none; opacity: 0.65; }
+.notif-modal-box .notif-suppress input[type=checkbox] { width: 10px; height: 10px; cursor: pointer; }
+.notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
+
+/* Projected Token Usage tooltip — glossary card style */
+.projected-token-tooltip {
+  position: fixed;
+  z-index: 9999;
+  min-width: 240px;
+  background: #1b2636;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.30);
+  padding: 12px 16px;
+  font-size: 12.5px;
+  color: #e8edf2;
+  line-height: 1.75;
+  font-weight: 400;
+  pointer-events: none;
+}
+.projected-token-tooltip .tooltip-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: #94a3b8;
+  margin-bottom: 7px;
+}
+.projected-token-tooltip ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.projected-token-tooltip ul li {
+  white-space: nowrap;
+  color: #e8edf2;
+}
+
 </style>
 </head>
 <body>
@@ -565,6 +627,20 @@ pre {
   <div class="panel">
     <div class="panel-header" style="margin-bottom: 24px; padding-bottom: 0; border-bottom: none;">
       <h1>AutoSourcing</h1>
+      <div id="tokenCounterRow" style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap; align-items:center;">
+        <span class="token-counter" id="accountTokenDisplay">Account Tokens: —</span>
+        <div id="projectedTokenWrap" style="position:relative; display:inline-flex;">
+          <span class="token-counter" id="projectedTokenDisplay" style="cursor:default;">Projected Token Usage: —</span>
+          <div id="projectedTokenTooltip" class="projected-token-tooltip" style="display:none;">
+            <div class="tooltip-title">Token Pricing</div>
+            <ul>
+              <li>Best Mode → 1.5 tokens/profile</li>
+              <li>Target Limit &gt; 50 → 2 tokens/profile</li>
+              <li>Best Mode + Target Limit &gt; 50 → 2.5 tokens/profile</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Smart Search Builder Configuration Panel -->
@@ -847,11 +923,11 @@ pre {
 
           <!-- Search Mode toggle: Best Mode (auto-split at 32 words) vs Fast Mode (no splitting) -->
           <div id="searchModeWrapper" style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
-            <input id="bestModeChk" type="checkbox" checked style="display:none;">
-            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="true" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
-              <span>⚡ Best Mode</span>
+            <input id="bestModeChk" type="checkbox" style="display:none;">
+            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="false" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
+              <span>🚀 Fast Mode</span>
             </button>
-            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries &gt;32 words are auto-split for better coverage</span>
+            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries are sent as-is without splitting</span>
           </div>
 
           <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
@@ -1934,7 +2010,8 @@ function buildGenericFullQuery(){
 function updateFullCompiledQuery(){
   const full=buildFullBooleanQuery();
   const wrap=document.getElementById('fullQueryWrapper'); const pre=document.getElementById('fullCompiledExpr');
-  if(full){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
+  // Only show compiled boolean query for confirmed admin users
+  if(full && window.__IS_ADMIN === true){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
   const copyNoticeEl=document.getElementById('copyNotice'); if(copyNoticeEl) copyNoticeEl.style.display='none';
   // Live split preview: show how many queries this Xray command will produce before Search is clicked.
   // Accounts for both the primary (sector) query AND the competitor query when both exist.
@@ -2349,7 +2426,7 @@ function _splitXrayQuery(fullQuery, wordLimit) {
 
 function isBestMode() {
   const chk = document.getElementById('bestModeChk');
-  return chk ? chk.checked : true;
+  return chk ? chk.checked : false;
 }
 
 function initSearchMode() {
@@ -2358,7 +2435,10 @@ function initSearchMode() {
   const hint = document.getElementById('searchModeHint');
   if (!chk || !btn) return;
   const saved = localStorage.getItem(STORAGE_KEY_SEARCH_MODE);
-  if (saved === 'false') chk.checked = false;
+  // Restore saved preference; default (no saved value) is Fast Mode (unchecked)
+  if (saved === 'true') { chk.checked = true; }
+  else if (saved === 'false') { chk.checked = false; }
+  // else: keep HTML default (unchecked = Fast Mode)
   function applyMode() {
     const best = chk.checked;
     const span = btn.querySelector('span');
@@ -2369,9 +2449,15 @@ function initSearchMode() {
       : 'Queries are sent as-is without splitting';
     localStorage.setItem(STORAGE_KEY_SEARCH_MODE, String(best));
     updateFullCompiledQuery();
+    updateProjectedTokens();
   }
   applyMode();
-  btn.addEventListener('click', () => { chk.checked = !chk.checked; applyMode(); });
+  btn.addEventListener('click', () => {
+    const willBeBest = !chk.checked;
+    chk.checked = willBeBest;
+    applyMode();
+    if(willBeBest){ showBestModeNotif(); }
+  });
 }
 
 function buildQueries(country){
@@ -2435,6 +2521,8 @@ function buildQueries(country){
 function renderQueries(qs){
   const container=document.getElementById('queriesSection');
   container.innerHTML='';
+  // Only admins can view Xray queries
+  if(!window.__IS_ADMIN) return;
 
   const h2=document.createElement('h2');
   h2.textContent='Generated Queries';
@@ -2605,8 +2693,201 @@ async function enhanceWelcomeWithFullName(){
         avatarEl.textContent = initials || avatarEl.textContent;
       }
     }
+    // Store admin status and account tokens
+    window.__IS_ADMIN = (data.useraccess || '').trim().toLowerCase() === 'admin';
+    window.__ACCOUNT_TOKEN = typeof data.token === 'number' ? data.token : parseInt(data.token || '0', 10);
+    // Show token counters below AutoSourcing heading
+    const tokenCounterRow = document.getElementById('tokenCounterRow');
+    const accountTokenDisplay = document.getElementById('accountTokenDisplay');
+    if(accountTokenDisplay){
+      accountTokenDisplay.textContent = 'Account Tokens: ' + window.__ACCOUNT_TOKEN;
+    }
+    if(tokenCounterRow){
+      tokenCounterRow.style.display = 'flex';
+    }
+    updateProjectedTokens();
+    // Apply admin visibility to compiled query and queries section
+    applyAdminVisibility();
   }catch(e){ }
 }
+
+// ── Token projection ──────────────────────────────────────────────────────────
+// Returns the per-profile token rate based on current mode and target limit.
+function _getTokenRate(){
+  const targetLimit = parseInt((document.getElementById('userTargetInput') || {}).value || '0', 10) || 0;
+  const best = isBestMode();
+  const over50 = targetLimit > 50;
+  if(best && over50) return 2.5;
+  if(over50) return 2;
+  if(best) return 1.5;
+  return 1;
+}
+
+// Recalculate and display projected token usage below the heading.
+function updateProjectedTokens(){
+  const projectedEl = document.getElementById('projectedTokenDisplay');
+  if(!projectedEl) return;
+  const targetLimit = parseInt((document.getElementById('userTargetInput') || {}).value || '0', 10) || 0;
+  projectedEl.textContent = !targetLimit
+    ? 'Projected Token Usage: —'
+    : 'Projected Token Usage: ' + Math.floor(targetLimit * _getTokenRate());
+}
+
+// ── Admin visibility ─────────────────────────────────────────────────────────
+function applyAdminVisibility(){
+  const isAdmin = window.__IS_ADMIN === true;
+  // Compiled Boolean Query: updateFullCompiledQuery already gates on window.__IS_ADMIN === true.
+  // Force hide immediately so there's no flash while loading.
+  const fullQueryWrapper = document.getElementById('fullQueryWrapper');
+  if(fullQueryWrapper && !isAdmin){
+    fullQueryWrapper.style.display = 'none';
+  }
+  // Queries section: hide for non-admins; renderQueries() already gates on __IS_ADMIN.
+  const queriesSection = document.getElementById('queriesSection');
+  if(queriesSection){
+    if(!isAdmin){
+      queriesSection.style.setProperty('display', 'none', 'important');
+    } else {
+      queriesSection.style.removeProperty('display');
+    }
+  }
+}
+
+// ── Notification modals ───────────────────────────────────────────────────────
+const STORAGE_KEY_NOTIF_BEST_MODE_SUPPRESS = 'autosourcing_notif_bestmode_suppress';
+const STORAGE_KEY_NOTIF_TARGET_LIMIT_SUPPRESS = 'autosourcing_notif_targetlimit_suppress';
+
+function _showNotifModal(overlayId, suppressKey, suppressChkId, okBtnId){
+  try{
+    if(localStorage.getItem(suppressKey) === 'true') return;
+    const overlay = document.getElementById(overlayId);
+    if(!overlay) return;
+    overlay.classList.remove('hidden');
+    const okBtn = document.getElementById(okBtnId);
+    if(okBtn){
+      okBtn.onclick = function(){
+        const chk = document.getElementById(suppressChkId);
+        if(chk && chk.checked){
+          try{ localStorage.setItem(suppressKey, 'true'); }catch(_){}
+        }
+        overlay.classList.add('hidden');
+      };
+    }
+    // Also dismiss on overlay background click
+    overlay.onclick = function(e){
+      if(e.target === overlay){
+        const chk = document.getElementById(suppressChkId);
+        if(chk && chk.checked){
+          try{ localStorage.setItem(suppressKey, 'true'); }catch(_){}
+        }
+        overlay.classList.add('hidden');
+      }
+    };
+  }catch(_){}
+}
+
+function showBestModeNotif(){
+  try{
+    if(localStorage.getItem(STORAGE_KEY_NOTIF_BEST_MODE_SUPPRESS) === 'true') return;
+    // Compute actual rate now that Best Mode is active
+    const rate = _getTokenRate();
+    const msgEl = document.getElementById('notifBestModeMsg');
+    if(msgEl){
+      const rateStr = rate % 1 === 0 ? String(rate) : rate.toFixed(1);
+      msgEl.innerHTML = 'Each profile costs <strong>' + rateStr + ' tokens</strong> due to extensive query combinations for comprehensive search.';
+    }
+  }catch(_){}
+  _showNotifModal(
+    'notifBestModeOverlay',
+    STORAGE_KEY_NOTIF_BEST_MODE_SUPPRESS,
+    'notifBestModeSuppressChk',
+    'notifBestModeOkBtn'
+  );
+}
+
+function showTargetLimitNotif(){
+  try{
+    if(localStorage.getItem(STORAGE_KEY_NOTIF_TARGET_LIMIT_SUPPRESS) === 'true') return;
+    // Compute actual rate now that target limit > 50 is active
+    const rate = _getTokenRate();
+    const msgEl = document.getElementById('notifTargetLimitMsg');
+    if(msgEl){
+      const rateStr = rate % 1 === 0 ? String(rate) : rate.toFixed(1);
+      msgEl.innerHTML = 'Each profile costs <strong>' + rateStr + ' tokens</strong> due to exceeding the agreed limit.';
+    }
+  }catch(_){}
+  _showNotifModal(
+    'notifTargetLimitOverlay',
+    STORAGE_KEY_NOTIF_TARGET_LIMIT_SUPPRESS,
+    'notifTargetLimitSuppressChk',
+    'notifTargetLimitOkBtn'
+  );
+}
+
+// ── JD too-long popout ────────────────────────────────────────────────────────
+function _showJdTooLongPopout(wordCount, maxWords) {
+  // Create a compact, non-alarming popout (matches notification modal style)
+  const existing = document.getElementById('jdTooLongOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'jdTooLongOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const wordInfo = wordCount ? ` (${wordCount} words detected)` : '';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:16px 20px;max-width:300px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,0.12);font-family:inherit;">
+      <p style="margin:0 0 12px;font-size:13px;color:#1e2a3a;line-height:1.5;">
+        The Job Description is too long${wordInfo}. Please reduce it to <strong>${maxWords} words</strong> or fewer and re-upload.
+      </p>
+      <button id="jdTooLongOkBtn" style="background:#3b5bdb;color:#fff;border:none;border-radius:8px;padding:6px 18px;font-size:12px;cursor:pointer;display:block;margin-left:auto;">OK</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('jdTooLongOkBtn').onclick = function(){ overlay.remove(); };
+  overlay.onclick = function(e){ if(e.target === overlay) overlay.remove(); };
+}
+
+// ── Wire up Target Limit input for notifications and projected token updates ──
+(function initTargetLimitListeners(){
+  try{
+    const inp = document.getElementById('userTargetInput');
+    if(!inp) return;
+    let _prevOver50 = parseInt(inp.value||'0',10) > 50;
+    inp.addEventListener('input', function(){
+      updateProjectedTokens();
+      const over50 = parseInt(inp.value||'0',10) > 50;
+      if(over50 && !_prevOver50){
+        showTargetLimitNotif();
+      }
+      _prevOver50 = over50;
+    });
+    inp.addEventListener('change', function(){
+      updateProjectedTokens();
+      const over50 = parseInt(inp.value||'0',10) > 50;
+      if(over50 && !_prevOver50){
+        showTargetLimitNotif();
+      }
+      _prevOver50 = over50;
+    });
+  }catch(_){}
+})();
+
+// ── Wire up Projected Token Usage tooltip ────────────────────────────────────
+(function initProjectedTokenTooltip(){
+  try{
+    const wrap = document.getElementById('projectedTokenWrap');
+    const tooltip = document.getElementById('projectedTokenTooltip');
+    if(!wrap || !tooltip) return;
+    wrap.addEventListener('mouseenter', function(){
+      tooltip.style.display = 'block';
+      const badgeRect = wrap.getBoundingClientRect();
+      const tipRect = tooltip.getBoundingClientRect();
+      tooltip.style.left = badgeRect.left + 'px';
+      tooltip.style.top = (badgeRect.top - tipRect.height - 8) + 'px';
+    });
+    wrap.addEventListener('mouseleave', function(){
+      tooltip.style.display = 'none';
+    });
+  }catch(_){}
+})();
 async function generateAndStart(){
   const btn=document.getElementById('generateBtn');
   
@@ -2773,6 +3054,31 @@ async function pollJob(jobId){
         }
         // Set progress bar to 100% when done
         if(progressFill) progressFill.style.width='100%';
+        // Deduct tokens based on actual final row count
+        try{
+          const finalRows = extractFinalRowCount(data.status_html||'');
+          if(finalRows != null && finalRows > 0){
+            const _acctToken = window.__ACCOUNT_TOKEN;
+            const _userid = window.__ACTIVE_USERID || sessionStorage.getItem('userid') || localStorage.getItem('userid') || '';
+            const _username = window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
+            const _rate = (typeof _getTokenRate === 'function' ? _getTokenRate() : 1) || 1;
+            if(_userid && _acctToken != null && !isNaN(Number(_acctToken))){
+              const _newBalance = Math.max(0, Math.floor(Number(_acctToken) - finalRows * _rate));
+              fetch('/user/token_update',{
+                method:'POST',
+                headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+                credentials:'same-origin',
+                body:JSON.stringify({ userid:_userid, username:_username, token:_newBalance, result_count:finalRows })
+              }).then(function(r){
+                if(r.ok){
+                  window.__ACCOUNT_TOKEN = _newBalance;
+                  const _el = document.getElementById('accountTokenDisplay');
+                  if(_el) _el.textContent = 'Account Tokens: ' + _newBalance;
+                }
+              }).catch(function(){});
+            }
+          }
+        }catch(_){}
         if(data.output_csv){
           let html=`<a href="/download/${encodeURIComponent(data.output_csv)}">Download Aggregated CSV</a>`;
           if(data.output_xlsx) html+=` · <a class="alt" href="/download/${encodeURIComponent(data.output_xlsx)}">Download XLSX</a>`;
@@ -2979,13 +3285,23 @@ function updateSectorEnabledState(){
             body: JSON.stringify(analyzePayload)
           });
           let analyzeData = null;
-          if (analyzeResp.ok) {
+          if (analyzeResp.status === 413) {
+            // JD is too long — show a popout and stop analysis
+            let errData = null;
+            try { errData = await analyzeResp.json(); } catch(_) {}
+            const maxWords = (errData && errData.max_words) ? errData.max_words.toLocaleString() : '700'; // keep in sync with JD_MAX_WORDS in webbridge.py
+            const wordCount = (errData && errData.word_count) ? errData.word_count.toLocaleString() : '';
+            _showJdTooLongPopout(wordCount, maxWords);
+            if (summaryEl) summaryEl.innerHTML = '';
+            if (tagsEl) tagsEl.innerHTML = '';
+            if (box) box.classList.add('hidden');
+          } else if (analyzeResp.ok) {
             analyzeData = await analyzeResp.json().catch(() => null);
           }
 
           // Render the analysis to the JD Analysis box
           if (analyzeData) {
-            if (summaryEl) summaryEl.innerHTML = analyzeData.summary || (analyzeData.observation || '');
+            if (summaryEl) summaryEl.innerHTML = analyzeData.summary || '';
             let tagHtml = '';
             // Display job titles (multiple if available)
             if (analyzeData.job_titles && analyzeData.job_titles.length > 0) {
@@ -3016,13 +3332,25 @@ function updateSectorEnabledState(){
               const k = canonicalKey(s);
               return vizKeywords.some(v => k.indexOf(v) !== -1);
             }
+            // Reject sentence fragments: > 5 words, or starting with connectors/articles/prepositions
+            // Keep in sync with _SKILL_INVALID_PREFIXES / _SKILL_MAX_WORDS in webbridge.py
+            const _skillFragmentRe = /^(and|or|the|a|an|but|with|of|to|in|for|by|at|we|be|is|are|our|its)\b|\d+[.)]/i;
+            function isValidSkillToken(s){
+              if(!s || typeof s !== 'string') return false;
+              const t = s.trim();
+              if(!t) return false;
+              if(t.split(/\s+/).length > 5) return false;
+              if(_skillFragmentRe.test(t)) return false;
+              return true;
+            }
 
-            if (Array.isArray(analyzeData.skills) && analyzeData.skills.length) {
+            if (Array.isArray(analyzeData.skills)) {
               userSkills.length = 0;
               userSkillIndex.clear();
               analyzeData.skills.forEach(function(sk){
                 const t = normalizeSpaces(sk);
                 if (!t) return;
+                if (!isValidSkillToken(t)) return; // skip sentence fragments
                 if (isVisualizationSkill(t)) return; // skip visualization skills
                 const k = canonicalKey(t);
                 if (!userSkillIndex.has(k)) {
@@ -3094,29 +3422,27 @@ function updateSectorEnabledState(){
                     const sel = document.getElementById('senioritySelect');
                     if (sel) {
                       const s = rawSen.toLowerCase();
-                      // Mapping logic: conservative mapping consistent with server heuristics
+                      // Mapping rules:
+                      // Junior / Mid / Senior → Associate
+                      // Manager → Manager
+                      // Director / Expert → Director
+                      // Above Director (VP, C-suite, Head, Principal, Staff) → None (leave empty)
                       let mapped = '';
-                      if (/\b(director|vice president|vice-president|vp|principal|head of|head |chief |cxo|executive director|group director|principal|staff|expert)\b/i.test(s)) {
+                      if (/\b(vice\s*president|vp|chief|cxo|c-suite|head\s+of|executive director|group director|principal|staff)\b/i.test(s)) {
+                        // Above-Director level → None
+                        mapped = '';
+                      } else if (/\b(director)\b/i.test(s) || s.indexOf('director') !== -1) {
                         mapped = 'Director';
-                      } else if (/\b(manager|mgr|team lead|lead|supervisor|senior|sr\.?|team-lead|teamlead)\b/i.test(s)) {
-                        // map 'senior' to Manager (server uses similar conservative mapping)
+                      } else if (/\b(expert)\b/i.test(s)) {
+                        mapped = 'Director';
+                      } else if (/\b(manager|mgr|team\s*lead|supervisor)\b/i.test(s)) {
                         mapped = 'Manager';
-                      } else if (/\b(associate|junior|intern|entry-level|trainee|graduate)\b/i.test(s)) {
+                      } else if (/\b(senior|sr\.?|mid|middle|junior|jr\.?|intern|entry|trainee|graduate|associate)\b/i.test(s)) {
+                        // Junior / Mid / Senior → Associate
                         mapped = 'Associate';
-                      } else {
-                        // handle common single-word responses like "Senior", "Mid-Senior"
-                        if (s.indexOf('senior') !== -1 || s.indexOf('mid-senior') !== -1 || s.indexOf('mid senior') !== -1) {
-                          mapped = 'Manager';
-                        } else if (s.indexOf('director') !== -1) {
-                          mapped = 'Director';
-                        } else if (s.indexOf('associate') !== -1 || s.indexOf('jr') !== -1) {
-                          mapped = 'Associate';
-                        }
                       }
-                      if (mapped) {
-                        sel.value = mapped;
-                        try { sel.dispatchEvent(new Event('change')); } catch(_) {}
-                      }
+                      sel.value = mapped;
+                      try { sel.dispatchEvent(new Event('change')); } catch(_) {}
                     }
                   }
                 }
@@ -3222,6 +3548,7 @@ function updateSectorEnabledState(){
                 data.skills.forEach(function(s){
                   const t = normalizeSpaces(s);
                   if (!t) return;
+                  if (typeof isValidSkillToken === 'function' && !isValidSkillToken(t)) return;
                   const k = canonicalKey(t);
                   if (!userSkillIndex.has(k)) {
                     const isViz = ['presentation','presentations','presentation skills','powerpoint','ppt','excel','data visualization','visualization','slide','slides','chart','charts']
@@ -3411,6 +3738,33 @@ function renderExternalSuggestions(jobs, comps){
   } catch(_){}
 })();
 </script>
+
+<!-- Notification modal: Best Mode -->
+<div id="notifBestModeOverlay" class="notif-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notifBestModeMsg">
+  <div class="notif-modal-box">
+    <div class="notif-msg" id="notifBestModeMsg">Each profile costs <strong>1.5 tokens</strong> due to extensive query combinations for comprehensive search.</div>
+    <label class="notif-suppress">
+      <input type="checkbox" id="notifBestModeSuppressChk"> Do not display this message in the future.
+    </label>
+    <div class="notif-actions">
+      <button class="primary" id="notifBestModeOkBtn" style="padding:6px 18px; font-size:12px;">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification modal: Target Limit > 50 -->
+<div id="notifTargetLimitOverlay" class="notif-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notifTargetLimitMsg">
+  <div class="notif-modal-box">
+    <div class="notif-msg" id="notifTargetLimitMsg">Each profile costs <strong>2 tokens</strong> due to exceeding the agreed limit.</div>
+    <label class="notif-suppress">
+      <input type="checkbox" id="notifTargetLimitSuppressChk"> Do not display this message in the future.
+    </label>
+    <div class="notif-actions">
+      <button class="primary" id="notifTargetLimitOkBtn" style="padding:6px 18px; font-size:12px;">OK</button>
+    </div>
+  </div>
+</div>
+
 </div><!-- /.page-main -->
 </div><!-- /.page-shell -->
 </body>

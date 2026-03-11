@@ -1116,6 +1116,36 @@ def _map_gemini_seniority_to_dropdown(seniority_text: str, total_experience_year
 
     return ""
 
+def _normalize_seniority_single(seniority_text: str) -> str:
+    """
+    Collapse compound seniority labels (e.g. 'Mid-Senior', 'Senior Manager') to a single
+    canonical token. Picks the *highest* seniority in the compound so the search query
+    is not under-targeted.
+    """
+    if not seniority_text:
+        return seniority_text
+    s = seniority_text.strip()
+    sl = s.lower()
+    # Already a clean single level from the canonical set
+    if sl in {"junior", "mid", "senior", "manager", "director", "associate", "intern",
+              "entry-level", "entry level", "lead", "principal", "vp", "staff", "expert",
+              "c-suite", "head"}:
+        return s
+    # Compound: pick highest level present
+    if any(tok in sl for tok in ["director", "vp", "vice president", "principal", "head", "chief", "staff", "expert"]):
+        return "Director"
+    if any(tok in sl for tok in ["manager", "lead", "supervisor"]):
+        return "Manager"
+    if "senior" in sl:
+        return "Senior"
+    if any(tok in sl for tok in ["mid", "middle"]):
+        return "Mid"
+    if any(tok in sl for tok in ["junior", "entry", "intern", "trainee", "graduate", "associate"]):
+        return "Junior"
+    # Return first word as best guess if still compound
+    parts = re.split(r'[-/\s]+', s)
+    return parts[0] if parts else s
+
 # Helper for deduplication (Needed for heuristics)
 def dedupe(seq):
     out=[]; seen=set()
@@ -1625,6 +1655,17 @@ def gemini_analyze_jd():
     if not text_input:
         return jsonify({"error":"No JD text provided or found for user"}), 400
 
+    # Word-count guard: reject JDs that are too long for reliable Gemini analysis
+    JD_MAX_WORDS = 700
+    jd_word_count = len(text_input.split())
+    if jd_word_count > JD_MAX_WORDS:
+        return jsonify({
+            "error": "jd_too_long",
+            "word_count": jd_word_count,
+            "max_words": JD_MAX_WORDS,
+            "message": f"The uploaded JD is too long ({jd_word_count:,} words). Please reduce it to {JD_MAX_WORDS:,} words or fewer and re-upload."
+        }), 413
+
     if not genai or not GEMINI_API_KEY:
         # Fallback: simple heuristics if gemini not configured
         try:
@@ -1723,6 +1764,7 @@ def gemini_analyze_jd():
             "{ parsed: { job_title, seniority, sector, country, skills }, missing: [...], summary: string, suggestions: [...], justification: string, observation: string, raw: string }\n"
             "IMPORTANT:\n"
             "- job_title: extract the EXACT role name from the JD (e.g., 'Cloud Engineer', 'Site Activation Manager'). NEVER use generic labels like 'Gaming Professional' or 'Technology Professional'.\n"
+            "- seniority: return EXACTLY ONE single-word or two-word level (e.g. 'Junior', 'Mid', 'Senior', 'Manager', 'Director'). Do NOT combine levels (e.g. do NOT return 'Mid-Senior' or 'Senior-Manager'). Choose the closest single level.\n"
             "- You MUST identify at least one sector. Use your best judgment if unclear.\n"
             "- Multiple sectors may be assigned if the role spans multiple domains.\n"
             "- Match sectors to the AVAILABLE SECTORS list provided below.\n"
@@ -1742,7 +1784,7 @@ def gemini_analyze_jd():
         # Normalize output
         # Use Step 1 job title as fallback when Step 2 model returns empty
         job_title = (parsed.get("job_title") or parsed.get("role") or step1_job_title or "").strip()
-        seniority = (parsed.get("seniority") or "").strip()
+        seniority = _normalize_seniority_single((parsed.get("seniority") or "").strip())
         sector = parsed.get("sector") or ""
         sectors = parsed.get("sectors") or ([sector] if sector else [])
         if not country:  # Use country from analysis if not provided in request
@@ -1750,6 +1792,9 @@ def gemini_analyze_jd():
         skills = parsed.get("skills") or parsed_obj.get("skills") or []
         if isinstance(skills, str) and skills.strip():
             skills = [s.strip() for s in skills.split(",") if s.strip()]
+
+        # Filter out skill strings that are clearly sentence fragments, not skill keywords
+        skills = [s.strip() for s in skills if _is_valid_skill_token(s)]
         suggestions = parsed_obj.get("suggestions") or []
         summary = parsed_obj.get("summary") or ""
         missing = parsed_obj.get("missing") if isinstance(parsed_obj.get("missing"), list) else []
@@ -2285,6 +2330,21 @@ def gemini_analyze_jd():
         # End enhanced workflow
         # -------------------------
 
+        # Build a fallback summary from extracted fields when Gemini didn't return one
+        if not summary:
+            parts = []
+            if job_title:
+                parts.append(job_title)
+            if seniority:
+                parts.append(seniority)
+            if sectors:
+                sector_names = sectors if isinstance(sectors, list) else ([sectors] if sectors else [])
+                parts.append(", ".join(str(s) for s in sector_names if s))
+            if country:
+                parts.append(country)
+            if parts:
+                summary = " · ".join(parts)
+
         out = {
             "job_title": job_title,  # Keep single job_title for backward compatibility
             "job_titles": job_titles,  # NEW: Array of at least 2 job titles
@@ -2427,6 +2487,30 @@ def chat_upload_jd():
             except Exception:
                 pass
 
+# ---------------------------------------------------------------------------
+# Module-level skill token validator
+# Rejects sentence fragments extracted by Gemini as skill strings.
+# Used by both _persist_jskillset and gemini_analyze_jd.
+# ---------------------------------------------------------------------------
+_SKILL_MAX_WORDS = 5
+_SKILL_INVALID_PREFIXES = re.compile(
+    r'^(and|or|the|a|an|but|with|of|to|in|for|by|at|we|be|is|are|our|its)\b|\d+[\.\)]',
+    re.I
+)
+
+def _is_valid_skill_token(s: str) -> bool:
+    """Return True only for short keyword-style skill strings, False for sentence fragments."""
+    if not isinstance(s, str):
+        return False
+    s = s.strip()
+    if not s:
+        return False
+    if len(s.split()) > _SKILL_MAX_WORDS:
+        return False
+    if _SKILL_INVALID_PREFIXES.match(s):
+        return False
+    return True
+
 # Helper: persist jskillset (and fallback columns) for a username
 def _persist_jskillset(username: str, skills):
     """
@@ -2459,6 +2543,9 @@ def _persist_jskillset(username: str, skills):
         if k not in seen:
             seen.add(k)
             deduped.append(s)
+
+    # Filter out sentence fragments — keep only keyword-style skill tokens
+    deduped = [s for s in deduped if _is_valid_skill_token(s)]
 
     # Ensure a JSON-serializable list
     final_skills = [str(s) for s in deduped]
@@ -4475,12 +4562,12 @@ def user_resolve():
         pg_db=os.getenv("PGDATABASE","candidate_db")
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
-        cur.execute("SELECT userid, fullname, role_tag, COALESCE(token,0), COALESCE(target_limit,10) FROM login WHERE username=%s", (username,))
+        cur.execute("SELECT userid, fullname, role_tag, COALESCE(token,0), COALESCE(target_limit,10), COALESCE(useraccess,'') FROM login WHERE username=%s", (username,))
         row = cur.fetchone()
         if not row:
             cur.close(); conn.close()
             return jsonify({"error":"not found"}), 404
-        userid, fullname, login_role_tag, token_val, target_limit_val = row
+        userid, fullname, login_role_tag, token_val, target_limit_val, useraccess_val = row
         # Prefer role_tag from sourcing table (authoritative source) over login table
         resolved_role_tag = login_role_tag or ""
         try:
@@ -4491,7 +4578,7 @@ def user_resolve():
         except Exception:
             pass
         cur.close(); conn.close()
-        return jsonify({"userid": userid or "", "fullname": fullname or "", "role_tag": resolved_role_tag, "token": int(token_val or 0), "target_limit": int(target_limit_val or 10)}), 200
+        return jsonify({"userid": userid or "", "fullname": fullname or "", "role_tag": resolved_role_tag, "token": int(token_val or 0), "target_limit": int(target_limit_val or 10), "useraccess": (useraccess_val or "").strip()}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -5319,6 +5406,75 @@ def _is_real_company(name: str) -> bool:
         return True
     return False
 
+# Country/region words that Gemini appends to company names (e.g. "Electronic Arts China")
+# Strip these trailing tokens so search results are based on the clean brand name.
+_COMPANY_COUNTRY_SUFFIX_RE = re.compile(
+    r'\s+(?:china|india|japan|korea|taiwan|singapore|malaysia|indonesia|thailand|vietnam|'
+    r'philippines|australia|germany|france|uk|us|usa|emea|apac|latam|anz|mea|'
+    r'asia(?:\s+pacific)?|pacific|americas|europe|international|global|limited|ltd\.?|'
+    r'pte\.?\s*ltd\.?|inc\.?|corp(?:oration)?\.?|llc\.?|co\.?\s*ltd\.?|holdings?)$',
+    re.IGNORECASE
+)
+
+# Parenthetical regional/status suffixes e.g. "(Japan)", "(Asia Pacific)", "(Merged)"
+_COMPANY_PAREN_SUFFIX_RE = re.compile(r'\s*\([^)]+\)\s*$')
+
+# Trailing "&" company-form patterns e.g. "& Co., Inc.", "& Co.", "& Sons"
+_COMPANY_AMPERSAND_SUFFIX_RE = re.compile(
+    r'\s*&\s*(?:co\.?\s*(?:,\s*)?(?:inc\.?|ltd\.?|llc\.?|plc\.?)?|sons?|partners?|associates?)\s*$',
+    re.IGNORECASE
+)
+
+# Industry/entity-type descriptor words that Gemini appends to brand names
+# e.g. "Takeda Pharmaceutical Company" → "Takeda", "Roche Diagnostics" → "Roche"
+# Deliberately narrow: only strip words that are clearly generic descriptors, not brand differentiators.
+_COMPANY_INDUSTRY_SUFFIX_RE = re.compile(
+    r'\s+(?:pharmaceutical(?:s|(?:\s+company)?)?|diagnostics|biotech(?:nology)?|'
+    r'life\s+sciences?|healthcare|health\s*care)$',
+    re.IGNORECASE
+)
+
+def _strip_company_country_suffix(name: str) -> str:
+    """
+    Remove trailing suffixes from a company name to return the core brand name.
+    Steps applied in order:
+      1. Parenthetical regional/status suffixes: "(Japan)", "(Asia Pacific)"
+      2. Ampersand company-form patterns: "& Co., Inc.", "& Sons"
+      3. Industry/entity-type descriptors: "Pharmaceutical Company", "Diagnostics", "HealthCare"
+         (applied up to 2 passes to handle chains like "Pharmaceutical Company")
+      4. Country/region/legal-entity suffixes: "China", "Japan", "Ltd", "Inc", "Holdings"
+         (applied up to 2 passes)
+    Falls back to the original name if stripping reduces it to < 3 chars.
+    """
+    if not name:
+        return name
+    original = name.strip()
+    s = original
+
+    # Step 1: parenthetical suffixes
+    s = _COMPANY_PAREN_SUFFIX_RE.sub('', s).strip()
+
+    # Step 2: ampersand company-form patterns
+    s = _COMPANY_AMPERSAND_SUFFIX_RE.sub('', s).strip()
+
+    # Steps 3+4: interleave industry-type and country/legal suffix stripping.
+    # Up to _MAX_SUFFIX_STRIP_PASSES passes so chained descriptors like
+    # "Pharmaceuticals Corporation" are fully unwound in a single call.
+    _MAX_PASSES = 3
+    for _ in range(_MAX_PASSES):
+        prev = s
+        s2 = _COMPANY_INDUSTRY_SUFFIX_RE.sub('', s).strip()
+        if s2 != s:
+            s = s2
+        s2 = _COMPANY_COUNTRY_SUFFIX_RE.sub('', s).strip()
+        if s2 != s:
+            s = s2
+        if s == prev:
+            break
+
+    # Keep original if stripping makes it too short (< 3 chars)
+    return s if len(s) >= 3 else original
+
 def _supplement_companies(existing, country: str, limit: int, sectors=None):
     """
     Add companies from BUCKET_COMPANIES until we reach the desired limit,
@@ -5358,7 +5514,7 @@ def _enforce_company_limit(raw_list, country: str, limit: int, sectors=None):
     allow_pharma = _sectors_allow_pharma(sectors)
     for c in raw_list or []:
         if not isinstance(c,str): continue
-        t=c.strip()
+        t=_strip_company_country_suffix(c.strip())
         if not t: continue
         k=t.lower()
         if k in seen: continue
