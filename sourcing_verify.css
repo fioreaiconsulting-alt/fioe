@@ -458,7 +458,8 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   margin-bottom: 14px;
-  overflow: hidden;
+  /* overflow must be visible so the hover tooltip is not clipped */
+  overflow: visible;
   transition: all 0.3s ease;
 }
 .weight-config-header {
@@ -471,6 +472,10 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
   font-size: 13px;
   color: #334155;
   background: #f1f5f9;
+  /* Allow the tooltip to overflow outside this element */
+  overflow: visible;
+  position: relative;
+  border-radius: 10px 10px 0 0;
 }
 .weight-config-header:hover {
   background: #e2e8f0;

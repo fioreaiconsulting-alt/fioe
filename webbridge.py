@@ -799,8 +799,10 @@ _CSP = (
     "font-src 'self' https://fonts.gstatic.com; "
     # img-src includes https: for Leaflet map tiles (loaded from tile CDNs).
     "img-src 'self' data: blob: https:; "
-    # connect-src: all API calls go through the same origin (WB_BASE_URL).
-    "connect-src 'self'; "
+    # connect-src: API calls go through the same origin; CDN source-map fetches
+    # (leaflet.js.map, chart.umd.js.map) require the same CDN origins that are
+    # already trusted in script-src.
+    "connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net; "
     "worker-src 'self' blob:; "
     # frame-ancestors 'self' is consistent with X-Frame-Options: SAMEORIGIN.
     "frame-ancestors 'self';"
@@ -4612,6 +4614,48 @@ def user_token_update():
     data = request.get_json(force=True, silent=True) or {}
     userid = (data.get("userid") or "").strip()
     token_val = data.get("token")
+    delta_val = data.get("delta")
+
+    # Delta mode: increment/decrement by a relative amount (used by rebate flow to restore +1 token).
+    if delta_val is not None and token_val is None:
+        try:
+            delta_int = int(delta_val)
+        except (TypeError, ValueError):
+            return jsonify({"error": "delta must be a number"}), 400
+        if not userid:
+            return jsonify({"error": "userid is required"}), 400
+        try:
+            import psycopg2
+            pg_host = os.getenv("PGHOST", "localhost")
+            pg_port = int(os.getenv("PGPORT", "5432"))
+            pg_user = os.getenv("PGUSER", "postgres")
+            pg_password = os.getenv("PGPASSWORD", "")
+            pg_db = os.getenv("PGDATABASE", "candidate_db")
+            conn = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user,
+                                    password=pg_password, dbname=pg_db)
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE login SET token = COALESCE(token, 0) + %s WHERE userid = %s RETURNING token, username",
+                (delta_int, userid)
+            )
+            row = cur.fetchone()
+            conn.commit()
+            cur.close(); conn.close()
+            if not row:
+                return jsonify({"error": "user not found"}), 404
+            new_token, _uname = int(row[0]), (row[1] or "")
+            if _LOGGER_AVAILABLE:
+                log_financial(
+                    username=_uname, userid=userid, feature="token_update",
+                    transaction_type="credit" if delta_int > 0 else "spend",
+                    token_before=new_token - delta_int, token_after=new_token,
+                    transaction_amount=abs(delta_int),
+                )
+            return jsonify({"ok": True, "token": new_token}), 200
+        except Exception as e:
+            logger.error(f"[TokenUpdate/delta] {e}")
+            return jsonify({"error": str(e)}), 500
+
     if not userid or token_val is None:
         return jsonify({"error": "userid and token are required"}), 400
     try:
@@ -4804,6 +4848,25 @@ def user_token_update():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== Fetch Skills Endpoint ====================
+
+@app.route("/user/fetch_skills", methods=["GET"])
+def user_fetch_skills():
+    """
+    GET /user/fetch_skills?username=<username>
+    Returns the user's skill list from the login table (jskillset or skills column).
+    Response: { "skills": ["Python", "C++", ...] }
+    """
+    username = (request.args.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username required"}), 400
+    try:
+        skills = _fetch_jskillset(username)
+        return jsonify({"skills": skills}), 200
+    except Exception as e:
+        logger.error(f"[fetch_skills] Error for user='{username}': {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ==================== Role Tag Update Endpoint ====================
 
 @app.route("/user/update_role_tag", methods=["POST", "GET"])
@@ -4869,7 +4932,7 @@ def user_update_role_tag():
         login_session_ts = login_row[1] if login_row else None
         # Step 3: Update sourcing role_tag for all records of this user
         cur.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
-        cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag, username))
+        cur.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (role_tag, username))
         # Step 4: Validate that role_tag matches in both login and sourcing, then transfer
         # the session timestamp from login to sourcing for consistency and traceability.
         if login_role_tag == role_tag and login_session_ts is not None:
@@ -4882,8 +4945,16 @@ def user_update_role_tag():
             f"[UpdateRoleTag] Set role_tag='{role_tag}' session_ts='{login_session_ts}' "
             f"for user='{username}' in login and sourcing tables"
         )
+        # login_session_ts may be a datetime object or a plain string depending on
+        # the column type and psycopg2 type-casting; handle both safely.
+        if login_session_ts is not None:
+            session_val = (login_session_ts.isoformat()
+                           if hasattr(login_session_ts, 'isoformat')
+                           else str(login_session_ts))
+        else:
+            session_val = None
         return jsonify({"ok": True, "username": username, "role_tag": role_tag,
-                        "session": login_session_ts.isoformat() if login_session_ts else None}), 200
+                        "session": session_val}), 200
     except Exception as e:
         logger.exception(f"[UpdateRoleTag] Failed for user='{username}': {e}")
         if conn:

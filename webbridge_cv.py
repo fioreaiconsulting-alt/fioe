@@ -514,7 +514,7 @@ def start_job():
                 _login_session_ts = _login_row[1] if _login_row else None
                 # Transfer role_tag to sourcing table (authoritative source for assessments)
                 cur_l.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
-                cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag_val, username))
+                cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (role_tag_val, username))
                 # Transfer session timestamp to sourcing after validating role_tag matches
                 if _login_role_tag == role_tag_val and _login_session_ts is not None:
                     cur_l.execute(
@@ -867,7 +867,8 @@ def sourcing_list():
                    s.linkedinurl,
                    {pic_col}
                    p.rating,
-                   {relevance_expr}
+                   {relevance_expr},
+                   COALESCE(s.role_tag, '') AS role_tag
             FROM sourcing s
             LEFT JOIN process p ON s.linkedinurl = p.linkedinurl
             WHERE {where_sql}
@@ -885,12 +886,17 @@ def sourcing_list():
         # ------------------------------------------------------------------
         import base64
         rows = []
-        # Column index for relevance_score is after rating
+        # Column index for relevance_score is after rating; role_tag follows it
         relevance_col_idx = (rating_idx + 1)
+        role_tag_col_idx = relevance_col_idx + 1
+
+        def _strip_nim(name: str) -> str:
+            """Strip the Korean honorific suffix '님' (U+B2D8) and surrounding whitespace from a name."""
+            return (name or "").strip().rstrip('\uB2D8').strip()
 
         for r in cur.fetchall():
             row_dict = {
-                "name": r[0] or "",
+                "name": _strip_nim(r[0]),
                 "company": r[1] or "",
                 "jobtitle": r[2] or "",
                 "country": r[3] or "",
@@ -901,6 +907,7 @@ def sourcing_list():
                 "rating_stars": "",
                 "rating_level": "",
                 "relevance_score": float(r[relevance_col_idx]) if r[relevance_col_idx] is not None else 0.0,
+                "role_tag": r[role_tag_col_idx] or "",
             }
             if has_pic and pic_idx is not None:
                 pic_data = r[pic_idx]
@@ -1104,6 +1111,114 @@ def sourcing_delete():
     except Exception as e:
         logger.warning(f"[Sourcing Delete] {e}")
         return jsonify({"error":str(e)}), 500
+
+@app.post("/sourcing/mark_ineligible")
+@_csrf_required
+def sourcing_mark_ineligible():
+    """Mark unassessed sourcing candidates as ineligible for assessment.
+
+    Called when the user proceeds to AutoSourcing.html with unassessed
+    candidates still in Talent Evaluation.  Any subsequent call to
+    /process/bulk_assess for one of these URLs will be skipped server-side.
+
+    The backend validates which candidates are truly unassessed by comparing
+    names between the sourcing table and the process table: if a candidate's
+    name exists in sourcing but NOT in process, they have no CV and no
+    assessment.  The explicitly supplied linkedinurls list is also marked
+    ineligible so both client-side and server-side lists are unified.
+
+    Request JSON:
+        {"userid": "...", "linkedinurls": ["https://..."]}   # urls optional
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    userid = (data.get("userid") or "").strip()
+    linkedinurls = data.get("linkedinurls") or []
+    if isinstance(linkedinurls, str):
+        linkedinurls = [linkedinurls]
+    client_urls = [(u or "").strip() for u in linkedinurls if (u or "").strip()]
+
+    try:
+        import psycopg2
+        from psycopg2 import sql as pgsql
+        pg_host = os.getenv("PGHOST", "localhost")
+        pg_port = int(os.getenv("PGPORT", "5432"))
+        pg_user = os.getenv("PGUSER", "postgres")
+        pg_password = os.getenv("PGPASSWORD", "")
+        pg_db = os.getenv("PGDATABASE", "candidate_db")
+        conn = psycopg2.connect(host=pg_host, port=pg_port, user=pg_user,
+                                password=pg_password, dbname=pg_db)
+        cur = conn.cursor()
+
+        # Ensure the ineligible column exists (ALTER TABLE is idempotent here)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sourcing'
+                      AND column_name='assessment_ineligible'
+                ) THEN
+                    ALTER TABLE sourcing ADD COLUMN assessment_ineligible BOOLEAN DEFAULT FALSE;
+                END IF;
+            END$$;
+        """)
+        conn.commit()
+
+        db_validated_count = 0
+
+        # Backend validation: compare sourcing.name vs process.name (case-insensitive).
+        # A candidate whose name exists in the sourcing table but NOT in the process
+        # table has never had a CV uploaded and is therefore unassessed.
+        if userid:
+            try:
+                cur.execute("""
+                    UPDATE sourcing s
+                    SET    assessment_ineligible = TRUE
+                    WHERE  s.userid = %s
+                      AND  COALESCE(s.assessment_ineligible, FALSE) = FALSE
+                      AND  NOT EXISTS (
+                               SELECT 1 FROM process p
+                               WHERE  LOWER(TRIM(p.name)) = LOWER(TRIM(s.name))
+                           )
+                """, (userid,))
+                db_validated_count = cur.rowcount
+                conn.commit()
+                logger.info(
+                    f"[mark_ineligible] DB name-comparison marked {db_validated_count} rows "
+                    f"ineligible for userid={userid!r}"
+                )
+            except Exception as _db_err:
+                logger.warning(
+                    f"[mark_ineligible] DB name-comparison failed (non-fatal; "
+                    f"explicit URL list will still be marked): {_db_err}"
+                )
+                conn.rollback()
+
+        # Also mark the explicitly supplied URLs from the client
+        url_marked = 0
+        if client_urls:
+            if userid:
+                cur.execute(
+                    "UPDATE sourcing SET assessment_ineligible = TRUE "
+                    "WHERE linkedinurl = ANY(%s) AND userid = %s",
+                    (client_urls, userid)
+                )
+            else:
+                cur.execute(
+                    "UPDATE sourcing SET assessment_ineligible = TRUE WHERE linkedinurl = ANY(%s)",
+                    (client_urls,)
+                )
+            url_marked = cur.rowcount
+            conn.commit()
+
+        total_marked = db_validated_count + url_marked
+        cur.close()
+        conn.close()
+        logger.info(f"[mark_ineligible] Total {total_marked} rows ineligible for userid={userid!r}")
+        return jsonify({"marked": total_marked, "db_validated": db_validated_count, "url_marked": url_marked})
+    except Exception as e:
+        logger.warning(f"[mark_ineligible] {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.post("/process/delete")
 @_csrf_required
@@ -4539,7 +4654,41 @@ def process_bulk_assess():
                 normalized = _normalize_linkedin_to_path(linkedinurl)
             except Exception:
                 normalized = None
-            
+
+            # --- Backend ineligibility check ---
+            # If the candidate was marked ineligible in the sourcing table (because the user
+            # proceeded to AutoSourcing with this profile unassessed), block the assessment
+            # server-side regardless of what the front end sends.
+            try:
+                cur.execute("""
+                    SELECT assessment_ineligible FROM sourcing
+                    WHERE linkedinurl = %s LIMIT 1
+                """, (linkedinurl,))
+                _inelig_row = cur.fetchone()
+                if _inelig_row and _inelig_row[0]:
+                    logger.info(f"[BULK_ASSESS] Blocked ineligible candidate (url truncated: {linkedinurl[:40]}…)")
+                    try:
+                        cur.close()
+                    finally:
+                        conn.close()
+                    return {
+                        "linkedinurl": linkedinurl,
+                        "result": {
+                            "_skipped": True,
+                            "error": "Assessment blocked: candidate marked ineligible (AutoSourcing accessed with pending assessments)."
+                        }
+                    }
+            except Exception as _inelig_err:
+                # If the column does not exist yet, skip silently – the front end still enforces it.
+                # CRITICAL: rollback so the psycopg2 connection is not left in an aborted-transaction
+                # state (which would cause every subsequent query on this cursor to fail with
+                # "InFailedSqlTransaction").
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.debug(f"[BULK_ASSESS] Ineligibility check skipped: {_inelig_err}")
+
             # Fetch by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
             cur.execute("""
                 SELECT jobtitle, company, country, seniority, sector, experience, skillset, username, role_tag, cv, tenure, product
@@ -4665,10 +4814,44 @@ def process_bulk_assess():
                     if proc_row and proc_row[0]:
                         role_tag = proc_row[0]
             
+            # --- Role-tag gate: compare login.role_tag (recruiter) vs sourcing.role_tag (candidate) ---
+            # The authoritative comparison is always DB-to-DB: read the recruiter's role_tag directly
+            # from the login table and compare against the sourcing record's role_tag.
+            # If both are populated and they don't match, skip this candidate.
+            recruiter_username_for_rt = username or username_db
+            if recruiter_username_for_rt:
+                try:
+                    cur.execute(
+                        "SELECT role_tag FROM login WHERE username = %s LIMIT 1",
+                        (recruiter_username_for_rt,)
+                    )
+                    _login_rt_row = cur.fetchone()
+                    _login_role_tag = (_login_rt_row[0] or "").strip().lower() if _login_rt_row else ""
+                    _sourcing_role_tag = role_tag.strip().lower() if role_tag else ""
+                    if _login_role_tag and _sourcing_role_tag and _login_role_tag != _sourcing_role_tag:
+                        logger.info(
+                            f"[BULK_ASSESS] Skipped {linkedinurl[:50]}: login role_tag "
+                            f"{_login_role_tag!r} != sourcing role_tag {_sourcing_role_tag!r}"
+                        )
+                        try:
+                            cur.close()
+                        finally:
+                            conn.close()
+                        return {
+                            "linkedinurl": linkedinurl,
+                            "result": {
+                                "_skipped": True,
+                                "error": (
+                                    f"Assessment skipped: role tag mismatch "
+                                    f"(recruiter={_login_role_tag!r}, candidate={_sourcing_role_tag!r})"
+                                )
+                            }
+                        }
+                except Exception as _rt_err:
+                    logger.debug(f"[BULK_ASSESS] Role-tag comparison skipped: {_rt_err}")
+
             cur.close()
             conn.close()
-            
-            # Fetch target skills (jskillset/jskill)
             # Sync from login to process first so the latest job skillset is available.
             # IMPORTANT: use the recruiter's `username` from the request payload (outer scope),
             # NOT username_db (which is the candidate's username from the process row).

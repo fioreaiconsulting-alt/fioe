@@ -99,6 +99,46 @@ html, body {
   width: auto;
 }
 
+/* Search & Assessment Configuration bar — show tooltip on hover of the header */
+#searchConfigHeader {
+  position: relative;
+}
+#searchConfigHeader:hover #searchConfigTooltip {
+  display: block !important;
+}
+
+/* Tooltip panel — appears below the bar, fully in front */
+#searchConfigTooltip {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 10000;
+  width: 400px;
+  background: #1e2a3a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 12px 16px;
+  border-radius: 8px;
+  pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+
+/* Locked weights indicator */
+.weights-locked-banner {
+  font-size: 11px;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Bubble tags for role tags display */
 .role-bubble {
   display: inline-block;
@@ -215,8 +255,19 @@ html, body {
 
   <!-- Combined Search & Assessment Configuration panel (hidden by default) -->
   <div class="weight-config-panel" id="searchConfigPanel">
+    <!-- Tooltip is triggered by hovering over the whole header bar -->
     <div class="weight-config-header" id="searchConfigHeader" onclick="toggleSearchConfig()" style="cursor:pointer;">
       <span>🔍 Search &amp; Assessment Configuration</span>
+      <!-- Tooltip panel — shown via CSS when the header is hovered -->
+      <div id="searchConfigTooltip" role="tooltip">
+        <strong style="color:#93c5fd; display:block; margin-bottom:6px;">Search &amp; Assessment Configuration</strong>
+        <strong style="color:#fbbf24;">Candidate Search:</strong><br>
+        Search your sourcing pool by name, job title, company or skills.
+        Results are filtered to the active search role (<em>Profiles found for your search</em>).<br><br>
+        <strong style="color:#fbbf24;">Assessment Weightage:</strong><br>
+        Adjust the scoring weights for each assessment dimension. Weights must sum to 100%.
+        <strong style="color:#f87171;">These weights can only be set once per unique role</strong> — once saved they are locked for that role to ensure consistent scoring across all candidates.
+      </div>
       <span id="searchConfigArrow">▼</span>
     </div>
     <div class="weight-config-content" id="searchConfigContent">
@@ -795,6 +846,85 @@ function resetWeightsToDefault() {
 
 document.addEventListener('DOMContentLoaded', loadWeights);
 
+// ── Weight Lock: one adjustment allowed per unique role_tag ──────────────────
+// Once the user saves valid weights (sum === 100) for a role_tag, the sliders
+// are locked for that role_tag so all candidates are assessed consistently.
+const SV_WEIGHTS_LOCKED_KEY = 'sv_weights_locked_roles'; // JSON: { [role_tag]: true }
+
+/** Normalize a role tag for case-insensitive, trimmed comparison/storage. */
+function normalizeRoleTag(roleTag) {
+  return (roleTag || '').trim().toLowerCase();
+}
+
+/**
+ * Returns true if the recruiter's session role_tag and the candidate row's sourcing
+ * role_tag are both set AND they differ — indicating a mismatch that blocks upload/assessment.
+ */
+function isRoleTagMismatch(tr) {
+  const sessionRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
+  const rowRoleTag = normalizeRoleTag((tr && tr.dataset && tr.dataset.roleTag) || '');
+  return !!(sessionRoleTag && rowRoleTag && sessionRoleTag !== rowRoleTag);
+}
+
+function getLockedWeightRoles() {
+  try { return JSON.parse(localStorage.getItem(SV_WEIGHTS_LOCKED_KEY) || '{}'); } catch(_) { return {}; }
+}
+
+function isWeightLockedForRole(roleTag) {
+  if (!roleTag) return false;
+  return !!getLockedWeightRoles()[normalizeRoleTag(roleTag)];
+}
+
+function lockWeightForRole(roleTag) {
+  if (!roleTag) return;
+  const map = getLockedWeightRoles();
+  map[normalizeRoleTag(roleTag)] = true;
+  try { localStorage.setItem(SV_WEIGHTS_LOCKED_KEY, JSON.stringify(map)); } catch(_) {}
+}
+
+function _applyWeightLockState() {
+  const roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+  const locked = isWeightLockedForRole(roleTag);
+  const sliders = document.querySelectorAll('.weight-sliders input[type=range]');
+  const resetBtn = document.querySelector('.btn-reset-weights');
+  let banner = document.getElementById('weightsLockedBanner');
+
+  if (locked) {
+    sliders.forEach(inp => { inp.disabled = true; });
+    if (resetBtn) resetBtn.disabled = true;
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'weightsLockedBanner';
+      banner.className = 'weights-locked-banner';
+      banner.innerHTML = '🔒 Assessment Weightage is locked for role <strong id="weightsLockedRoleLabel"></strong>. Weights can only be set once per role to ensure consistent scoring.';
+      const weightTotal = document.querySelector('.weight-total');
+      if (weightTotal) weightTotal.insertAdjacentElement('afterend', banner);
+    }
+    const roleLabel = document.getElementById('weightsLockedRoleLabel');
+    if (roleLabel) roleLabel.textContent = '"' + roleTag + '"';
+    banner.style.display = 'flex';
+  } else {
+    sliders.forEach(inp => { inp.disabled = false; });
+    if (resetBtn) resetBtn.disabled = false;
+    if (banner) banner.style.display = 'none';
+  }
+}
+
+// Hook into validateTotalWeight: lock the role_tag the first time weights are saved at 100%
+(function _initWeightLock() {
+  document.addEventListener('DOMContentLoaded', function() {
+    _applyWeightLockState();
+
+    // Whenever role_tag changes, re-apply lock state after storage has been updated.
+    const _origPersistRoleTag = window.persistRoleTag;
+    window.persistRoleTag = function(val) {
+      if (typeof _origPersistRoleTag === 'function') _origPersistRoleTag(val);
+      // Small delay to allow sessionStorage/localStorage writes to settle before re-checking lock
+      setTimeout(_applyWeightLockState, 100);
+    };
+  });
+})();
+
 // Weight snapshot + enforcement (restore previous weights if total != 100)
 (function() {
   // previous weights snapshot (in-memory and persisted briefly)
@@ -858,6 +988,7 @@ document.addEventListener('DOMContentLoaded', loadWeights);
   });
 
   // Wrap/extend validateTotalWeight so it only writes to localStorage when sum === 100
+  // and locks weights for the active role_tag on first valid save.
   const _origValidateTotalWeight = window.validateTotalWeight;
   window.validateTotalWeight = function() {
     // If original exists, use it to update labels; otherwise run current implementation
@@ -878,6 +1009,12 @@ document.addEventListener('DOMContentLoaded', loadWeights);
       if (sum === 100) {
         if (display) { display.classList.remove('invalid'); display.style.color = '#10b981'; }
         try { localStorage.setItem('sv_assessment_weights', JSON.stringify(config)); } catch(_) {}
+        // Lock weights for the active role_tag on first valid save.
+        const activeRole = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+        if (activeRole && !isWeightLockedForRole(activeRole)) {
+          lockWeightForRole(activeRole);
+          _applyWeightLockState();
+        }
       } else {
         if (display) { display.classList.add('invalid'); display.style.color = '#ef4444'; }
         // do not save invalid totals
@@ -1783,16 +1920,10 @@ async function finalizeBulk(action, specificList = null) {
                 if (ok) successCount++;
                 
             } else if (action === 'rebate') {
-                // Rebate flow: Token +1, Delete Row, Token -1 (net 0 cost if purely deleting, or rebate logic)
-                // Assuming rebate logic:
-                // 1. Credit token (rebate)
+                // Rebate flow: credit 1 token per valid rebated result, then delete.
                 await applyTokenDelta(1);
                 rebateTokens += 1;
-                // 2. Delete
                 await deleteBackendRow(url);
-                // 3. Debit token (cleanup cost?) - logic in main script implies this dance.
-                // Actually the prompt logic was: apply +1, update display, delete, apply -1.
-                try { await applyTokenDelta(-1); } catch(e){}
                 successCount++;
             }
         } catch(e) {
@@ -1845,11 +1976,33 @@ async function runBulkAssessmentFromSearch() {
     const allRows = document.querySelectorAll('#sourcingTable tbody tr');
     const linkedinurls = [];
     const alreadyAssessedUrls = [];
-    
+    const skippedRoleTagUrls = [];
+
+    // Ineligible set: candidates blocked because the user proceeded to AutoSourcing
+    // without completing their assessment for them.
+    let _bulkIneligible;
+    try { _bulkIneligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]')); }
+    catch(_) { _bulkIneligible = new Set(); }
+
+    // Current session role_tag for validation
+    const currentRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
+
     allRows.forEach(tr => {
         if (tr.dataset.linkedinurl) {
             const linkedinurl = tr.dataset.linkedinurl;
-            
+
+            // Block ineligible candidates.
+            if (_bulkIneligible.has(linkedinurl)) return;
+
+            // Validate that the sourcing record's role_tag exactly matches the current session
+            // role_tag. When a session role_tag is active, profiles that lack a role_tag or
+            // have a different one must be skipped — they belong to a different search session.
+            const rowRoleTag = normalizeRoleTag(tr.dataset.roleTag);
+            if (currentRoleTag && rowRoleTag !== currentRoleTag) {
+                skippedRoleTagUrls.push(linkedinurl);
+                return;
+            }
+
             // Check if profile already has an assessment score
             const hasAssessment = tr.classList.contains('assessment-complete') || 
                                   (tr.dataset.rating && tr.dataset.rating !== 'null' && tr.dataset.rating !== '{}');
@@ -1868,11 +2021,17 @@ async function runBulkAssessmentFromSearch() {
             }
         }
     });
+
+    if (skippedRoleTagUrls.length > 0) {
+        console.log(`[Bulk Assessment] Skipped ${skippedRoleTagUrls.length} record(s) whose role_tag does not match current session role_tag "${currentRoleTag}".`);
+    }
     
     // Check if there are any profiles to assess
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
             alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
+        } else if (skippedRoleTagUrls.length > 0) {
+            alert(`No profiles match the current search role. ${skippedRoleTagUrls.length} record(s) were skipped because their role_tag does not match the current session.`);
         } else {
             alert('No profiles found to assess');
         }
@@ -2134,11 +2293,10 @@ async function finalizeBulkFromSearch(action) {
                 if (ok) successCount++;
                 
             } else if (action === 'rebate') {
-                // Rebate flow
+                // Rebate flow: credit 1 token per valid rebated result, then delete.
                 await applyTokenDelta(1);
                 rebateTokens += 1;
                 await deleteBackendRow(url);
-                try { await applyTokenDelta(-1); } catch(e){}
                 successCount++;
             }
         } catch(e) {
@@ -2202,11 +2360,10 @@ async function finalizeIndividualAssessment(linkedinurl, action) {
             }
             
         } else if (action === 'rebate') {
-            // Rebate flow
+            // Rebate flow: credit 1 token per valid rebated result, then delete.
             await applyTokenDelta(1);
             rebateTokens += 1;
             await deleteBackendRow(linkedinurl);
-            try { await applyTokenDelta(-1); } catch(e){}
             
             if(statusEl) setStatus('Profile rebated and deleted', 'success');
             updateRebateTokenDisplay();
@@ -2456,7 +2613,7 @@ const API_SCAN_AND_UPLOAD = '/process/scan_and_upload_cvs';
 const API_UPLOAD_MULTIPLE = '/process/upload_multiple_cvs'; // New bulk endpoint
 const MSG_CV_NAME_MISMATCH = 'The profile name in the uploaded PDF is invalid. Please ensure the name matches an entry in the search result.';
 
-const PROCESS_GEO_API = 'http://127.0.0.1:8091/process/geography'; 
+const PROCESS_GEO_API = '/process/geography';
 
 // No-op stubs for removed snipper functions (keeps existing code safe)
 const tableBody   = document.getElementById('tableBody');
@@ -2531,8 +2688,8 @@ let __metricsInitialized = false;
 let __prevResults = null;
 async function persistFinalToken(_left){}
 function schedulePersist(_left){}
-// Updated syncMetricTokens: don't persist to TOKEN_UPDATE_API when backend token is unknown.
-// Wait until account_token is available to call the backend, preventing double-deductions.
+// Updated syncMetricTokens: total results no longer deduct tokens.
+// The display simply shows the current account balance without any deduction.
 function syncMetricTokens(backendToken){
   const totalTokenEl = document.getElementById('totalToken');
   const tokensLeftEl = document.getElementById('tokensLeft');
@@ -2541,50 +2698,21 @@ function syncMetricTokens(backendToken){
   const effectiveTotal = typeof totalRowCount === 'number' && totalRowCount > 0 ? totalRowCount : rowsData.length;
   totalResultsEl.textContent = String(effectiveTotal);
 
-  // If backendToken is not available or not numeric, just update UI and defer persistence.
-  // This avoids sending a "deduction" based on the local fallback TOTAL_SEARCH_TOKEN_BASE.
+  // If backendToken is not available or not numeric, show fallback base but do NOT deduct.
   const acctTokenRaw = backendToken;
   const acctTokenNum = (acctTokenRaw == null || acctTokenRaw === '') ? NaN : Number(acctTokenRaw);
 
   if (Number.isNaN(acctTokenNum)) {
-    // Update UI from fallback base but DO NOT persist to server
     totalTokenEl.textContent = String(TOTAL_SEARCH_TOKEN_BASE);
-    const leftComputed = Math.max(0, TOTAL_SEARCH_TOKEN_BASE - effectiveTotal);
-    tokensLeftEl.textContent = String(leftComputed);
+    tokensLeftEl.textContent = String(TOTAL_SEARCH_TOKEN_BASE);
     // Do not call backend update when we don't have authoritative backend token.
-    return leftComputed;
+    return TOTAL_SEARCH_TOKEN_BASE;
   }
 
-  // We have authoritative backend token -> compute left and possibly persist.
-  // Token deduction rule: if the user's target limit exceeded 50, the search is heavier and costs
-  // 2 tokens per result row; otherwise the standard rate is 1 token per result row.
-  // The target limit is saved to sessionStorage by AutoSourcing.html as 'last_job_target_limit'.
-  const _savedTarget = parseInt(sessionStorage.getItem('last_job_target_limit') || '0', 10);
-  const _deductionRate = (_savedTarget > 50) ? 2 : 1;
+  // Total results no longer deduct tokens — simply reflect the current balance.
   totalTokenEl.textContent = String(acctTokenNum);
-  const leftComputed = Math.max(0, acctTokenNum - (effectiveTotal * _deductionRate));
-  tokensLeftEl.textContent = String(leftComputed);
-
-  // Session guard key prevents repeated persists for same result_count within this browser session/tab.
-  const _lastCountKey = 'sv_token_last_result_count';
-  const _storedCount = sessionStorage.getItem(_lastCountKey);
-  if (_storedCount === null || parseInt(_storedCount, 10) !== effectiveTotal) {
-    // Persist the new result_count and leftComputed to the backend.
-    // Include role_tag (may be empty string) to support compound idempotency guard.
-    try {
-      sessionStorage.setItem(_lastCountKey, String(effectiveTotal));
-    } catch (e) {
-      console.warn('[Token update] sessionStorage write failed:', e);
-    }
-    const _roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-    fetch(TOKEN_UPDATE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ userid: window.__SV_ACTIVE_USERID || '', username: window.__SV_ACTIVE_USERNAME || '', token: leftComputed, result_count: effectiveTotal, role_tag: _roleTag })
-    }).catch(err => console.error('[Token update] Failed to persist tokens-left:', err));
-  }
-  return leftComputed;
+  tokensLeftEl.textContent = String(acctTokenNum);
+  return acctTokenNum;
 }
 
 function updateDisplayCounters() {
@@ -3188,6 +3316,8 @@ function buildRow(row) {
   const tr = document.createElement('tr');
   tr.classList.add('fade-in');
   tr.dataset.linkedinurl = row.linkedinurl;
+  // Store the sourcing record's role_tag so assessment can validate it matches the current session.
+  tr.dataset.roleTag = row.role_tag || '';
 
   const checkboxCell = document.createElement('td');
   checkboxCell.className = 'checkbox-cell';
@@ -3423,7 +3553,9 @@ function buildRow(row) {
                 btn.textContent = 'View';
                 btn.className = 'view-btn assessment-complete';
                 btn.title = isLevel2 ? "View - L2 Complete" : "View - L1 Complete";
-                btn.onclick = () => { window.__sv_namecard.toggleNameCard(tr); };
+                btn.onclick = () => {
+                    window.__sv_namecard.toggleNameCard(tr);
+                };
                 // Revert to previous button styling (default gray button)
                 btn.style.cssText = 'width:100%; padding:6px 12px; font-size:13px; cursor:pointer;';
                 td.appendChild(btn);
@@ -3483,6 +3615,18 @@ function buildRow(row) {
                     console.log(`[Upload CV] Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`);
                     console.log(`[Upload CV] LinkedIn URL: ${value}`);
 
+                    // Role-tag gate: block upload if recruiter's role_tag differs from candidate's sourcing role_tag.
+                    if (isRoleTagMismatch(tr)) {
+                        browseBtn.textContent = 'Upload CV';
+                        browseBtn.disabled = false;
+                        browseBtn.classList.remove('btn-spinning');
+                        browseBtn.style.background = 'white';
+                        browseBtn.style.color = '#0a66c2';
+                        setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
+                        alert('Role mismatch detected. Upload and assessment halted.');
+                        return;
+                    }
+
                     try {
                         const res = await fetch(API_UPLOAD_CV, {
                           method: 'POST', body: fd, credentials: 'same-origin'
@@ -3516,30 +3660,32 @@ function buildRow(row) {
                                 // Set button to Processing state before assessment
                                 browseBtn.textContent = 'Processing...';
                                 
-                                // Perform Combined Assessment with toggle state
-                                await performCombinedAssessment(tr, value, analyzeData, useL2);
+                                // Perform Combined Assessment. Returns false if the candidate was
+                                // blocked (e.g. marked ineligible); in that case do NOT convert to View.
+                                const assessOk = await performCombinedAssessment(tr, value, analyzeData, useL2);
                                 
-                                // After assessment completes, update button to View
-                                // Find credential cell and update button
-                                const actionCell = tr.querySelector('td[data-field="credential"], td[data-field="linkedinurl"]');
-                                if (actionCell) {
-                                    // Use updateUploadButtonToView to properly convert button to View
-                                    updateUploadButtonToView(value);
-                                }
-                                
-                                // Trigger table refresh to update tick/cross icons in checkbox column
-                                // Icons are now handled by buildRow() based on assessment score
-                                // Row is already updated in place, no full table re-render needed
-                                persistCompletedDetailRow(value);
-                                
-                                // Auto-refresh after individual assessment completion
-                                // Wait 1 second then simulate click on Refresh button
-                                setTimeout(() => {
-                                    const reloadBtn = document.getElementById('reloadBtn');
-                                    if (reloadBtn) {
-                                        reloadBtn.click();
+                                if (assessOk === false) {
+                                    // Assessment was blocked — restore Upload CV button state.
+                                    browseBtn.textContent = 'Upload CV';
+                                    browseBtn.disabled = false;
+                                    browseBtn.classList.remove('btn-spinning');
+                                    browseBtn.style.background = 'white';
+                                    browseBtn.style.color = '#0a66c2';
+                                } else {
+                                    // After assessment completes, update button to View
+                                    const actionCell = tr.querySelector('td[data-field="credential"], td[data-field="linkedinurl"]');
+                                    if (actionCell) {
+                                        updateUploadButtonToView(value);
                                     }
-                                }, 1000);
+                                    
+                                    persistCompletedDetailRow(value);
+                                    
+                                    // Auto-refresh after individual assessment completion
+                                    setTimeout(() => {
+                                        const reloadBtn = document.getElementById('reloadBtn');
+                                        if (reloadBtn) { reloadBtn.click(); }
+                                    }, 1000);
+                                }
 
                             } else {
                                 browseBtn.textContent = 'Upload CV';
@@ -4128,7 +4274,6 @@ async function triggerLevel1Assessment(tr, anchor) {
                         updateRebateTokenDisplay();
                         await deleteBackendRow(anchor);
                         autoDeleteRow(anchor);
-                        try { await applyTokenDelta(-1); } catch(e){}
                         setStatus('Rebate confirmed & profile removed.', 'success');
                         refreshAccountTokens();
                         await loadRows(currentPage);
@@ -4217,7 +4362,23 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     // All assessments use the bulk workflow: the backend fetches all profile data from DB,
     // runs vskillset generation, and performs L2 (inference) assessment.
     // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
-    
+
+    // Block candidates marked ineligible because the user proceeded to AutoSourcing without
+    // completing their assessment (stored in sv_assessment_ineligible via AutoSourcing).
+    try {
+        const ineligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]'));
+        if (ineligible.has(anchor)) {
+            console.warn(`[Assessment] Blocked ${anchor}: marked ineligible after AutoSourcing was accessed with pending assessments.`);
+            setStatus('Assessment blocked: this candidate was skipped when AutoSourcing was accessed with pending assessments.', 'info');
+            return false;
+        }
+    } catch(_) {}
+
+    // NOTE: Role-tag validation is intentionally NOT applied here. Role-tag filtering is
+    // handled upstream in runBulkAssessmentFromSearch (bulk path). Individual assessment
+    // (Upload CV or Browse File) must always be allowed so the user can assess any candidate
+    // they have explicitly chosen.
+
     // GUARD
     if (window.__sv_assessment_in_flight && window.__sv_assessment_in_flight.has(anchor)) {
         console.warn("Combined assessment skipped; already in flight for", anchor);
@@ -4401,7 +4562,6 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
                         updateRebateTokenDisplay();
                         await deleteBackendRow(anchor);
                         autoDeleteRow(anchor);
-                        try { await applyTokenDelta(-1); } catch(e){}
                         setStatus('Rebate confirmed & profile removed.', 'success');
                         refreshAccountTokens();
                         await loadRows(currentPage);
@@ -4653,6 +4813,15 @@ function renderTable(){
   function getCardCache(anchor) {
     const cache = readCache();
     return cache[anchor] || null;
+  }
+  /** Remove a single entry from the namecard cache so the next render fetches fresh from DB. */
+  function clearCardCache(anchor) {
+    if (!anchor) return;
+    const cache = readCache();
+    if (Object.prototype.hasOwnProperty.call(cache, anchor)) {
+      delete cache[anchor];
+      writeCache(cache);
+    }
   }
   
   function formatExperienceHtml(raw) {
@@ -5136,7 +5305,6 @@ function renderTable(){
                         updateRebateTokenDisplay();
                         await deleteBackendRow(anchor);
                         autoDeleteRow(anchor); // Helper to remove from UI table
-                        try { await applyTokenDelta(-1); } catch(e){}
                         
                         alert('Rebate processed successfully.');
                         switchTab('tab-search'); // Go back to search
@@ -5304,6 +5472,15 @@ function renderTable(){
       browseBtn.disabled = true;
       browseBtn.textContent = 'Uploading...';
 
+      // Role-tag gate: block upload if recruiter's role_tag differs from candidate's sourcing role_tag.
+      if (isRoleTagMismatch(tr)) {
+          browseBtn.disabled = false;
+          browseBtn.textContent = origText;
+          setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
+          alert('Role mismatch detected. Upload and assessment halted.');
+          return;
+      }
+
       const fd = new FormData();
       fd.append('cv', file); 
       fd.append('linkedinurl', anchor);
@@ -5397,16 +5574,22 @@ function renderTable(){
 
                 // Trigger Assessment immediately after parsing with toggle state
                 try {
-                    await performCombinedAssessment(tr, anchor, analyzeData, useL2);
-                    
-                    // Auto-refresh after individual assessment completion
-                    // Wait 1 second then simulate click on Refresh button
-                    setTimeout(() => {
-                        const reloadBtn = document.getElementById('reloadBtn');
-                        if (reloadBtn) {
-                            reloadBtn.click();
-                        }
-                    }, 1000);
+                    const assessOk = await performCombinedAssessment(tr, anchor, analyzeData, useL2);
+                    if (assessOk === false) {
+                        // Assessment was blocked — restore Browse File button to original state
+                        browseBtn.textContent = origText;
+                        browseBtn.disabled = false;
+                        browseBtn.style.color = '#24292f';
+                        browseBtn.style.borderColor = '#d0d7de';
+                        console.warn('[Browse File] Assessment blocked for', anchor);
+                        return; // skip the 'Analyzed' text update below
+                    } else {
+                        // Auto-refresh after individual assessment completion
+                        setTimeout(() => {
+                            const reloadBtn = document.getElementById('reloadBtn');
+                            if (reloadBtn) { reloadBtn.click(); }
+                        }, 1000);
+                    }
                 } catch(e) {
                     console.error("Assessment failed after upload", e);
                     if (btn) {
@@ -5849,6 +6032,11 @@ function renderTable(){
   function toggleNameCard(tr) {
     if(!tr) return;
     __currentProfileRow = tr; // Track current profile for refresh functionality
+    // Persist the last-viewed anchor so View Details can be restored on return navigation.
+    try {
+      const _anchor = tr.dataset.linkedinurl || '';
+      if (_anchor) localStorage.setItem('sv_last_viewed_anchor', _anchor);
+    } catch(err) { console.error('[SV] Failed to persist viewed anchor:', err); }
     switchTab('tab-details');
     renderNameCardToTab(tr);
     // Auto-refresh Search Result tab in background when viewing details
@@ -6138,7 +6326,8 @@ function renderTable(){
     ensureProductColumn,
     renderProducts,
     setCardCache,
-    getCardCache
+    getCardCache,
+    clearCardCache
   };
 })();
 
