@@ -1111,23 +1111,27 @@ def sourcing_delete():
 @app.post("/sourcing/mark_ineligible")
 @_csrf_required
 def sourcing_mark_ineligible():
-    """Mark a list of sourcing candidates as ineligible for assessment.
+    """Mark unassessed sourcing candidates as ineligible for assessment.
 
-    This is called when the user proceeds to AutoSourcing.html with unassessed
+    Called when the user proceeds to AutoSourcing.html with unassessed
     candidates still in Talent Evaluation.  Any subsequent call to
     /process/bulk_assess for one of these URLs will be skipped server-side.
 
+    The backend validates which candidates are truly unassessed by comparing
+    names between the sourcing table and the process table: if a candidate's
+    name exists in sourcing but NOT in process, they have no CV and no
+    assessment.  The explicitly supplied linkedinurls list is also marked
+    ineligible so both client-side and server-side lists are unified.
+
     Request JSON:
-        {"userid": "...", "linkedinurls": ["https://..."]}
+        {"userid": "...", "linkedinurls": ["https://..."]}   # urls optional
     """
     data = request.get_json(force=True, silent=True) or {}
     userid = (data.get("userid") or "").strip()
     linkedinurls = data.get("linkedinurls") or []
     if isinstance(linkedinurls, str):
         linkedinurls = [linkedinurls]
-    cleaned = [(u or "").strip() for u in linkedinurls if (u or "").strip()]
-    if not cleaned:
-        return jsonify({"error": "linkedinurls list required"}), 400
+    client_urls = [(u or "").strip() for u in linkedinurls if (u or "").strip()]
 
     try:
         import psycopg2
@@ -1156,24 +1160,58 @@ def sourcing_mark_ineligible():
         """)
         conn.commit()
 
-        # Scope update to the owning user if provided, else update by URL only
+        db_validated_count = 0
+
+        # Backend validation: compare sourcing.name vs process.name (case-insensitive).
+        # A candidate whose name exists in the sourcing table but NOT in the process
+        # table has never had a CV uploaded and is therefore unassessed.
         if userid:
-            cur.execute(
-                "UPDATE sourcing SET assessment_ineligible = TRUE "
-                "WHERE linkedinurl = ANY(%s) AND userid = %s",
-                (cleaned, userid)
-            )
-        else:
-            cur.execute(
-                "UPDATE sourcing SET assessment_ineligible = TRUE WHERE linkedinurl = ANY(%s)",
-                (cleaned,)
-            )
-        updated = cur.rowcount
-        conn.commit()
+            try:
+                cur.execute("""
+                    UPDATE sourcing s
+                    SET    assessment_ineligible = TRUE
+                    WHERE  s.userid = %s
+                      AND  COALESCE(s.assessment_ineligible, FALSE) = FALSE
+                      AND  NOT EXISTS (
+                               SELECT 1 FROM process p
+                               WHERE  LOWER(TRIM(p.name)) = LOWER(TRIM(s.name))
+                           )
+                """, (userid,))
+                db_validated_count = cur.rowcount
+                conn.commit()
+                logger.info(
+                    f"[mark_ineligible] DB name-comparison marked {db_validated_count} rows "
+                    f"ineligible for userid={userid!r}"
+                )
+            except Exception as _db_err:
+                logger.warning(
+                    f"[mark_ineligible] DB name-comparison failed (non-fatal; "
+                    f"explicit URL list will still be marked): {_db_err}"
+                )
+                conn.rollback()
+
+        # Also mark the explicitly supplied URLs from the client
+        url_marked = 0
+        if client_urls:
+            if userid:
+                cur.execute(
+                    "UPDATE sourcing SET assessment_ineligible = TRUE "
+                    "WHERE linkedinurl = ANY(%s) AND userid = %s",
+                    (client_urls, userid)
+                )
+            else:
+                cur.execute(
+                    "UPDATE sourcing SET assessment_ineligible = TRUE WHERE linkedinurl = ANY(%s)",
+                    (client_urls,)
+                )
+            url_marked = cur.rowcount
+            conn.commit()
+
+        total_marked = db_validated_count + url_marked
         cur.close()
         conn.close()
-        logger.info(f"[mark_ineligible] Marked {updated} rows ineligible for userid={userid!r}")
-        return jsonify({"marked": updated})
+        logger.info(f"[mark_ineligible] Total {total_marked} rows ineligible for userid={userid!r}")
+        return jsonify({"marked": total_marked, "db_validated": db_validated_count, "url_marked": url_marked})
     except Exception as e:
         logger.warning(f"[mark_ineligible] {e}")
         return jsonify({"error": str(e)}), 500

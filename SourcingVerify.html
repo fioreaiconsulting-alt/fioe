@@ -1130,12 +1130,6 @@ function updateUploadButtonToView(linkedinurl) {
                 viewBtn.title = "Assessment Complete - Click to View";
                 viewBtn.onclick = () => { 
                     if (window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
-                        // Clear the local cache so the View Details tab loads fresh data
-                        // directly from the process table (Postgres) rather than relying on
-                        // the front-end cache that may be stale.
-                        if (window.__sv_namecard.clearCardCache) {
-                            window.__sv_namecard.clearCardCache(tr.dataset.linkedinurl);
-                        }
                         window.__sv_namecard.toggleNameCard(tr);
                     }
                 };
@@ -3550,10 +3544,6 @@ function buildRow(row) {
                 btn.className = 'view-btn assessment-complete';
                 btn.title = isLevel2 ? "View - L2 Complete" : "View - L1 Complete";
                 btn.onclick = () => {
-                    // Clear cache so View Details always loads fresh from the process table (Postgres).
-                    if (window.__sv_namecard && window.__sv_namecard.clearCardCache) {
-                        window.__sv_namecard.clearCardCache(tr.dataset.linkedinurl);
-                    }
                     window.__sv_namecard.toggleNameCard(tr);
                 };
                 // Revert to previous button styling (default gray button)
@@ -3648,30 +3638,32 @@ function buildRow(row) {
                                 // Set button to Processing state before assessment
                                 browseBtn.textContent = 'Processing...';
                                 
-                                // Perform Combined Assessment with toggle state
-                                await performCombinedAssessment(tr, value, analyzeData, useL2);
+                                // Perform Combined Assessment. Returns false if the candidate was
+                                // blocked (e.g. marked ineligible); in that case do NOT convert to View.
+                                const assessOk = await performCombinedAssessment(tr, value, analyzeData, useL2);
                                 
-                                // After assessment completes, update button to View
-                                // Find credential cell and update button
-                                const actionCell = tr.querySelector('td[data-field="credential"], td[data-field="linkedinurl"]');
-                                if (actionCell) {
-                                    // Use updateUploadButtonToView to properly convert button to View
-                                    updateUploadButtonToView(value);
-                                }
-                                
-                                // Trigger table refresh to update tick/cross icons in checkbox column
-                                // Icons are now handled by buildRow() based on assessment score
-                                // Row is already updated in place, no full table re-render needed
-                                persistCompletedDetailRow(value);
-                                
-                                // Auto-refresh after individual assessment completion
-                                // Wait 1 second then simulate click on Refresh button
-                                setTimeout(() => {
-                                    const reloadBtn = document.getElementById('reloadBtn');
-                                    if (reloadBtn) {
-                                        reloadBtn.click();
+                                if (assessOk === false) {
+                                    // Assessment was blocked — restore Upload CV button state.
+                                    browseBtn.textContent = 'Upload CV';
+                                    browseBtn.disabled = false;
+                                    browseBtn.classList.remove('btn-spinning');
+                                    browseBtn.style.background = 'white';
+                                    browseBtn.style.color = '#0a66c2';
+                                } else {
+                                    // After assessment completes, update button to View
+                                    const actionCell = tr.querySelector('td[data-field="credential"], td[data-field="linkedinurl"]');
+                                    if (actionCell) {
+                                        updateUploadButtonToView(value);
                                     }
-                                }, 1000);
+                                    
+                                    persistCompletedDetailRow(value);
+                                    
+                                    // Auto-refresh after individual assessment completion
+                                    setTimeout(() => {
+                                        const reloadBtn = document.getElementById('reloadBtn');
+                                        if (reloadBtn) { reloadBtn.click(); }
+                                    }, 1000);
+                                }
 
                             } else {
                                 browseBtn.textContent = 'Upload CV';
@@ -3720,10 +3712,6 @@ function buildRow(row) {
           btn.title = "Assessment Complete - Click to View";
           btn.onclick = () => { 
             if (window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
-              // Clear cache so View Details loads fresh from the process table (Postgres).
-              if (window.__sv_namecard.clearCardCache) {
-                window.__sv_namecard.clearCardCache(tr.dataset.linkedinurl);
-              }
               window.__sv_namecard.toggleNameCard(tr);
             }
           };
@@ -4360,20 +4348,14 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         if (ineligible.has(anchor)) {
             console.warn(`[Assessment] Blocked ${anchor}: marked ineligible after AutoSourcing was accessed with pending assessments.`);
             setStatus('Assessment blocked: this candidate was skipped when AutoSourcing was accessed with pending assessments.', 'info');
-            return;
+            return false;
         }
     } catch(_) {}
 
-    // Validate role_tag: the sourcing record's role_tag must exactly match the current session
-    // role_tag. When a session role_tag is active, profiles that lack a role_tag or have a
-    // different one must not be assessed.
-    const currentRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
-    const rowRoleTag = normalizeRoleTag(tr.dataset.roleTag);
-    if (currentRoleTag && rowRoleTag !== currentRoleTag) {
-        console.warn(`[Assessment] Skipping ${anchor}: role_tag "${rowRoleTag}" does not match current session role_tag "${currentRoleTag}".`);
-        setStatus(`Skipped: profile role ("${rowRoleTag || '(none)'}") does not match current search role ("${currentRoleTag}").`, 'info');
-        return;
-    }
+    // NOTE: Role-tag validation is intentionally NOT applied here. Role-tag filtering is
+    // handled upstream in runBulkAssessmentFromSearch (bulk path). Individual assessment
+    // (Upload CV or Browse File) must always be allowed so the user can assess any candidate
+    // they have explicitly chosen.
 
     // GUARD
     if (window.__sv_assessment_in_flight && window.__sv_assessment_in_flight.has(anchor)) {
@@ -5561,16 +5543,22 @@ function renderTable(){
 
                 // Trigger Assessment immediately after parsing with toggle state
                 try {
-                    await performCombinedAssessment(tr, anchor, analyzeData, useL2);
-                    
-                    // Auto-refresh after individual assessment completion
-                    // Wait 1 second then simulate click on Refresh button
-                    setTimeout(() => {
-                        const reloadBtn = document.getElementById('reloadBtn');
-                        if (reloadBtn) {
-                            reloadBtn.click();
-                        }
-                    }, 1000);
+                    const assessOk = await performCombinedAssessment(tr, anchor, analyzeData, useL2);
+                    if (assessOk === false) {
+                        // Assessment was blocked — restore Browse File button to original state
+                        browseBtn.textContent = origText;
+                        browseBtn.disabled = false;
+                        browseBtn.style.color = '#24292f';
+                        browseBtn.style.borderColor = '#d0d7de';
+                        console.warn('[Browse File] Assessment blocked for', anchor);
+                        return; // skip the 'Analyzed' text update below
+                    } else {
+                        // Auto-refresh after individual assessment completion
+                        setTimeout(() => {
+                            const reloadBtn = document.getElementById('reloadBtn');
+                            if (reloadBtn) { reloadBtn.click(); }
+                        }, 1000);
+                    }
                 } catch(e) {
                     console.error("Assessment failed after upload", e);
                     if (btn) {

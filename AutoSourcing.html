@@ -2921,21 +2921,21 @@ async function checkPendingAssessmentsOnLoad() {
           localStorage.setItem('sv_assessment_ineligible', JSON.stringify(merged));
         } catch(_) {}
 
-        // Also persist ineligibility at the backend level (sourcing table) so server-side
-        // assessment checks cannot be bypassed.
-        if (unassessedUrls.length > 0) {
-          try {
-            const userid = uid || '';
-            fetch('/sourcing/mark_ineligible', {
-              method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userid: userid, linkedinurls: unassessedUrls })
-            }).catch(function(err) {
-              console.warn('[PendingAssessments] Backend mark_ineligible failed:', err);
-            });
-          } catch(_) {}
-        }
+        // Persist ineligibility at the backend level.
+        // The backend validates against the database by comparing names between the
+        // sourcing table and the process table (name in sourcing but not in process =
+        // unassessed).  It also marks the explicit URL list supplied from the client.
+        try {
+          const userid = uid || '';
+          fetch('/sourcing/mark_ineligible', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userid: userid, linkedinurls: unassessedUrls })
+          }).catch(function(err) {
+            console.warn('[PendingAssessments] Backend mark_ineligible failed:', err);
+          });
+        } catch(_) {}
 
         // Suppress this popout for the current session so it does not reappear.
         try { sessionStorage.setItem('autosourcing_pending_suppress', '1'); } catch(_) {}
