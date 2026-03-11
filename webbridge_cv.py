@@ -4675,7 +4675,14 @@ def process_bulk_assess():
                         }
                     }
             except Exception as _inelig_err:
-                # If the column does not exist yet, skip silently – the front end still enforces it
+                # If the column does not exist yet, skip silently – the front end still enforces it.
+                # CRITICAL: rollback so the psycopg2 connection is not left in an aborted-transaction
+                # state (which would cause every subsequent query on this cursor to fail with
+                # "InFailedSqlTransaction").
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 logger.debug(f"[BULK_ASSESS] Ineligibility check skipped: {_inelig_err}")
 
             # Fetch by linkedinurl (normalized_linkedin column doesn't exist in all schemas)
