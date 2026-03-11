@@ -5412,17 +5412,68 @@ _COMPANY_COUNTRY_SUFFIX_RE = re.compile(
     r'\s+(?:china|india|japan|korea|taiwan|singapore|malaysia|indonesia|thailand|vietnam|'
     r'philippines|australia|germany|france|uk|us|usa|emea|apac|latam|anz|mea|'
     r'asia(?:\s+pacific)?|pacific|americas|europe|international|global|limited|ltd\.?|'
-    r'pte\.?\s*ltd\.?|inc\.?|corp\.?|llc\.?|co\.?\s*ltd\.?|holdings?)$',
+    r'pte\.?\s*ltd\.?|inc\.?|corp(?:oration)?\.?|llc\.?|co\.?\s*ltd\.?|holdings?)$',
+    re.IGNORECASE
+)
+
+# Parenthetical regional/status suffixes e.g. "(Japan)", "(Asia Pacific)", "(Merged)"
+_COMPANY_PAREN_SUFFIX_RE = re.compile(r'\s*\([^)]+\)\s*$')
+
+# Trailing "&" company-form patterns e.g. "& Co., Inc.", "& Co.", "& Sons"
+_COMPANY_AMPERSAND_SUFFIX_RE = re.compile(
+    r'\s*&\s*(?:co\.?\s*(?:,\s*)?(?:inc\.?|ltd\.?|llc\.?|plc\.?)?|sons?|partners?|associates?)\s*$',
+    re.IGNORECASE
+)
+
+# Industry/entity-type descriptor words that Gemini appends to brand names
+# e.g. "Takeda Pharmaceutical Company" → "Takeda", "Roche Diagnostics" → "Roche"
+# Deliberately narrow: only strip words that are clearly generic descriptors, not brand differentiators.
+_COMPANY_INDUSTRY_SUFFIX_RE = re.compile(
+    r'\s+(?:pharmaceutical(?:s|(?:\s+company)?)?|diagnostics|biotech(?:nology)?|'
+    r'life\s+sciences?|healthcare|health\s*care)$',
     re.IGNORECASE
 )
 
 def _strip_company_country_suffix(name: str) -> str:
-    """Remove trailing country/region/legal-entity suffixes from a company name."""
+    """
+    Remove trailing suffixes from a company name to return the core brand name.
+    Steps applied in order:
+      1. Parenthetical regional/status suffixes: "(Japan)", "(Asia Pacific)"
+      2. Ampersand company-form patterns: "& Co., Inc.", "& Sons"
+      3. Industry/entity-type descriptors: "Pharmaceutical Company", "Diagnostics", "HealthCare"
+         (applied up to 2 passes to handle chains like "Pharmaceutical Company")
+      4. Country/region/legal-entity suffixes: "China", "Japan", "Ltd", "Inc", "Holdings"
+         (applied up to 2 passes)
+    Falls back to the original name if stripping reduces it to < 3 chars.
+    """
     if not name:
         return name
-    cleaned = _COMPANY_COUNTRY_SUFFIX_RE.sub('', name.strip()).strip()
+    original = name.strip()
+    s = original
+
+    # Step 1: parenthetical suffixes
+    s = _COMPANY_PAREN_SUFFIX_RE.sub('', s).strip()
+
+    # Step 2: ampersand company-form patterns
+    s = _COMPANY_AMPERSAND_SUFFIX_RE.sub('', s).strip()
+
+    # Steps 3+4: interleave industry-type and country/legal suffix stripping.
+    # Up to _MAX_SUFFIX_STRIP_PASSES passes so chained descriptors like
+    # "Pharmaceuticals Corporation" are fully unwound in a single call.
+    _MAX_PASSES = 3
+    for _ in range(_MAX_PASSES):
+        prev = s
+        s2 = _COMPANY_INDUSTRY_SUFFIX_RE.sub('', s).strip()
+        if s2 != s:
+            s = s2
+        s2 = _COMPANY_COUNTRY_SUFFIX_RE.sub('', s).strip()
+        if s2 != s:
+            s = s2
+        if s == prev:
+            break
+
     # Keep original if stripping makes it too short (< 3 chars)
-    return cleaned if len(cleaned) >= 3 else name.strip()
+    return s if len(s) >= 3 else original
 
 def _supplement_companies(existing, country: str, limit: int, sectors=None):
     """
