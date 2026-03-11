@@ -7050,6 +7050,70 @@ def byok_validate():
         return jsonify({"error": "Validation failed", "detail": str(exc)}), 500
 
 
+@app.post("/save_search_criteria")
+def save_search_criteria():
+    """Save the search category breakdown criteria to a JSON file on the server.
+
+    Expected payload:
+        username   – recruiter username (e.g. "orlha")
+        role_tag   – current role tag    (e.g. "Site Activation Manager")
+        criteria   – object with keys: Job Title, Seniority, Sector, Country,
+                     Company, Skillset, Tenure
+    File is written to  <CRITERIA_OUTPUT_DIR>/<role_tag> <username>.json
+    """
+    CRITERIA_OUTPUT_DIR = os.getenv(
+        "CRITERIA_OUTPUT_DIR",
+        r"F:\Recruiting Tools\Autosourcing\output\Criteras"
+    )
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        username = (body.get("username") or "").strip()
+        role_tag = (body.get("role_tag") or "").strip()
+        criteria = body.get("criteria") or {}
+
+        if not username or not role_tag:
+            return jsonify({"error": "username and role_tag are required"}), 400
+
+        # Sanitize filename – strip characters that are illegal on Windows/Linux
+        # and guard against path traversal
+        safe_role = re.sub(r'[<>:"/\\|?*\.]', '_', role_tag)
+        safe_user = re.sub(r'[<>:"/\\|?*\.]', '_', username)
+        # Extra safety: ensure no directory separators sneak through
+        safe_role = safe_role.replace('/', '_').replace('\\', '_').strip('_')
+        safe_user = safe_user.replace('/', '_').replace('\\', '_').strip('_')
+        if not safe_role or not safe_user:
+            return jsonify({"error": "Invalid role_tag or username after sanitization"}), 400
+        filename = f"{safe_role} {safe_user}.json"
+
+        os.makedirs(CRITERIA_OUTPUT_DIR, exist_ok=True)
+        filepath = os.path.join(CRITERIA_OUTPUT_DIR, filename)
+
+        record = {
+            "role_tag": role_tag,
+            "username": username,
+            "saved_at": datetime.utcnow().isoformat() + "Z",
+            "criteria": {
+                "Job Title":  criteria.get("Job Title") or [],
+                "Seniority":  criteria.get("Seniority") or "",
+                "Sector":     criteria.get("Sector") or [],
+                "Country":    criteria.get("Country") or "",
+                "Company":    criteria.get("Company") or [],
+                "Skillset":   criteria.get("Skillset") or [],
+                "Tenure":     criteria.get("Tenure"),
+            }
+        }
+
+        with open(filepath, "w", encoding="utf-8") as fh:
+            json.dump(record, fh, ensure_ascii=False, indent=2)
+
+        logger.info(f"[save_search_criteria] Written to {filepath}")
+        return jsonify({"ok": True, "file": filename}), 200
+
+    except Exception as exc:
+        logger.exception("[save_search_criteria]")
+        return jsonify({"error": str(exc)}), 500
+
+
 if __name__ == '__main__':
     port=int(os.getenv("PORT","8091"))
     logger.info(f"Starting AutoSourcing webbridge on :{port}")

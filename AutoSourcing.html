@@ -3249,6 +3249,32 @@ async function pollJob(jobId){
             }
           }
         }catch(_){}
+        // Save search criteria to server JSON file
+        try{
+          const _sc_username = window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
+          const _sc_role_tag = (typeof buildRoleTagFromJobTitles === 'function') ? buildRoleTagFromJobTitles() : (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
+          if(_sc_username && _sc_role_tag){
+            const _sc_companies = [
+              ...(typeof companies !== 'undefined' ? companies : []),
+              ...(typeof sectorCompanyRelated !== 'undefined' ? Array.from(sectorCompanyRelated) : [])
+            ].filter((v,i,a)=>v&&a.indexOf(v)===i);
+            const _sc_criteria = {
+              'Job Title': typeof jobTitles !== 'undefined' ? jobTitles.slice() : [],
+              'Seniority': (typeof val === 'function' ? val('senioritySelect') : (document.getElementById('senioritySelect')||{}).value) || '',
+              'Sector': typeof selectedSectors !== 'undefined' ? selectedSectors.slice() : [],
+              'Country': (typeof val === 'function' ? val('country') : (document.getElementById('country')||{}).value) || '',
+              'Company': _sc_companies,
+              'Skillset': typeof userSkills !== 'undefined' ? userSkills.slice() : [],
+              'Tenure': null
+            };
+            fetch('/save_search_criteria',{
+              method:'POST',
+              headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+              credentials:'same-origin',
+              body:JSON.stringify({ username:_sc_username, role_tag:_sc_role_tag, criteria:_sc_criteria })
+            }).catch(function(){});
+          }
+        }catch(_sc_err){ console.warn('[AutoSourcing] save_search_criteria failed', _sc_err); }
         if(data.output_csv){
           let html=`<a href="/download/${encodeURIComponent(data.output_csv)}">Download Aggregated CSV</a>`;
           if(data.output_xlsx) html+=` · <a class="alt" href="/download/${encodeURIComponent(data.output_xlsx)}">Download XLSX</a>`;
