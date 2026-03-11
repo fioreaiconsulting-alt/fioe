@@ -2824,6 +2824,27 @@ function showTargetLimitNotif(){
   );
 }
 
+// ── JD too-long popout ────────────────────────────────────────────────────────
+function _showJdTooLongPopout(wordCount, maxWords) {
+  // Create a compact, non-alarming popout (matches notification modal style)
+  const existing = document.getElementById('jdTooLongOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'jdTooLongOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const wordInfo = wordCount ? ` (${wordCount} words detected)` : '';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:16px 20px;max-width:300px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,0.12);font-family:inherit;">
+      <p style="margin:0 0 12px;font-size:13px;color:#1e2a3a;line-height:1.5;">
+        The Job Description is too long${wordInfo}. Please reduce it to <strong>${maxWords} words</strong> or fewer and re-upload.
+      </p>
+      <button id="jdTooLongOkBtn" style="background:#3b5bdb;color:#fff;border:none;border-radius:8px;padding:6px 18px;font-size:12px;cursor:pointer;display:block;margin-left:auto;">OK</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('jdTooLongOkBtn').onclick = function(){ overlay.remove(); };
+  overlay.onclick = function(e){ if(e.target === overlay) overlay.remove(); };
+}
+
 // ── Wire up Target Limit input for notifications and projected token updates ──
 (function initTargetLimitListeners(){
   try{
@@ -3033,6 +3054,31 @@ async function pollJob(jobId){
         }
         // Set progress bar to 100% when done
         if(progressFill) progressFill.style.width='100%';
+        // Deduct tokens based on actual final row count
+        try{
+          const finalRows = extractFinalRowCount(data.status_html||'');
+          if(finalRows != null && finalRows > 0){
+            const _acctToken = window.__ACCOUNT_TOKEN;
+            const _userid = window.__ACTIVE_USERID || sessionStorage.getItem('userid') || localStorage.getItem('userid') || '';
+            const _username = window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
+            const _rate = (typeof _getTokenRate === 'function' ? _getTokenRate() : 1) || 1;
+            if(_userid && _acctToken != null && !isNaN(Number(_acctToken))){
+              const _newBalance = Math.max(0, Math.floor(Number(_acctToken) - finalRows * _rate));
+              fetch('/user/token_update',{
+                method:'POST',
+                headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+                credentials:'same-origin',
+                body:JSON.stringify({ userid:_userid, username:_username, token:_newBalance, result_count:finalRows })
+              }).then(function(r){
+                if(r.ok){
+                  window.__ACCOUNT_TOKEN = _newBalance;
+                  const _el = document.getElementById('accountTokenDisplay');
+                  if(_el) _el.textContent = 'Account Tokens: ' + _newBalance;
+                }
+              }).catch(function(){});
+            }
+          }
+        }catch(_){}
         if(data.output_csv){
           let html=`<a href="/download/${encodeURIComponent(data.output_csv)}">Download Aggregated CSV</a>`;
           if(data.output_xlsx) html+=` · <a class="alt" href="/download/${encodeURIComponent(data.output_xlsx)}">Download XLSX</a>`;
@@ -3239,7 +3285,17 @@ function updateSectorEnabledState(){
             body: JSON.stringify(analyzePayload)
           });
           let analyzeData = null;
-          if (analyzeResp.ok) {
+          if (analyzeResp.status === 413) {
+            // JD is too long — show a popout and stop analysis
+            let errData = null;
+            try { errData = await analyzeResp.json(); } catch(_) {}
+            const maxWords = (errData && errData.max_words) ? errData.max_words.toLocaleString() : '1,500'; // keep in sync with JD_MAX_WORDS in webbridge.py
+            const wordCount = (errData && errData.word_count) ? errData.word_count.toLocaleString() : '';
+            _showJdTooLongPopout(wordCount, maxWords);
+            if (summaryEl) summaryEl.innerHTML = '';
+            if (tagsEl) tagsEl.innerHTML = '';
+            if (box) box.classList.add('hidden');
+          } else if (analyzeResp.ok) {
             analyzeData = await analyzeResp.json().catch(() => null);
           }
 

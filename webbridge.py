@@ -1625,6 +1625,17 @@ def gemini_analyze_jd():
     if not text_input:
         return jsonify({"error":"No JD text provided or found for user"}), 400
 
+    # Word-count guard: reject JDs that are too long for reliable Gemini analysis
+    JD_MAX_WORDS = 1500
+    jd_word_count = len(text_input.split())
+    if jd_word_count > JD_MAX_WORDS:
+        return jsonify({
+            "error": "jd_too_long",
+            "word_count": jd_word_count,
+            "max_words": JD_MAX_WORDS,
+            "message": f"The uploaded JD is too long ({jd_word_count:,} words). Please reduce it to {JD_MAX_WORDS:,} words or fewer and re-upload."
+        }), 413
+
     if not genai or not GEMINI_API_KEY:
         # Fallback: simple heuristics if gemini not configured
         try:
@@ -5364,6 +5375,24 @@ def _is_real_company(name: str) -> bool:
         return True
     return False
 
+# Country/region words that Gemini appends to company names (e.g. "Electronic Arts China")
+# Strip these trailing tokens so search results are based on the clean brand name.
+_COMPANY_COUNTRY_SUFFIX_RE = re.compile(
+    r'\s+(?:china|india|japan|korea|taiwan|singapore|malaysia|indonesia|thailand|vietnam|'
+    r'philippines|australia|germany|france|uk|us|usa|emea|apac|latam|anz|mea|'
+    r'asia(?:\s+pacific)?|pacific|americas|europe|international|global|limited|ltd\.?|'
+    r'pte\.?\s*ltd\.?|inc\.?|corp\.?|llc\.?|co\.?\s*ltd\.?|holdings?)$',
+    re.IGNORECASE
+)
+
+def _strip_company_country_suffix(name: str) -> str:
+    """Remove trailing country/region/legal-entity suffixes from a company name."""
+    if not name:
+        return name
+    cleaned = _COMPANY_COUNTRY_SUFFIX_RE.sub('', name.strip()).strip()
+    # Keep original if stripping makes it too short (< 3 chars)
+    return cleaned if len(cleaned) >= 3 else name.strip()
+
 def _supplement_companies(existing, country: str, limit: int, sectors=None):
     """
     Add companies from BUCKET_COMPANIES until we reach the desired limit,
@@ -5403,7 +5432,7 @@ def _enforce_company_limit(raw_list, country: str, limit: int, sectors=None):
     allow_pharma = _sectors_allow_pharma(sectors)
     for c in raw_list or []:
         if not isinstance(c,str): continue
-        t=c.strip()
+        t=_strip_company_country_suffix(c.strip())
         if not t: continue
         k=t.lower()
         if k in seen: continue
