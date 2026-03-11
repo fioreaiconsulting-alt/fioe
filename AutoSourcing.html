@@ -479,6 +479,35 @@ pre {
   margin-top: 16px;
 }
 
+/* Notification Modal Overlay */
+.notif-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.notif-modal-overlay.hidden { display: none !important; }
+.notif-modal-box {
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 10px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  padding: 28px 32px;
+  max-width: 440px;
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.notif-modal-box .notif-icon { font-size: 28px; text-align: center; }
+.notif-modal-box .notif-msg { font-size: 14px; color: var(--text, #1e293b); line-height: 1.6; }
+.notif-modal-box .notif-suppress { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-soft, #64748b); cursor: pointer; user-select: none; }
+.notif-modal-box .notif-suppress input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+.notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
+
 </style>
 </head>
 <body>
@@ -557,6 +586,12 @@ pre {
       <div style="display:flex; flex-direction:column;">
         <div id="welcomeText" style="font-weight:700; font-size:16px; color:var(--text); font-family:var(--theme-font);">Welcome</div>
         <div id="welcomeHandle" style="font-size:13px; color:var(--text-soft);"></div>
+      </div>
+      <div id="tokenBadgeWrap" style="display:none; flex-direction:column; gap:2px; margin-left:8px; padding-left:16px; border-left:1px solid var(--neutral-border);">
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-soft); letter-spacing:.4px;">Account Tokens</div>
+        <div id="accountTokenDisplay" style="font-size:15px; font-weight:700; color:var(--accent);">—</div>
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-soft); letter-spacing:.4px; margin-top:4px;">Projected Usage</div>
+        <div id="projectedTokenDisplay" style="font-size:13px; font-weight:700; color:var(--text);">—</div>
       </div>
     </div>
     <button id="logoutBtn" type="button" class="mini-btn" style="border-color:var(--border);">Logout</button>
@@ -847,11 +882,11 @@ pre {
 
           <!-- Search Mode toggle: Best Mode (auto-split at 32 words) vs Fast Mode (no splitting) -->
           <div id="searchModeWrapper" style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
-            <input id="bestModeChk" type="checkbox" checked style="display:none;">
-            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="true" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
-              <span>⚡ Best Mode</span>
+            <input id="bestModeChk" type="checkbox" style="display:none;">
+            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="false" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
+              <span>🚀 Fast Mode</span>
             </button>
-            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries &gt;32 words are auto-split for better coverage</span>
+            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries are sent as-is without splitting</span>
           </div>
 
           <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
@@ -1934,7 +1969,8 @@ function buildGenericFullQuery(){
 function updateFullCompiledQuery(){
   const full=buildFullBooleanQuery();
   const wrap=document.getElementById('fullQueryWrapper'); const pre=document.getElementById('fullCompiledExpr');
-  if(full){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
+  // Only show compiled boolean query for confirmed admin users
+  if(full && window.__IS_ADMIN === true){ pre.textContent=full; wrap.style.display='block'; } else { pre.textContent=''; wrap.style.display='none'; }
   const copyNoticeEl=document.getElementById('copyNotice'); if(copyNoticeEl) copyNoticeEl.style.display='none';
   // Live split preview: show how many queries this Xray command will produce before Search is clicked.
   // Accounts for both the primary (sector) query AND the competitor query when both exist.
@@ -2349,7 +2385,7 @@ function _splitXrayQuery(fullQuery, wordLimit) {
 
 function isBestMode() {
   const chk = document.getElementById('bestModeChk');
-  return chk ? chk.checked : true;
+  return chk ? chk.checked : false;
 }
 
 function initSearchMode() {
@@ -2358,7 +2394,10 @@ function initSearchMode() {
   const hint = document.getElementById('searchModeHint');
   if (!chk || !btn) return;
   const saved = localStorage.getItem(STORAGE_KEY_SEARCH_MODE);
-  if (saved === 'false') chk.checked = false;
+  // Restore saved preference; default (no saved value) is Fast Mode (unchecked)
+  if (saved === 'true') { chk.checked = true; }
+  else if (saved === 'false') { chk.checked = false; }
+  // else: keep HTML default (unchecked = Fast Mode)
   function applyMode() {
     const best = chk.checked;
     const span = btn.querySelector('span');
@@ -2369,9 +2408,15 @@ function initSearchMode() {
       : 'Queries are sent as-is without splitting';
     localStorage.setItem(STORAGE_KEY_SEARCH_MODE, String(best));
     updateFullCompiledQuery();
+    updateProjectedTokens();
   }
   applyMode();
-  btn.addEventListener('click', () => { chk.checked = !chk.checked; applyMode(); });
+  btn.addEventListener('click', () => {
+    const willBeBest = !chk.checked;
+    chk.checked = willBeBest;
+    applyMode();
+    if(willBeBest){ showBestModeNotif(); }
+  });
 }
 
 function buildQueries(country){
@@ -2435,6 +2480,8 @@ function buildQueries(country){
 function renderQueries(qs){
   const container=document.getElementById('queriesSection');
   container.innerHTML='';
+  // Only admins can view Xray queries
+  if(!window.__IS_ADMIN) return;
 
   const h2=document.createElement('h2');
   h2.textContent='Generated Queries';
@@ -2605,8 +2652,161 @@ async function enhanceWelcomeWithFullName(){
         avatarEl.textContent = initials || avatarEl.textContent;
       }
     }
+    // Store admin status and account tokens
+    window.__IS_ADMIN = (data.useraccess || '').trim().toLowerCase() === 'admin';
+    window.__ACCOUNT_TOKEN = typeof data.token === 'number' ? data.token : parseInt(data.token || '0', 10);
+    // Show token badge in banner
+    const tokenBadgeWrap = document.getElementById('tokenBadgeWrap');
+    const accountTokenDisplay = document.getElementById('accountTokenDisplay');
+    if(tokenBadgeWrap && accountTokenDisplay){
+      accountTokenDisplay.textContent = window.__ACCOUNT_TOKEN;
+      tokenBadgeWrap.style.display = 'flex';
+    }
+    updateProjectedTokens();
+    // Apply admin visibility to compiled query and queries section
+    applyAdminVisibility();
   }catch(e){ }
 }
+
+// ── Token projection ──────────────────────────────────────────────────────────
+// Returns the per-profile token rate based on current mode and target limit.
+function _getTokenRate(){
+  const targetLimit = parseInt((document.getElementById('userTargetInput') || {}).value || '0', 10) || 0;
+  const best = isBestMode();
+  const over50 = targetLimit > 50;
+  if(best && over50) return 2.5;
+  if(over50) return 2;
+  if(best) return 1.5;
+  return 1;
+}
+
+// Recalculate and display projected token usage in the banner.
+function updateProjectedTokens(){
+  const projectedEl = document.getElementById('projectedTokenDisplay');
+  if(!projectedEl) return;
+  const targetLimit = parseInt((document.getElementById('userTargetInput') || {}).value || '0', 10) || 0;
+  if(!targetLimit){ projectedEl.textContent = '—'; return; }
+  const rate = _getTokenRate();
+  const projected = Math.floor(targetLimit * rate);
+  const rateLabel = rate === 1 ? '×1' : rate === 1.5 ? '×1.5' : rate === 2 ? '×2' : '×2.5';
+  projectedEl.textContent = projected + ' tokens (' + targetLimit + ' profiles ' + rateLabel + ')';
+}
+
+// ── Admin visibility ─────────────────────────────────────────────────────────
+function applyAdminVisibility(){
+  const isAdmin = window.__IS_ADMIN === true;
+  // Compiled Boolean Query: updateFullCompiledQuery already gates on window.__IS_ADMIN === true.
+  // Force hide immediately so there's no flash while loading.
+  const fullQueryWrapper = document.getElementById('fullQueryWrapper');
+  if(fullQueryWrapper && !isAdmin){
+    fullQueryWrapper.style.display = 'none';
+  }
+  // Queries section: hide for non-admins; renderQueries() already gates on __IS_ADMIN.
+  const queriesSection = document.getElementById('queriesSection');
+  if(queriesSection){
+    if(!isAdmin){
+      queriesSection.style.setProperty('display', 'none', 'important');
+    } else {
+      queriesSection.style.removeProperty('display');
+    }
+  }
+}
+
+// ── Notification modals ───────────────────────────────────────────────────────
+const STORAGE_KEY_NOTIF_BEST_MODE_SUPPRESS = 'autosourcing_notif_bestmode_suppress';
+const STORAGE_KEY_NOTIF_TARGET_LIMIT_SUPPRESS = 'autosourcing_notif_targetlimit_suppress';
+
+function _showNotifModal(overlayId, suppressKey, suppressChkId, okBtnId){
+  try{
+    if(localStorage.getItem(suppressKey) === 'true') return;
+    const overlay = document.getElementById(overlayId);
+    if(!overlay) return;
+    overlay.classList.remove('hidden');
+    const okBtn = document.getElementById(okBtnId);
+    if(okBtn){
+      okBtn.onclick = function(){
+        const chk = document.getElementById(suppressChkId);
+        if(chk && chk.checked){
+          try{ localStorage.setItem(suppressKey, 'true'); }catch(_){}
+        }
+        overlay.classList.add('hidden');
+      };
+    }
+    // Also dismiss on overlay background click
+    overlay.onclick = function(e){
+      if(e.target === overlay){
+        const chk = document.getElementById(suppressChkId);
+        if(chk && chk.checked){
+          try{ localStorage.setItem(suppressKey, 'true'); }catch(_){}
+        }
+        overlay.classList.add('hidden');
+      }
+    };
+  }catch(_){}
+}
+
+function showBestModeNotif(){
+  try{
+    if(localStorage.getItem(STORAGE_KEY_NOTIF_BEST_MODE_SUPPRESS) === 'true') return;
+    // Compute actual rate now that Best Mode is active
+    const rate = _getTokenRate();
+    const msgEl = document.getElementById('notifBestModeMsg');
+    if(msgEl){
+      const rateStr = rate % 1 === 0 ? String(rate) : rate.toFixed(1);
+      msgEl.innerHTML = 'Each profile costs <strong>' + rateStr + ' tokens</strong> due to extensive query combinations for comprehensive search.';
+    }
+  }catch(_){}
+  _showNotifModal(
+    'notifBestModeOverlay',
+    STORAGE_KEY_NOTIF_BEST_MODE_SUPPRESS,
+    'notifBestModeSuppressChk',
+    'notifBestModeOkBtn'
+  );
+}
+
+function showTargetLimitNotif(){
+  try{
+    if(localStorage.getItem(STORAGE_KEY_NOTIF_TARGET_LIMIT_SUPPRESS) === 'true') return;
+    // Compute actual rate now that target limit > 50 is active
+    const rate = _getTokenRate();
+    const msgEl = document.getElementById('notifTargetLimitMsg');
+    if(msgEl){
+      const rateStr = rate % 1 === 0 ? String(rate) : rate.toFixed(1);
+      msgEl.innerHTML = 'Each profile costs <strong>' + rateStr + ' tokens</strong> due to exceeding the agreed limit.';
+    }
+  }catch(_){}
+  _showNotifModal(
+    'notifTargetLimitOverlay',
+    STORAGE_KEY_NOTIF_TARGET_LIMIT_SUPPRESS,
+    'notifTargetLimitSuppressChk',
+    'notifTargetLimitOkBtn'
+  );
+}
+
+// ── Wire up Target Limit input for notifications and projected token updates ──
+(function initTargetLimitListeners(){
+  try{
+    const inp = document.getElementById('userTargetInput');
+    if(!inp) return;
+    let _prevOver50 = parseInt(inp.value||'0',10) > 50;
+    inp.addEventListener('input', function(){
+      updateProjectedTokens();
+      const over50 = parseInt(inp.value||'0',10) > 50;
+      if(over50 && !_prevOver50){
+        showTargetLimitNotif();
+      }
+      _prevOver50 = over50;
+    });
+    inp.addEventListener('change', function(){
+      updateProjectedTokens();
+      const over50 = parseInt(inp.value||'0',10) > 50;
+      if(over50 && !_prevOver50){
+        showTargetLimitNotif();
+      }
+      _prevOver50 = over50;
+    });
+  }catch(_){}
+})();
 async function generateAndStart(){
   const btn=document.getElementById('generateBtn');
   
@@ -3411,6 +3611,35 @@ function renderExternalSuggestions(jobs, comps){
   } catch(_){}
 })();
 </script>
+
+<!-- Notification modal: Best Mode -->
+<div id="notifBestModeOverlay" class="notif-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notifBestModeMsg">
+  <div class="notif-modal-box">
+    <div class="notif-icon">⚡</div>
+    <div class="notif-msg" id="notifBestModeMsg">Each profile costs <strong>1.5 tokens</strong> due to extensive query combinations for comprehensive search.</div>
+    <label class="notif-suppress">
+      <input type="checkbox" id="notifBestModeSuppressChk"> Do not display this message in the future.
+    </label>
+    <div class="notif-actions">
+      <button class="primary" id="notifBestModeOkBtn" style="padding:8px 24px; font-size:13px;">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification modal: Target Limit > 50 -->
+<div id="notifTargetLimitOverlay" class="notif-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notifTargetLimitMsg">
+  <div class="notif-modal-box">
+    <div class="notif-icon">⚠️</div>
+    <div class="notif-msg" id="notifTargetLimitMsg">Each profile costs <strong>2 tokens</strong> due to exceeding the agreed limit.</div>
+    <label class="notif-suppress">
+      <input type="checkbox" id="notifTargetLimitSuppressChk"> Do not display this message in the future.
+    </label>
+    <div class="notif-actions">
+      <button class="primary" id="notifTargetLimitOkBtn" style="padding:8px 24px; font-size:13px;">OK</button>
+    </div>
+  </div>
+</div>
+
 </div><!-- /.page-main -->
 </div><!-- /.page-shell -->
 </body>

@@ -4475,12 +4475,12 @@ def user_resolve():
         pg_db=os.getenv("PGDATABASE","candidate_db")
         conn=psycopg2.connect(host=pg_host, port=pg_port, user=pg_user, password=pg_password, dbname=pg_db)
         cur=conn.cursor()
-        cur.execute("SELECT userid, fullname, role_tag, COALESCE(token,0), COALESCE(target_limit,10) FROM login WHERE username=%s", (username,))
+        cur.execute("SELECT userid, fullname, role_tag, COALESCE(token,0), COALESCE(target_limit,10), COALESCE(useraccess,'') FROM login WHERE username=%s", (username,))
         row = cur.fetchone()
         if not row:
             cur.close(); conn.close()
             return jsonify({"error":"not found"}), 404
-        userid, fullname, login_role_tag, token_val, target_limit_val = row
+        userid, fullname, login_role_tag, token_val, target_limit_val, useraccess_val = row
         # Prefer role_tag from sourcing table (authoritative source) over login table
         resolved_role_tag = login_role_tag or ""
         try:
@@ -4491,7 +4491,7 @@ def user_resolve():
         except Exception:
             pass
         cur.close(); conn.close()
-        return jsonify({"userid": userid or "", "fullname": fullname or "", "role_tag": resolved_role_tag, "token": int(token_val or 0), "target_limit": int(target_limit_val or 10)}), 200
+        return jsonify({"userid": userid or "", "fullname": fullname or "", "role_tag": resolved_role_tag, "token": int(token_val or 0), "target_limit": int(target_limit_val or 10), "useraccess": (useraccess_val or "").strip()}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
