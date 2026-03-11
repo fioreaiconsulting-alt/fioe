@@ -4816,8 +4816,9 @@ def process_bulk_assess():
             
             # --- Role-tag gate: compare login.role_tag (recruiter) vs sourcing.role_tag (candidate) ---
             # The authoritative comparison is always DB-to-DB: read the recruiter's role_tag directly
-            # from the login table and compare against the sourcing record's role_tag.
-            # If both are populated and they don't match, skip this candidate.
+            # from the login table and compare against the sourcing record's role_tag fetched directly
+            # from the sourcing table. Never use process.role_tag here — it may have been set during
+            # a previous assessment with a different role and would produce a false match.
             recruiter_username_for_rt = username or username_db
             if recruiter_username_for_rt:
                 try:
@@ -4827,7 +4828,18 @@ def process_bulk_assess():
                     )
                     _login_rt_row = cur.fetchone()
                     _login_role_tag = (_login_rt_row[0] or "").strip().lower() if _login_rt_row else ""
-                    _sourcing_role_tag = role_tag.strip().lower() if role_tag else ""
+                    # Always fetch sourcing.role_tag directly for this comparison — do not use the
+                    # role_tag variable which may have been populated from process table.
+                    _sourcing_rt_direct_row = None
+                    try:
+                        cur.execute(
+                            "SELECT role_tag FROM sourcing WHERE linkedinurl = %s LIMIT 1",
+                            (linkedinurl,)
+                        )
+                        _sourcing_rt_direct_row = cur.fetchone()
+                    except Exception as _src_rt_err:
+                        logger.debug(f"[BULK_ASSESS] sourcing role_tag lookup failed for {linkedinurl[:50]}: {_src_rt_err}")
+                    _sourcing_role_tag = (_sourcing_rt_direct_row[0] or "").strip().lower() if _sourcing_rt_direct_row else ""
                     if _login_role_tag and _sourcing_role_tag and _login_role_tag != _sourcing_role_tag:
                         logger.info(
                             f"[BULK_ASSESS] Skipped {linkedinurl[:50]}: login role_tag "
