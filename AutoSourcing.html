@@ -483,7 +483,7 @@ pre {
 .notif-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.45);
+  background: rgba(0,0,0,0.2);
   z-index: 9999;
   display: flex;
   align-items: center;
@@ -493,37 +493,60 @@ pre {
 .notif-modal-box {
   background: var(--panel, #fff);
   border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--radius, 10px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-  padding: 28px 32px;
-  max-width: 440px;
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+  padding: 16px 20px;
+  max-width: 300px;
   width: 90%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
-.notif-modal-box .notif-icon { font-size: 28px; text-align: center; }
-.notif-modal-box .notif-msg { font-size: 14px; color: var(--text, #1e293b); line-height: 1.6; }
-.notif-modal-box .notif-suppress { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-soft, #64748b); cursor: pointer; user-select: none; }
-.notif-modal-box .notif-suppress input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+.notif-modal-box .notif-msg { font-size: 13px; color: var(--text, #1e293b); line-height: 1.55; }
+.notif-modal-box .notif-suppress { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-soft, #64748b); cursor: pointer; user-select: none; }
+.notif-modal-box .notif-suppress input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; }
 .notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
 
-/* Projected Token Usage tooltip */
+/* Projected Token Usage tooltip — glossary card style */
 .projected-token-tooltip {
   position: absolute;
-  z-index: 100;
-  top: calc(100% + 6px);
+  z-index: 200;
+  top: calc(100% + 8px);
   left: 0;
-  white-space: nowrap;
+  min-width: 210px;
   background: var(--panel, #fff);
   border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--radius-sm, 6px);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.13);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
   padding: 10px 14px;
   font-size: 12px;
   color: var(--text, #1e293b);
   line-height: 1.7;
   font-weight: 400;
+}
+.projected-token-tooltip .tooltip-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-soft, #64748b);
+  margin-bottom: 5px;
+}
+.projected-token-tooltip ul {
+  margin: 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+}
+.projected-token-tooltip ul li {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+.projected-token-tooltip ul li::before {
+  content: '•';
+  color: var(--accent, #073679);
+  font-size: 10px;
 }
 
 </style>
@@ -617,10 +640,12 @@ pre {
         <div id="projectedTokenWrap" style="position:relative; display:inline-flex;">
           <span class="token-counter" id="projectedTokenDisplay" style="cursor:default;">Projected Token Usage: —</span>
           <div id="projectedTokenTooltip" class="projected-token-tooltip" style="display:none;">
-            <strong>Rate rules:</strong><br>
-            Best Mode → Each profile costs 1.5 tokens<br>
-            Target Limit &gt; 50 → Each profile costs 2 tokens<br>
-            Best Mode + Target Limit &gt; 50 → Each profile costs 2.5 tokens
+            <div class="tooltip-title">Token Pricing</div>
+            <ul>
+              <li>Best Mode → 1.5 tokens/profile</li>
+              <li>Target Limit &gt; 50 → 2 tokens/profile</li>
+              <li>Best Mode + Target Limit &gt; 50 → 2.5 tokens/profile</li>
+            </ul>
           </div>
         </div>
       </div>
@@ -3654,13 +3679,12 @@ function renderExternalSuggestions(jobs, comps){
 <!-- Notification modal: Best Mode -->
 <div id="notifBestModeOverlay" class="notif-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notifBestModeMsg">
   <div class="notif-modal-box">
-    <div class="notif-icon">⚡</div>
     <div class="notif-msg" id="notifBestModeMsg">Each profile costs <strong>1.5 tokens</strong> due to extensive query combinations for comprehensive search.</div>
     <label class="notif-suppress">
       <input type="checkbox" id="notifBestModeSuppressChk"> Do not display this message in the future.
     </label>
     <div class="notif-actions">
-      <button class="primary" id="notifBestModeOkBtn" style="padding:8px 24px; font-size:13px;">OK</button>
+      <button class="primary" id="notifBestModeOkBtn" style="padding:6px 18px; font-size:12px;">OK</button>
     </div>
   </div>
 </div>
@@ -3668,13 +3692,12 @@ function renderExternalSuggestions(jobs, comps){
 <!-- Notification modal: Target Limit > 50 -->
 <div id="notifTargetLimitOverlay" class="notif-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notifTargetLimitMsg">
   <div class="notif-modal-box">
-    <div class="notif-icon">⚠️</div>
     <div class="notif-msg" id="notifTargetLimitMsg">Each profile costs <strong>2 tokens</strong> due to exceeding the agreed limit.</div>
     <label class="notif-suppress">
       <input type="checkbox" id="notifTargetLimitSuppressChk"> Do not display this message in the future.
     </label>
     <div class="notif-actions">
-      <button class="primary" id="notifTargetLimitOkBtn" style="padding:8px 24px; font-size:13px;">OK</button>
+      <button class="primary" id="notifTargetLimitOkBtn" style="padding:6px 18px; font-size:12px;">OK</button>
     </div>
   </div>
 </div>
