@@ -514,7 +514,7 @@ def start_job():
                 _login_session_ts = _login_row[1] if _login_row else None
                 # Transfer role_tag to sourcing table (authoritative source for assessments)
                 cur_l.execute("ALTER TABLE sourcing ADD COLUMN IF NOT EXISTS role_tag TEXT DEFAULT ''")
-                cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s", (role_tag_val, username))
+                cur_l.execute("UPDATE sourcing SET role_tag=%s WHERE username=%s AND (role_tag IS NULL OR role_tag='')", (role_tag_val, username))
                 # Transfer session timestamp to sourcing after validating role_tag matches
                 if _login_role_tag == role_tag_val and _login_session_ts is not None:
                     cur_l.execute(

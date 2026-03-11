@@ -4848,6 +4848,25 @@ def user_token_update():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== Fetch Skills Endpoint ====================
+
+@app.route("/user/fetch_skills", methods=["GET"])
+def user_fetch_skills():
+    """
+    GET /user/fetch_skills?username=<username>
+    Returns the user's skill list from the login table (jskillset or skills column).
+    Response: { "skills": ["Python", "C++", ...] }
+    """
+    username = (request.args.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username required"}), 400
+    try:
+        skills = _fetch_jskillset(username)
+        return jsonify({"skills": skills}), 200
+    except Exception as e:
+        logger.error(f"[fetch_skills] Error for user='{username}': {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ==================== Role Tag Update Endpoint ====================
 
 @app.route("/user/update_role_tag", methods=["POST", "GET"])
