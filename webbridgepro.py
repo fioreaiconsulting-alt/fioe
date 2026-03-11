@@ -3124,6 +3124,26 @@ def suggest():
         SUGGEST_CACHE[key]=payload
     return jsonify(payload)
 
+_CORP_SUFFIX_RE_PRO = re.compile(
+    r'(\s*,?\s*'
+    r'(?:Co\.\s*,?\s*Ltd\.?|Co\.?,?|Ltd\.?|Inc\.?|K\.K\.?|Corp\.?|Corporation|GmbH'
+    r'|S\.A\.?|N\.V\.?|B\.V\.?|A\.G\.?|PLC|Plc|L\.L\.C\.?|LLC|Company,?)'
+    r'\s*[,.]?\s*)$',
+    re.IGNORECASE
+)
+
+def _strip_corp_suffix_pro(name: str) -> str:
+    """Strip trailing corporate entity suffixes from a company name."""
+    if not name:
+        return name
+    result = name.strip().rstrip(',').rstrip('.').strip()
+    for _ in range(3):
+        new = _CORP_SUFFIX_RE_PRO.sub('', result).strip().rstrip(',').rstrip('.').strip()
+        if new == result:
+            break
+        result = new
+    return result if result else name.strip()
+
 @app.post("/sector_suggest")
 def sector_suggest():
     data = request.get_json(force=True, silent=True) or {}
@@ -3141,8 +3161,13 @@ def sector_suggest():
     normalized=[n for n in normalized if n]
     gem=_gemini_multi_sector(normalized, user_job_title, user_company, languages)
     if gem and (gem.get("job",{}).get("related") or gem.get("company",{}).get("related")):
+        comp_rel = gem.get("company",{}).get("related") or []
+        gem.setdefault("company", {})["related"] = [_strip_corp_suffix_pro(c) for c in comp_rel if c]
         return jsonify(gem), 200
-    return jsonify(_heuristic_multi_sector(normalized, user_job_title, user_company, languages)), 200
+    result = _heuristic_multi_sector(normalized, user_job_title, user_company, languages)
+    comp_rel = result.get("company",{}).get("related") or []
+    result.setdefault("company", {})["related"] = [_strip_corp_suffix_pro(c) for c in comp_rel if c]
+    return jsonify(result), 200
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
