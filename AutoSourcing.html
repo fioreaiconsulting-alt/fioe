@@ -508,6 +508,24 @@ pre {
 .notif-modal-box .notif-suppress input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
 .notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
 
+/* Projected Token Usage tooltip */
+.projected-token-tooltip {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 6px);
+  left: 0;
+  white-space: nowrap;
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius-sm, 6px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.13);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text, #1e293b);
+  line-height: 1.7;
+  font-weight: 400;
+}
+
 </style>
 </head>
 <body>
@@ -587,12 +605,6 @@ pre {
         <div id="welcomeText" style="font-weight:700; font-size:16px; color:var(--text); font-family:var(--theme-font);">Welcome</div>
         <div id="welcomeHandle" style="font-size:13px; color:var(--text-soft);"></div>
       </div>
-      <div id="tokenBadgeWrap" style="display:none; flex-direction:column; gap:2px; margin-left:8px; padding-left:16px; border-left:1px solid var(--neutral-border);">
-        <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-soft); letter-spacing:.4px;">Account Tokens</div>
-        <div id="accountTokenDisplay" style="font-size:15px; font-weight:700; color:var(--accent);">—</div>
-        <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-soft); letter-spacing:.4px; margin-top:4px;">Projected Usage</div>
-        <div id="projectedTokenDisplay" style="font-size:13px; font-weight:700; color:var(--text);">—</div>
-      </div>
     </div>
     <button id="logoutBtn" type="button" class="mini-btn" style="border-color:var(--border);">Logout</button>
   </div>
@@ -600,6 +612,18 @@ pre {
   <div class="panel">
     <div class="panel-header" style="margin-bottom: 24px; padding-bottom: 0; border-bottom: none;">
       <h1>AutoSourcing</h1>
+      <div id="tokenCounterRow" style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap; align-items:center;">
+        <span class="token-counter" id="accountTokenDisplay">Account Tokens: —</span>
+        <div id="projectedTokenWrap" style="position:relative; display:inline-flex;">
+          <span class="token-counter" id="projectedTokenDisplay" style="cursor:default;">Projected Token Usage: —</span>
+          <div id="projectedTokenTooltip" class="projected-token-tooltip" style="display:none;">
+            <strong>Rate rules:</strong><br>
+            Best Mode → Each profile costs 1.5 tokens<br>
+            Target Limit &gt; 50 → Each profile costs 2 tokens<br>
+            Best Mode + Target Limit &gt; 50 → Each profile costs 2.5 tokens
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Smart Search Builder Configuration Panel -->
@@ -2655,12 +2679,14 @@ async function enhanceWelcomeWithFullName(){
     // Store admin status and account tokens
     window.__IS_ADMIN = (data.useraccess || '').trim().toLowerCase() === 'admin';
     window.__ACCOUNT_TOKEN = typeof data.token === 'number' ? data.token : parseInt(data.token || '0', 10);
-    // Show token badge in banner
-    const tokenBadgeWrap = document.getElementById('tokenBadgeWrap');
+    // Show token counters below AutoSourcing heading
+    const tokenCounterRow = document.getElementById('tokenCounterRow');
     const accountTokenDisplay = document.getElementById('accountTokenDisplay');
-    if(tokenBadgeWrap && accountTokenDisplay){
-      accountTokenDisplay.textContent = window.__ACCOUNT_TOKEN;
-      tokenBadgeWrap.style.display = 'flex';
+    if(accountTokenDisplay){
+      accountTokenDisplay.textContent = 'Account Tokens: ' + window.__ACCOUNT_TOKEN;
+    }
+    if(tokenCounterRow){
+      tokenCounterRow.style.display = 'flex';
     }
     updateProjectedTokens();
     // Apply admin visibility to compiled query and queries section
@@ -2680,16 +2706,14 @@ function _getTokenRate(){
   return 1;
 }
 
-// Recalculate and display projected token usage in the banner.
+// Recalculate and display projected token usage below the heading.
 function updateProjectedTokens(){
   const projectedEl = document.getElementById('projectedTokenDisplay');
   if(!projectedEl) return;
   const targetLimit = parseInt((document.getElementById('userTargetInput') || {}).value || '0', 10) || 0;
-  if(!targetLimit){ projectedEl.textContent = '—'; return; }
-  const rate = _getTokenRate();
-  const projected = Math.floor(targetLimit * rate);
-  const rateLabel = rate === 1 ? '×1' : rate === 1.5 ? '×1.5' : rate === 2 ? '×2' : '×2.5';
-  projectedEl.textContent = projected + ' tokens (' + targetLimit + ' profiles ' + rateLabel + ')';
+  projectedEl.textContent = !targetLimit
+    ? 'Projected Token Usage: —'
+    : 'Projected Token Usage: ' + Math.floor(targetLimit * _getTokenRate());
 }
 
 // ── Admin visibility ─────────────────────────────────────────────────────────
@@ -2804,6 +2828,21 @@ function showTargetLimitNotif(){
         showTargetLimitNotif();
       }
       _prevOver50 = over50;
+    });
+  }catch(_){}
+})();
+
+// ── Wire up Projected Token Usage tooltip ────────────────────────────────────
+(function initProjectedTokenTooltip(){
+  try{
+    const wrap = document.getElementById('projectedTokenWrap');
+    const tooltip = document.getElementById('projectedTokenTooltip');
+    if(!wrap || !tooltip) return;
+    wrap.addEventListener('mouseenter', function(){
+      tooltip.style.display = 'block';
+    });
+    wrap.addEventListener('mouseleave', function(){
+      tooltip.style.display = 'none';
     });
   }catch(_){}
 })();
