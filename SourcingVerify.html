@@ -856,6 +856,16 @@ function normalizeRoleTag(roleTag) {
   return (roleTag || '').trim().toLowerCase();
 }
 
+/**
+ * Returns true if the recruiter's session role_tag and the candidate row's sourcing
+ * role_tag are both set AND they differ — indicating a mismatch that blocks upload/assessment.
+ */
+function isRoleTagMismatch(tr) {
+  const sessionRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
+  const rowRoleTag = normalizeRoleTag((tr && tr.dataset && tr.dataset.roleTag) || '');
+  return !!(sessionRoleTag && rowRoleTag && sessionRoleTag !== rowRoleTag);
+}
+
 function getLockedWeightRoles() {
   try { return JSON.parse(localStorage.getItem(SV_WEIGHTS_LOCKED_KEY) || '{}'); } catch(_) { return {}; }
 }
@@ -3606,9 +3616,7 @@ function buildRow(row) {
                     console.log(`[Upload CV] LinkedIn URL: ${value}`);
 
                     // Role-tag gate: block upload if recruiter's role_tag differs from candidate's sourcing role_tag.
-                    const _uploadSessionRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
-                    const _uploadRowRoleTag = normalizeRoleTag(tr.dataset.roleTag || '');
-                    if (_uploadSessionRoleTag && _uploadRowRoleTag && _uploadSessionRoleTag !== _uploadRowRoleTag) {
+                    if (isRoleTagMismatch(tr)) {
                         browseBtn.textContent = 'Upload CV';
                         browseBtn.disabled = false;
                         browseBtn.classList.remove('btn-spinning');
@@ -4785,15 +4793,19 @@ function renderTable(){
     const _lastAnchor = localStorage.getItem('sv_last_viewed_anchor');
     if (_lastAnchor) {
       const _detailsPane = document.getElementById('tab-details');
-      const _alreadyOpen = _detailsPane && _detailsPane.classList.contains('active');
-      if (!_alreadyOpen) {
-        const _matchingTr = tableBody.querySelector(`tr[data-linkedinurl="${CSS.escape(_lastAnchor)}"]`);
+      if (_detailsPane && !_detailsPane.classList.contains('active')) {
+        // Iterate rows to avoid CSS selector injection issues with special URL characters
+        let _matchingTr = null;
+        const _rows = tableBody.querySelectorAll('tr[data-linkedinurl]');
+        for (let i = 0; i < _rows.length; i++) {
+          if (_rows[i].dataset.linkedinurl === _lastAnchor) { _matchingTr = _rows[i]; break; }
+        }
         if (_matchingTr && window.__sv_namecard && window.__sv_namecard.toggleNameCard) {
           window.__sv_namecard.toggleNameCard(_matchingTr);
         }
       }
     }
-  } catch(_) {}
+  } catch(err) { console.error('[SV] Failed to restore last viewed profile:', err); }
 }
 
 /* --- AFFECTED: Namecard UI injection modified for Tab Layout --- */
@@ -5481,9 +5493,7 @@ function renderTable(){
       browseBtn.textContent = 'Uploading...';
 
       // Role-tag gate: block upload if recruiter's role_tag differs from candidate's sourcing role_tag.
-      const _browseSessionRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
-      const _browseRowRoleTag = normalizeRoleTag((tr && tr.dataset && tr.dataset.roleTag) || '');
-      if (_browseSessionRoleTag && _browseRowRoleTag && _browseSessionRoleTag !== _browseRowRoleTag) {
+      if (isRoleTagMismatch(tr)) {
           browseBtn.disabled = false;
           browseBtn.textContent = origText;
           setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
@@ -6046,7 +6056,7 @@ function renderTable(){
     try {
       const _anchor = tr.dataset.linkedinurl || '';
       if (_anchor) localStorage.setItem('sv_last_viewed_anchor', _anchor);
-    } catch(_) {}
+    } catch(err) { console.error('[SV] Failed to persist viewed anchor:', err); }
     switchTab('tab-details');
     renderNameCardToTab(tr);
     // Auto-refresh Search Result tab in background when viewing details
