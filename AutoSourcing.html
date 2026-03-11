@@ -503,16 +503,14 @@ pre {
   gap: 10px;
 }
 .notif-modal-box .notif-msg { font-size: 13px; color: var(--text, #1e293b); line-height: 1.55; }
-.notif-modal-box .notif-suppress { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-soft, #94a3b8); cursor: pointer; user-select: none; opacity: 0.75; }
-.notif-modal-box .notif-suppress input[type=checkbox] { width: 12px; height: 12px; cursor: pointer; }
+.notif-modal-box .notif-suppress { display: flex; align-items: center; gap: 5px; font-size: 7px; color: var(--text-soft, #94a3b8); cursor: pointer; user-select: none; opacity: 0.65; }
+.notif-modal-box .notif-suppress input[type=checkbox] { width: 10px; height: 10px; cursor: pointer; }
 .notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
 
 /* Projected Token Usage tooltip — glossary card style */
 .projected-token-tooltip {
-  position: absolute;
-  z-index: 200;
-  bottom: calc(100% + 8px);
-  left: 0;
+  position: fixed;
+  z-index: 9999;
   min-width: 240px;
   background: #1b2636;
   border: 1px solid rgba(255,255,255,0.08);
@@ -523,6 +521,7 @@ pre {
   color: #e8edf2;
   line-height: 1.75;
   font-weight: 400;
+  pointer-events: none;
 }
 .projected-token-tooltip .tooltip-title {
   font-size: 10.5px;
@@ -2858,6 +2857,10 @@ function showTargetLimitNotif(){
     if(!wrap || !tooltip) return;
     wrap.addEventListener('mouseenter', function(){
       tooltip.style.display = 'block';
+      const badgeRect = wrap.getBoundingClientRect();
+      const tipRect = tooltip.getBoundingClientRect();
+      tooltip.style.left = badgeRect.left + 'px';
+      tooltip.style.top = (badgeRect.top - tipRect.height - 8) + 'px';
     });
     wrap.addEventListener('mouseleave', function(){
       tooltip.style.display = 'none';
