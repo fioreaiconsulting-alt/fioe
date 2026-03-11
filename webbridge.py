@@ -4882,8 +4882,16 @@ def user_update_role_tag():
             f"[UpdateRoleTag] Set role_tag='{role_tag}' session_ts='{login_session_ts}' "
             f"for user='{username}' in login and sourcing tables"
         )
+        # login_session_ts may be a datetime object or a plain string depending on
+        # the column type and psycopg2 type-casting; handle both safely.
+        if login_session_ts is not None:
+            session_val = (login_session_ts.isoformat()
+                           if hasattr(login_session_ts, 'isoformat')
+                           else str(login_session_ts))
+        else:
+            session_val = None
         return jsonify({"ok": True, "username": username, "role_tag": role_tag,
-                        "session": login_session_ts.isoformat() if login_session_ts else None}), 200
+                        "session": session_val}), 200
     except Exception as e:
         logger.exception(f"[UpdateRoleTag] Failed for user='{username}': {e}")
         if conn:
