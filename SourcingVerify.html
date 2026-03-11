@@ -3615,15 +3615,14 @@ function buildRow(row) {
                     console.log(`[Upload CV] Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`);
                     console.log(`[Upload CV] LinkedIn URL: ${value}`);
 
-                    // Role-tag gate: block upload if recruiter's role_tag differs from candidate's sourcing role_tag.
+                    // Role-tag gate: silently skip upload if recruiter's role_tag differs from candidate's sourcing role_tag.
                     if (isRoleTagMismatch(tr)) {
+                        console.warn('[Upload CV] Silently skipped: role_tag mismatch for', value);
                         browseBtn.textContent = 'Upload CV';
                         browseBtn.disabled = false;
                         browseBtn.classList.remove('btn-spinning');
                         browseBtn.style.background = 'white';
                         browseBtn.style.color = '#0a66c2';
-                        setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
-                        alert('Role mismatch detected. Upload and assessment halted.');
                         return;
                     }
 
@@ -4374,11 +4373,10 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         }
     } catch(_) {}
 
-    // Role-tag gate: block assessment if recruiter's session role_tag differs from the
+    // Role-tag gate: silently skip assessment if recruiter's session role_tag differs from the
     // candidate's sourcing role_tag (both must be set and differ to block).
     if (isRoleTagMismatch(tr)) {
-        console.warn(`[Assessment] Blocked ${anchor}: role_tag mismatch.`);
-        setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
+        console.warn(`[Assessment] Silently skipped ${anchor}: role_tag mismatch.`);
         return false;
     }
 
@@ -5475,12 +5473,11 @@ function renderTable(){
       browseBtn.disabled = true;
       browseBtn.textContent = 'Uploading...';
 
-      // Role-tag gate: block upload if recruiter's role_tag differs from candidate's sourcing role_tag.
+      // Role-tag gate: silently skip upload if recruiter's role_tag differs from candidate's sourcing role_tag.
       if (isRoleTagMismatch(tr)) {
+          console.warn('[Browse File] Silently skipped: role_tag mismatch for', anchor);
           browseBtn.disabled = false;
           browseBtn.textContent = origText;
-          setStatus('Role mismatch detected. Upload and assessment halted.', 'error');
-          alert('Role mismatch detected. Upload and assessment halted.');
           return;
       }
 
