@@ -8160,20 +8160,36 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
         # ── Category Appraisals ────────────────────────────────────────────────
         if appraisals:
             _add_section_heading("Category Appraisals")
+            # Build reverse mapping: display_name → criteria breakdown score
+            criteria_breakdown = assessment_result.get("criteria") or {}
+            _label_to_keys = {}
+            for _k, _v in _CRIT_LABEL.items():
+                _label_to_keys.setdefault(_v, []).append(_k)
+
+            def _get_score_for_category(display_name):
+                """Return actual computed score for a category from the criteria breakdown."""
+                dn_lower = display_name.lower()
+                try:
+                    # Try direct lowercase match
+                    if dn_lower in criteria_breakdown:
+                        return str(round(float(criteria_breakdown[dn_lower]), 1))
+                    # Try mapped internal keys
+                    for _key in _label_to_keys.get(display_name, []):
+                        if _key in criteria_breakdown:
+                            return str(round(float(criteria_breakdown[_key]), 1))
+                except (ValueError, TypeError):
+                    pass
+                return "-"
+
             ap_data = []
             for cat, appraisal in appraisals.items():
                 if isinstance(appraisal, dict):
-                    weight = appraisal.get("weight_percent", "")
+                    score_val = _get_score_for_category(str(cat))
                     rating = str(appraisal.get("rating", "") or "")
                     status = str(appraisal.get("status", "") or "")
                     comment = str(appraisal.get("comment", "") or "")
                     rating_status = f"{rating} / {status}" if status else rating
-                    ap_data.append([
-                        str(cat),
-                        f"{weight}%" if weight not in (None, "") else "-",
-                        rating_status,
-                        comment,
-                    ])
+                    ap_data.append([str(cat), score_val, rating_status, comment])
                 else:
                     ap_data.append([str(cat), "-", "-", str(appraisal)])
             _add_table(

@@ -5503,7 +5503,7 @@ function renderTable(){
     downloadBtn.textContent = 'Download Assessment';
     downloadBtn.title = 'Download assessment report as Word document (available after assessment is complete)';
     downloadBtn.style.width = '100%'; // Full width
-    downloadBtn.style.display = 'block';
+    downloadBtn.style.display = 'none'; // Hidden until assessment exists
     downloadBtn.style.backgroundColor = '#f6f8fa';
     downloadBtn.style.color = '#0969da';
     downloadBtn.style.border = '1px solid #d0d7de';
@@ -5720,8 +5720,25 @@ function renderTable(){
         a.click();
         document.body.removeChild(a);
       });
-      // Button is always visible — no has_report gate needed
-      const _checkReportExists = () => {};
+      // Check if an assessment exists for this candidate and show the button if so
+      const _checkReportExists = async () => {
+        try {
+          const nameCellAnchor = tds[2] ? (tds[2].querySelector('a')?.href || '') : '';
+          const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || nameCellAnchor || '';
+          if (!anchor) return;
+          const params = new URLSearchParams({ linkedin: anchor });
+          if (_candidateName) params.set('name', _candidateName);
+          const resp = await fetch('/sourcing/has_report?' + params.toString());
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.exists) {
+              downloadBtn.style.display = 'block';
+            }
+          }
+        } catch (e) {
+          console.warn('[DownloadBtn] has_report check failed:', e);
+        }
+      };
       _checkReportExists();
       // Store checker on the button so it can be re-invoked after assessment completes
       downloadBtn._checkReportExists = _checkReportExists;
