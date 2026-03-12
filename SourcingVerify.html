@@ -867,32 +867,40 @@ function isRoleTagMismatch(tr) {
 }
 
 /* Cache the criteria JSON (profiles list) for the current session to avoid repeated fetches */
-let _criteriaJsonCache = null;
-let _criteriaJsonCacheKey = '';
+const _criteriaJsonCacheMap = new Map(); // key: "username|roleTag" → Set of names
 
-async function _getCriteriaProfiles() {
+/**
+ * Returns a Set of normalized profile names from the criteria JSON for the given
+ * role_tag. The role_tag MUST come from the sourcing table row — no session fallback.
+ * Returns null when the file cannot be found (file not found → caller must skip the row).
+ * Results are cached per username+role_tag key so repeated bulk-row lookups are cheap.
+ */
+async function _getCriteriaProfiles(roleTag) {
   const username = window.__SV_ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
-  const roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-  if (!username || !roleTag) return null;
-  const cacheKey = username + '|' + roleTag;
-  if (_criteriaJsonCache !== null && _criteriaJsonCacheKey === cacheKey) return _criteriaJsonCache;
+  // Strict: only use the explicitly supplied role_tag (from sourcing table).
+  // An empty roleTag means we cannot identify the correct JSON file → return null (skip).
+  const rt = (roleTag || '').trim();
+  if (!username || !rt) return null;
+  const cacheKey = username + '|' + rt;
+  if (_criteriaJsonCacheMap.has(cacheKey)) return _criteriaJsonCacheMap.get(cacheKey);
   try {
-    const res = await fetch(`/load_search_criteria?username=${encodeURIComponent(username)}&role_tag=${encodeURIComponent(roleTag)}`, {credentials:'same-origin'});
-    if (!res.ok) { _criteriaJsonCache = null; _criteriaJsonCacheKey = cacheKey; return null; }
+    const res = await fetch(`/load_search_criteria?username=${encodeURIComponent(username)}&role_tag=${encodeURIComponent(rt)}`, {credentials:'same-origin'});
+    if (!res.ok) { _criteriaJsonCacheMap.set(cacheKey, null); return null; }
     const data = await res.json();
     const names = Array.isArray(data.name) ? data.name : (Array.isArray(data.profiles) ? data.profiles : []);
-    _criteriaJsonCache = new Set(names.map(n => (n||'').replace(/님/g,'').trim().toLowerCase()));
-    _criteriaJsonCacheKey = cacheKey;
-    return _criteriaJsonCache;
+    const nameSet = new Set(names.map(n => (n||'').replace(/님/g,'').trim().toLowerCase()));
+    _criteriaJsonCacheMap.set(cacheKey, nameSet);
+    return nameSet;
   } catch(e) { console.warn('[_getCriteriaProfiles] Failed to load criteria JSON:', e); return null; }
 }
 
 /**
- * Returns true if profileName is found (case-insensitive) in profileSet, or if profileSet is
- * null/empty (no restriction — criteria file not yet available or has no profiles list).
+ * Returns true only when profileName is found (case-insensitive) in profileSet.
+ * Strict mode: returns false when profileSet is null (file not found) or empty —
+ * the JSON file is the sole source of truth; no file or missing name means skip.
  */
 function _isProfileNameInJson(profileName, profileSet) {
-  if (!profileSet || profileSet.size === 0) return true; // no list = no restriction
+  if (!profileSet || profileSet.size === 0) return false; // no file or no names → skip
   return profileSet.has((profileName || '').replace(/님/g,'').trim().toLowerCase());
 }
 
@@ -2044,45 +2052,24 @@ async function runBulkAssessmentFromSearch() {
     const allRows = document.querySelectorAll('#sourcingTable tbody tr');
     const linkedinurls = [];
     const alreadyAssessedUrls = [];
-    const skippedRoleTagUrls = [];
     const skippedNotInJsonUrls = [];
 
-    // Ineligible set: candidates blocked because the user proceeded to AutoSourcing
-    // without completing their assessment for them.
-    let _bulkIneligible;
-    try { _bulkIneligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]')); }
-    catch(_) { _bulkIneligible = new Set(); }
-
-    // Current session role_tag for validation
-    const currentRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
-
-    // Load the criteria JSON profile list once for the bulk run
-    const jsonProfileNames = await _getCriteriaProfiles();
-
-    allRows.forEach(tr => {
+    for (const tr of allRows) {
         if (tr.dataset.linkedinurl) {
             const linkedinurl = tr.dataset.linkedinurl;
 
-            // Block ineligible candidates.
-            if (_bulkIneligible.has(linkedinurl)) return;
-
-            // Validate that the sourcing record's role_tag exactly matches the current session
-            // role_tag. When a session role_tag is active, profiles that lack a role_tag or
-            // have a different one must be skipped — they belong to a different search session.
-            const rowRoleTag = normalizeRoleTag(tr.dataset.roleTag);
-            if (currentRoleTag && rowRoleTag !== currentRoleTag) {
-                skippedRoleTagUrls.push(linkedinurl);
-                return;
-            }
-
-            // Cross-check profile name against the criteria JSON file.
-            // Only profiles whose name appears in the JSON's profiles list are eligible.
+            // Cross-check profile name against the criteria JSON file that corresponds to
+            // the row's OWN role_tag (from the sourcing table), not the session role_tag.
+            // This ensures "Site Activation Manager" rows are checked against the SAM JSON,
+            // while "Cloud Engineer" rows are checked against the Cloud Engineer JSON.
             const rowData = rowsData.find(r => (r.linkedinurl || '').trim() === linkedinurl.trim());
             const profileName = (rowData && rowData.name) || '';
+            const rowRoleTag = (tr.dataset.roleTag || '').trim();
+            const jsonProfileNames = await _getCriteriaProfiles(rowRoleTag);
             if (!_isProfileNameInJson(profileName, jsonProfileNames)) {
-                console.warn(`[Bulk Assessment] Skipped "${profileName}" (${linkedinurl}): name not found in criteria JSON.`);
+                console.warn(`[Bulk Assessment] Skipped "${profileName}" (${linkedinurl}): name not found in criteria JSON for role_tag "${rowRoleTag}".`);
                 skippedNotInJsonUrls.push(linkedinurl);
-                return;
+                continue;
             }
 
             // Check if profile already has an assessment score
@@ -2102,21 +2089,16 @@ async function runBulkAssessmentFromSearch() {
                 linkedinurls.push(linkedinurl);
             }
         }
-    });
-
-    if (skippedRoleTagUrls.length > 0) {
-        console.log(`[Bulk Assessment] Skipped ${skippedRoleTagUrls.length} record(s) whose role_tag does not match current session role_tag "${currentRoleTag}".`);
     }
+
     if (skippedNotInJsonUrls.length > 0) {
-        console.log(`[Bulk Assessment] Skipped ${skippedNotInJsonUrls.length} record(s) whose name was not found in the criteria JSON file.`);
+        console.log(`[Bulk Assessment] Skipped ${skippedNotInJsonUrls.length} record(s) whose name was not found in their respective criteria JSON file.`);
     }
     
     // Check if there are any profiles to assess
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
             alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
-        } else if (skippedRoleTagUrls.length > 0) {
-            alert(`No profiles match the current search role. ${skippedRoleTagUrls.length} record(s) were skipped because their role_tag does not match the current session.`);
         } else {
             alert('No profiles found to assess');
         }
@@ -3700,17 +3682,6 @@ function buildRow(row) {
                     console.log(`[Upload CV] Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`);
                     console.log(`[Upload CV] LinkedIn URL: ${value}`);
 
-                    // Role-tag gate: silently skip upload if recruiter's role_tag differs from candidate's sourcing role_tag.
-                    if (isRoleTagMismatch(tr)) {
-                        console.warn('[Upload CV] Silently skipped: role_tag mismatch for', value);
-                        browseBtn.textContent = 'Upload CV';
-                        browseBtn.disabled = false;
-                        browseBtn.classList.remove('btn-spinning');
-                        browseBtn.style.background = 'white';
-                        browseBtn.style.color = '#0a66c2';
-                        return;
-                    }
-
                     try {
                         const res = await fetch(API_UPLOAD_CV, {
                           method: 'POST', body: fd, credentials: 'same-origin'
@@ -4447,31 +4418,15 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     // runs vskillset generation, and performs L2 (inference) assessment.
     // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
 
-    // Block candidates marked ineligible because the user proceeded to AutoSourcing without
-    // completing their assessment (stored in sv_assessment_ineligible via AutoSourcing).
-    try {
-        const ineligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]'));
-        if (ineligible.has(anchor)) {
-            console.warn(`[Assessment] Blocked ${anchor}: marked ineligible after AutoSourcing was accessed with pending assessments.`);
-            setStatus('Assessment blocked: this candidate was skipped when AutoSourcing was accessed with pending assessments.', 'info');
-            return false;
-        }
-    } catch(_) {}
-
-    // Role-tag gate: silently skip assessment if recruiter's session role_tag differs from the
-    // candidate's sourcing role_tag (both must be set and differ to block).
-    if (isRoleTagMismatch(tr)) {
-        console.warn(`[Assessment] Silently skipped ${anchor}: role_tag mismatch.`);
-        return false;
-    }
-
-    // JSON profile-name gate: silently skip if this profile's name is not in the criteria JSON.
+    // JSON profile-name gate: silently skip if this profile's name is not in the criteria JSON
+    // that corresponds to the row's OWN role_tag (from sourcing table).
     try {
         const rowData = rowsData.find(r => (r.linkedinurl || '').trim() === (anchor || '').trim());
         const profileName = (rowData && rowData.name) || '';
-        const jsonProfiles = await _getCriteriaProfiles();
+        const rowRoleTag = ((tr && tr.dataset && tr.dataset.roleTag) || '').trim();
+        const jsonProfiles = await _getCriteriaProfiles(rowRoleTag);
         if (!_isProfileNameInJson(profileName, jsonProfiles)) {
-            console.warn(`[Assessment] Silently skipped ${anchor}: profile name "${profileName}" not found in criteria JSON.`);
+            console.warn(`[Assessment] Silently skipped ${anchor}: profile name "${profileName}" not found in criteria JSON for role_tag "${rowRoleTag}".`);
             return false;
         }
     } catch(e) { console.warn('[performCombinedAssessment] Profile name check failed:', e); }
@@ -5533,7 +5488,7 @@ function renderTable(){
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
     downloadBtn.textContent = 'Download CV';
-    downloadBtn.title = 'Download stored PDF CV';
+    downloadBtn.title = 'Download criteria report as PDF';
     downloadBtn.style.width = '100%'; // Full width
     downloadBtn.style.display = 'none'; 
     downloadBtn.style.backgroundColor = '#f6f8fa';
@@ -5568,14 +5523,6 @@ function renderTable(){
       const origText = browseBtn.textContent;
       browseBtn.disabled = true;
       browseBtn.textContent = 'Uploading...';
-
-      // Role-tag gate: silently skip upload if recruiter's role_tag differs from candidate's sourcing role_tag.
-      if (isRoleTagMismatch(tr)) {
-          console.warn('[Browse File] Silently skipped: role_tag mismatch for', anchor);
-          browseBtn.disabled = false;
-          browseBtn.textContent = origText;
-          return;
-      }
 
       const fd = new FormData();
       fd.append('cv', file); 
@@ -5705,7 +5652,6 @@ function renderTable(){
           
           browseBtn.title = 'File uploaded successfully';
           
-          downloadBtn.style.display = 'inline-block';
           setCardCache(anchor, { cv: true }); 
           
            setTimeout(() => {
@@ -5744,17 +5690,31 @@ function renderTable(){
     });
 
     if (linkedinurl) {
+      const _candidateName = (name || '').replace(/님/g, '').trim();
       downloadBtn.addEventListener('click', () => {
         const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
         if (anchor) {
           const a = document.createElement('a');
-          a.href = API_DOWNLOAD_CV + '?linkedin=' + encodeURIComponent(anchor);
+          a.href = '/sourcing/download_criteria_pdf?linkedin=' + encodeURIComponent(anchor)
+                  + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
           a.download = '';
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
         }
       });
+      // Check if a criteria JSON file exists for this candidate and show/hide button accordingly
+      (async () => {
+        try {
+          const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
+                   + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
+          const res = await fetch('/sourcing/has_criteria_json?' + qs, { credentials: 'same-origin' });
+          if (res.ok) {
+            const data = await res.json();
+            downloadBtn.style.display = data.exists ? 'inline-block' : 'none';
+          }
+        } catch(_) {}
+      })();
     }
 
     /* Append elements to Action Container */
@@ -5902,7 +5862,7 @@ function renderTable(){
           } catch (e) { mid.textContent = cached.experience; }
         }
         if (cached.cv) {
-          downloadBtn.style.display = 'inline-block';
+          // Download CV button visibility is controlled by criteria JSON check (set at render time)
         }
         // Restore assessment HTML if present in cache (and wasn't already in row)
         // if (cached.assessmentHTML && (!rowMatchingContainer || !rowMatchingContainer.innerHTML.trim())) {
@@ -6244,9 +6204,7 @@ function renderTable(){
                   const prevCache = getCardCache(anchorLookup) || {};
                   const hasCV = !!(geo.cv || prevCache.cv);
 
-                  if (hasCV) {
-                    downloadBtn.style.display = 'inline-block';
-                  }
+                  // Download CV button visibility is controlled by criteria JSON check (set at render time)
                   
                   if(geo.experience || geo.education) {
                       let displayExp = geo.experience || '';

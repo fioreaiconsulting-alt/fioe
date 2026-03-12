@@ -7205,6 +7205,238 @@ def save_search_criteria():
         return jsonify({"error": str(exc)}), 500
 
 
+def _find_criteria_file_for_candidate(candidate_name: str):
+    """Scan CRITERIA_OUTPUT_DIR for a JSON file whose 'name' list contains candidate_name.
+    Returns the file path and parsed record, or (None, None) if not found.
+    """
+    if not candidate_name or not os.path.isdir(CRITERIA_OUTPUT_DIR):
+        return None, None
+    norm = candidate_name.replace("님", "").strip().lower()
+    try:
+        for fname in os.listdir(CRITERIA_OUTPUT_DIR):
+            if not fname.endswith(".json"):
+                continue
+            fpath = os.path.join(CRITERIA_OUTPUT_DIR, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    rec = json.load(fh)
+                names = rec.get("name") or rec.get("profiles") or []
+                for n in names:
+                    if n.replace("님", "").strip().lower() == norm:
+                        return fpath, rec
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None, None
+
+
+def _criteria_record_to_pdf_bytes(record: dict) -> bytes:
+    """Convert a criteria JSON record to a minimal PDF.
+    Falls back to reportlab if available, otherwise writes a raw minimal PDF.
+    """
+    # -- Flatten content to lines -----------------------------------------------
+    lines = []
+    lines.append(("title", f"Search Criteria Report"))
+    lines.append(("gap", ""))
+    lines.append(("key", f"Role: {record.get('role_tag', '')}"))
+    lines.append(("key", f"Generated: {record.get('saved_at', '')}"))
+    lines.append(("gap", ""))
+    lines.append(("section", "CRITERIA"))
+    criteria = record.get("criteria") or {}
+    for k, v in criteria.items():
+        if isinstance(v, list):
+            v_str = ", ".join(str(x) for x in v) if v else "—"
+        else:
+            v_str = str(v) if v is not None else "—"
+        lines.append(("item", f"{k}: {v_str}"))
+    lines.append(("gap", ""))
+    lines.append(("section", "SOURCED PROFILES"))
+    profiles = record.get("name") or record.get("profiles") or []
+    for p in profiles:
+        lines.append(("item", f"  • {p}"))
+
+    # -- Try reportlab first -----------------------------------------------------
+    try:
+        from reportlab.pdfgen import canvas as rl_canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        import io as _io
+        buf = _io.BytesIO()
+        c = rl_canvas.Canvas(buf, pagesize=A4)
+        w, h = A4
+        y = h - 50
+        for kind, text in lines:
+            if kind == "gap":
+                y -= 10; continue
+            if kind == "title":
+                c.setFont("Helvetica-Bold", 16)
+            elif kind == "section":
+                c.setFont("Helvetica-Bold", 12)
+                y -= 4
+            else:
+                c.setFont("Helvetica", 11)
+            # Encode to latin-1 to avoid non-Latin characters crashing Helvetica
+            safe = text.encode("latin-1", errors="replace").decode("latin-1")
+            c.drawString(40, y, safe)
+            y -= 16
+            if y < 60:
+                c.showPage()
+                y = h - 50
+        c.save()
+        return buf.getvalue()
+    except ImportError:
+        pass
+
+    # -- Raw minimal PDF fallback (Latin-1 only) ---------------------------------
+    import struct as _struct
+    text_parts = []
+    for kind, text in lines:
+        safe = text.encode("latin-1", errors="replace").decode("latin-1")
+        size = 16 if kind == "title" else (12 if kind == "section" else 11)
+        bold = "-Bold" if kind in ("title", "section") else ""
+        text_parts.append((safe, size, bold))
+
+    def _pdf_str(s):
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    stream_lines = ["BT", "/F1 16 Tf", "40 792 Td"]
+    y = 742
+    for safe, size, bold in text_parts:
+        if not safe.strip():
+            y -= 10
+            stream_lines.append(f"0 -{10} Td")
+            continue
+        fname = f"/F{'B' if bold else '1'}"
+        stream_lines.append(f"{fname} {size} Tf")
+        stream_lines.append(f"({_pdf_str(safe)}) Tj")
+        y -= 16
+        stream_lines.append(f"0 -{16} Td")
+    stream_lines.append("ET")
+    stream = "\n".join(stream_lines).encode("latin-1")
+
+    def _obj(n, d, s=None):
+        out = f"{n} 0 obj\n{d}\n"
+        if s is not None:
+            out += f"stream\n"
+            out = out.encode("latin-1") + s + b"\nendstream\n"
+            return out + b"endobj\n"
+        return (out + "endobj\n").encode("latin-1")
+
+    o1 = _obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    o2 = _obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    o3 = _obj(3, f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /FB 6 0 R >> >> >>")
+    slen = len(stream)
+    o4 = _obj(4, f"<< /Length {slen} >>", stream)
+    o5 = _obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    o6 = _obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+
+    header = b"%PDF-1.4\n"
+    body = o1 + o2 + o3 + o4 + o5 + o6
+    offsets = []
+    pos = len(header)
+    for chunk in (o1, o2, o3, o4, o5, o6):
+        offsets.append(pos)
+        pos += len(chunk)
+
+    xref_offset = len(header) + len(body)
+    xref = f"xref\n0 7\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n"
+    trailer = f"trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    return header + body + (xref + trailer).encode("latin-1")
+
+
+@app.get("/sourcing/has_criteria_json")
+def has_criteria_json():
+    """Check whether a criteria JSON file exists for the given candidate.
+
+    Query params:
+        linkedin  – candidate LinkedIn URL
+        name      – candidate name (used for lookup)
+    Returns { "exists": true/false }
+    """
+    name = (request.args.get("name") or "").strip()
+    linkedin = (request.args.get("linkedin") or "").strip()
+    if not name and not linkedin:
+        return jsonify({"exists": False}), 200
+    # If no name provided, try to look it up from sourcing table
+    if not name and linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sourcing WHERE linkedinurl=%s AND name IS NOT NULL LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    name = row[0].replace("님", "").strip()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    if not name:
+        return jsonify({"exists": False}), 200
+    fpath, _ = _find_criteria_file_for_candidate(name)
+    return jsonify({"exists": fpath is not None}), 200
+
+
+@app.get("/sourcing/download_criteria_pdf")
+def download_criteria_pdf():
+    """Download the criteria JSON file for the given candidate as a PDF.
+
+    Query params:
+        linkedin  – candidate LinkedIn URL
+        name      – candidate name (used for file lookup)
+    Returns the PDF file as an attachment, or 404 if no criteria file found.
+    """
+    name = (request.args.get("name") or "").strip()
+    linkedin = (request.args.get("linkedin") or "").strip()
+    if not name and not linkedin:
+        return "name or linkedin required", 400
+    # Look up name from sourcing table if not supplied
+    if not name and linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sourcing WHERE linkedinurl=%s AND name IS NOT NULL LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    name = row[0].replace("님", "").strip()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning(f"[download_criteria_pdf] DB lookup failed: {exc}")
+    if not name:
+        return "No candidate name found", 404
+    fpath, record = _find_criteria_file_for_candidate(name)
+    if not record:
+        return "No criteria file found for this candidate", 404
+    try:
+        pdf_bytes = _criteria_record_to_pdf_bytes(record)
+    except Exception as exc:
+        logger.exception("[download_criteria_pdf] PDF generation failed")
+        return f"PDF generation failed: {exc}", 500
+    safe_role = re.sub(r'[<>:"/\\|?*]', '_', record.get("role_tag", "criteria"))
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    fname = f"{safe_role} {safe_name}.pdf"
+    from flask import Response as _Response
+    return _Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 if __name__ == '__main__':
     port=int(os.getenv("PORT","8091"))
     logger.info(f"Starting AutoSourcing webbridge on :{port}")

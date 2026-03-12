@@ -4798,72 +4798,40 @@ def process_bulk_assess():
             except Exception as _e_bulk_idem:
                 logger.warning(f"[BULK_ASSESS] Idempotency pre-check failed for {linkedinurl[:50]} (continuing): {_e_bulk_idem}")
 
-            # If role_tag not in process, try sourcing table first (authoritative), fallback to process table by username
-            if not role_tag:
-                if linkedinurl:
-                    cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
-                    src_row = cur.fetchone()
-                    if src_row and src_row[0]:
-                        role_tag = src_row[0]
-                if not role_tag and username_db:
-                    cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
-                    src_row = cur.fetchone()
-                    if src_row and src_row[0]:
-                        role_tag = src_row[0]
-                if not role_tag and username_db:
-                    cur.execute("SELECT role_tag FROM process WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
-                    proc_row = cur.fetchone()
-                    if proc_row and proc_row[0]:
-                        role_tag = proc_row[0]
-            
-            # --- Role-tag gate: compare login.role_tag (recruiter) vs sourcing.role_tag (candidate) ---
-            # The authoritative comparison is always DB-to-DB: read the recruiter's role_tag directly
-            # from the login table and compare against the sourcing record's role_tag fetched directly
-            # from the sourcing table. Never use process.role_tag here — it may have been set during
-            # a previous assessment with a different role and would produce a false match.
-            recruiter_username_for_rt = username or username_db
-            if recruiter_username_for_rt:
+            # ALWAYS look up role_tag from sourcing by linkedinurl first — this is the per-profile
+            # authoritative source.  The process table's role_tag may have been set during a previous
+            # search with a different role and must NOT override the sourcing record.
+            _sourcing_role_tag_direct = None
+            if linkedinurl:
                 try:
-                    cur.execute(
-                        "SELECT role_tag FROM login WHERE username = %s LIMIT 1",
-                        (recruiter_username_for_rt,)
-                    )
-                    _login_rt_row = cur.fetchone()
-                    _login_role_tag = (_login_rt_row[0] or "").strip().lower() if _login_rt_row else ""
-                    # Always fetch sourcing.role_tag directly for this comparison — do not use the
-                    # role_tag variable which may have been populated from process table.
-                    _sourcing_rt_direct_row = None
+                    cur.execute("SELECT role_tag FROM sourcing WHERE linkedinurl = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (linkedinurl,))
+                    _src_rt_row = cur.fetchone()
+                    if _src_rt_row and _src_rt_row[0]:
+                        _sourcing_role_tag_direct = _src_rt_row[0]
+                except Exception as _e_src_rt:
+                    logger.debug(f"[BULK_ASSESS] sourcing role_tag direct lookup failed: {_e_src_rt}")
+            if _sourcing_role_tag_direct:
+                role_tag = _sourcing_role_tag_direct
+                logger.info(f"[BULK_ASSESS] role_tag='{role_tag}' sourced from sourcing table for {linkedinurl[:50]}")
+            elif not role_tag:
+                # Only fall back to process/username lookups when sourcing table has no role_tag
+                if username_db:
                     try:
-                        cur.execute(
-                            "SELECT role_tag FROM sourcing WHERE linkedinurl = %s LIMIT 1",
-                            (linkedinurl,)
-                        )
-                        _sourcing_rt_direct_row = cur.fetchone()
-                    except Exception as _src_rt_err:
-                        logger.debug(f"[BULK_ASSESS] sourcing role_tag lookup failed for {linkedinurl[:50]}: {_src_rt_err}")
-                    _sourcing_role_tag = (_sourcing_rt_direct_row[0] or "").strip().lower() if _sourcing_rt_direct_row else ""
-                    if _login_role_tag and _sourcing_role_tag and _login_role_tag != _sourcing_role_tag:
-                        logger.info(
-                            f"[BULK_ASSESS] Skipped {linkedinurl[:50]}: login role_tag "
-                            f"{_login_role_tag!r} != sourcing role_tag {_sourcing_role_tag!r}"
-                        )
-                        try:
-                            cur.close()
-                        finally:
-                            conn.close()
-                        return {
-                            "linkedinurl": linkedinurl,
-                            "result": {
-                                "_skipped": True,
-                                "error": (
-                                    f"Assessment skipped: role tag mismatch "
-                                    f"(recruiter={_login_role_tag!r}, candidate={_sourcing_role_tag!r})"
-                                )
-                            }
-                        }
-                except Exception as _rt_err:
-                    logger.debug(f"[BULK_ASSESS] Role-tag comparison skipped: {_rt_err}")
-
+                        cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
+                        src_row = cur.fetchone()
+                        if src_row and src_row[0]:
+                            role_tag = src_row[0]
+                    except Exception as _e_src_u:
+                        logger.debug(f"[BULK_ASSESS] sourcing role_tag by username lookup failed: {_e_src_u}")
+                if not role_tag and username_db:
+                    try:
+                        cur.execute("SELECT role_tag FROM process WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
+                        proc_row = cur.fetchone()
+                        if proc_row and proc_row[0]:
+                            role_tag = proc_row[0]
+                    except Exception as _e_proc_u:
+                        logger.debug(f"[BULK_ASSESS] process role_tag by username lookup failed: {_e_proc_u}")
+            
             cur.close()
             conn.close()
             # Sync from login to process first so the latest job skillset is available.
