@@ -4360,6 +4360,21 @@ Return ONLY the JSON object, no other text."""
     except Exception as e:
         logger.warning(f"[Gemini Assess -> DB rating] {e}")
 
+    # Write assessment result to disk so has_report / _find_assessment_for_candidate can
+    # locate it without requiring a bulk run.  Mirrors the path used by _assess_and_persist
+    # in webbridge_cv.py.
+    if linkedinurl:
+        try:
+            _safe_name = "assessment_" + hashlib.sha256(linkedinurl.encode("utf-8")).hexdigest()[:16] + ".json"
+            _assess_dir = os.path.join(OUTPUT_DIR, "assessments")
+            os.makedirs(_assess_dir, exist_ok=True)
+            _out_path = os.path.join(_assess_dir, _safe_name)
+            with open(_out_path, "w", encoding="utf-8") as _fh:
+                json.dump(out_obj, _fh, indent=2, ensure_ascii=False)
+            logger.info(f"[Gemini Assess] Persisted assessment file: {_out_path}")
+        except Exception as _e_file:
+            logger.warning(f"[Gemini Assess] Failed to write assessment file: {_e_file}")
+
     return jsonify(out_obj), 200
 
 # ... [Login/Register/Auth functions kept as is] ...
@@ -7491,6 +7506,33 @@ def _find_assessment_for_candidate(linkedin_url: str):
                             return result
             except Exception:
                 continue
+    except Exception:
+        pass
+    # 3. DB fallback — read the `rating` column from the process table.
+    #    This covers candidates assessed via the individual path before file-writing
+    #    was added, and acts as a safety net when the on-disk file is missing.
+    try:
+        conn = _pg_connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT rating FROM process WHERE linkedinurl = %s AND rating IS NOT NULL"
+                " ORDER BY rating_updated_at DESC NULLS LAST LIMIT 1",
+                (linkedin_url,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0]:
+                rating = row[0]
+                if isinstance(rating, str):
+                    try:
+                        rating = json.loads(rating)
+                    except Exception:
+                        rating = None
+                if isinstance(rating, dict) and not rating.get("_skipped"):
+                    return rating
+        finally:
+            conn.close()
     except Exception:
         pass
     return None
