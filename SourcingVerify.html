@@ -4654,6 +4654,13 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         window.__sv_assessment_in_flight.delete(anchor);
         // Re-enable action buttons after individual assessment completes
         setSearchResultButtonsEnabled(true);
+        // Refresh Download Assessment button visibility now that assessment is done
+        try {
+            const dlBtn = document.querySelector('#details-container .sv-download-btn');
+            if (dlBtn && typeof dlBtn._checkReportExists === 'function') {
+                dlBtn._checkReportExists();
+            }
+        } catch(_) { /* non-critical UI update – ignore errors */ }
     }
 }
 
@@ -5487,7 +5494,7 @@ function renderTable(){
     const downloadBtn = document.createElement('button');
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
-    downloadBtn.textContent = 'Download CV';
+    downloadBtn.textContent = 'Download Assessment';
     downloadBtn.title = 'Download assessment report as PDF (available after assessment is complete)';
     downloadBtn.style.width = '100%'; // Full width
     downloadBtn.style.display = 'none'; 
@@ -5703,18 +5710,21 @@ function renderTable(){
           document.body.removeChild(a);
         }
       });
-      // Show Download CV button only when assessment is complete (criteria JSON + assessment result exist)
-      (async () => {
+      // Show Download Assessment button only when assessment is complete (criteria JSON + assessment result exist)
+      const _checkReportExists = async () => {
         try {
           const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
                    + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
           const res = await fetch('/sourcing/has_report?' + qs, { credentials: 'same-origin' });
           if (res.ok) {
             const data = await res.json();
-            downloadBtn.style.display = data.exists ? 'inline-block' : 'none';
+            downloadBtn.style.display = data.exists ? 'block' : 'none';
           }
-        } catch(_) {}
-      })();
+        } catch(_) { /* non-critical visibility check – ignore network/parse errors */ }
+      };
+      _checkReportExists();
+      // Store checker on the button so it can be re-invoked after assessment completes
+      downloadBtn._checkReportExists = _checkReportExists;
     }
 
     /* Append elements to Action Container */
@@ -5862,7 +5872,7 @@ function renderTable(){
           } catch (e) { mid.textContent = cached.experience; }
         }
         if (cached.cv) {
-          // Download CV button visibility is controlled by has_report check (set at render time — requires assessment completion)
+          // Download Assessment button visibility is controlled by has_report check (set at render time — requires assessment completion)
         }
         // Restore assessment HTML if present in cache (and wasn't already in row)
         // if (cached.assessmentHTML && (!rowMatchingContainer || !rowMatchingContainer.innerHTML.trim())) {
@@ -6204,7 +6214,7 @@ function renderTable(){
                   const prevCache = getCardCache(anchorLookup) || {};
                   const hasCV = !!(geo.cv || prevCache.cv);
 
-                  // Download CV button visibility is controlled by has_report check (set at render time — requires assessment completion)
+                  // Download Assessment button visibility is controlled by has_report check (set at render time — requires assessment completion)
                   
                   if(geo.experience || geo.education) {
                       let displayExp = geo.experience || '';
