@@ -5710,15 +5710,8 @@ function renderTable(){
           document.body.removeChild(a);
         }
       });
-      // Show Download Assessment button only when assessment is complete (criteria JSON + assessment result exist)
-      const _checkReportExists = async () => {
-        try {
-          const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
-                   + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
-          const res = await fetch('/sourcing/has_report?' + qs, { credentials: 'same-origin' });
-          // Button is always visible — no hide logic here
-        } catch(_) { /* non-critical visibility check – ignore network/parse errors */ }
-      };
+      // Button is always visible — no has_report gate needed
+      const _checkReportExists = () => {};
       _checkReportExists();
       // Store checker on the button so it can be re-invoked after assessment completes
       downloadBtn._checkReportExists = _checkReportExists;
