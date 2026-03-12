@@ -3628,10 +3628,17 @@ def gemini_assess_profile():
         except Exception as e_jsk_sync:
             logger.warning(f"[Gemini Assess] jskillset sync failed: {e_jsk_sync}")
 
-    # 2. Fetch Target Skillset (jskillset) from process table (after sync)
-    # Per requirement: Cross-check against jskillset column in process table, not login table
+    # 2. Fetch Target Skillset — priority: criteria JSON file (authoritative), then DB.
     target_skills = []
-    if linkedinurl:
+    if username and role_tag:
+        _criteria = _read_search_criteria(username, role_tag)
+        if _criteria:
+            _file_skills = _criteria.get("Skillset") or []
+            if _file_skills:
+                target_skills = _file_skills
+                logger.info(f"[Gemini Assess] target_skills loaded from criteria file ({len(target_skills)}) for {linkedinurl[:50]}")
+    # DB fallback when criteria file is unavailable
+    if not target_skills and linkedinurl:
         target_skills = _fetch_jskillset_from_process(linkedinurl)
     # Fallback to login table if process table doesn't have jskillset
     if not target_skills and username:
@@ -6406,6 +6413,46 @@ def _gemini_extract_company_from_jobtitle(job_title_raw: str, candidates=None):
 
 
 # ---------------------------------------------------------------------------
+# Criteria-file helpers — must be defined BEFORE `import webbridge_cv` because
+# webbridge_cv.py imports these names from this module at its top level.
+CRITERIA_OUTPUT_DIR = os.getenv(
+    "CRITERIA_OUTPUT_DIR",
+    r"F:\Recruiting Tools\Autosourcing\output\Criteras"
+)
+
+
+def _get_criteria_filepath(username, role_tag):
+    """Return the full path for the criteria JSON file for the given user/role_tag.
+    Returns None if either argument is empty.
+    """
+    username = (username or "").strip()
+    role_tag = (role_tag or "").strip()
+    if not username or not role_tag:
+        return None
+    safe_role = re.sub(r'[<>:"/\\|?*\.]', '_', role_tag).strip('_')
+    safe_user = re.sub(r'[<>:"/\\|?*\.]', '_', username).strip('_')
+    if not safe_role or not safe_user:
+        return None
+    return os.path.join(CRITERIA_OUTPUT_DIR, f"{safe_role} {safe_user}.json")
+
+
+def _read_search_criteria(username, role_tag):
+    """Load and return the criteria dict from the saved JSON file, or None if not found."""
+    filepath = _get_criteria_filepath(username, role_tag)
+    if not filepath:
+        return None
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data.get("criteria") or None
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.warning(f"[load_search_criteria] Failed to read {filepath}", exc_info=True)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Import second-half routes (job runner, sourcing, CV processing, bulk assess).
 # webbridge_cv.py is a sibling module that imports shared state from this file;
 # the circular import is safe because all names below are defined before this
@@ -7050,6 +7097,37 @@ def byok_validate():
         return jsonify({"error": "Validation failed", "detail": str(exc)}), 500
 
 
+@app.get("/load_search_criteria")
+def load_search_criteria():
+    """Return the saved search criteria and profile list for the given username and role_tag.
+
+    Query params:
+        username  – recruiter username
+        role_tag  – recruiter's active role tag
+    Returns the criteria JSON object (including profiles list), or 404 if no file exists.
+    """
+    username = (request.args.get("username") or "").strip()
+    role_tag = (request.args.get("role_tag") or "").strip()
+    if not username or not role_tag:
+        return jsonify({"error": "username and role_tag are required"}), 400
+    filepath = _get_criteria_filepath(username, role_tag)
+    if not filepath:
+        return jsonify({"error": "No criteria file found"}), 404
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            record = json.load(fh)
+    except FileNotFoundError:
+        return jsonify({"error": "No criteria file found"}), 404
+    except Exception as exc:
+        logger.warning(f"[load_search_criteria] Failed to read {filepath}: {exc}")
+        return jsonify({"error": "Failed to read criteria file"}), 500
+    return jsonify({
+        "ok": True,
+        "criteria": record.get("criteria") or {},
+        "name": record.get("name") or record.get("profiles") or [],
+    }), 200
+
+
 @app.post("/save_search_criteria")
 def save_search_criteria():
     """Save the search category breakdown criteria to a JSON file on the server.
@@ -7061,10 +7139,6 @@ def save_search_criteria():
                      Company, Skillset, Tenure
     File is written to  <CRITERIA_OUTPUT_DIR>/<role_tag> <username>.json
     """
-    CRITERIA_OUTPUT_DIR = os.getenv(
-        "CRITERIA_OUTPUT_DIR",
-        r"F:\Recruiting Tools\Autosourcing\output\Criteras"
-    )
     try:
         body = request.get_json(force=True, silent=True) or {}
         username = (body.get("username") or "").strip()
@@ -7074,24 +7148,41 @@ def save_search_criteria():
         if not username or not role_tag:
             return jsonify({"error": "username and role_tag are required"}), 400
 
-        # Sanitize filename – strip characters that are illegal on Windows/Linux
-        # and guard against path traversal
-        safe_role = re.sub(r'[<>:"/\\|?*\.]', '_', role_tag)
-        safe_user = re.sub(r'[<>:"/\\|?*\.]', '_', username)
-        # Extra safety: ensure no directory separators sneak through
-        safe_role = safe_role.replace('/', '_').replace('\\', '_').strip('_')
-        safe_user = safe_user.replace('/', '_').replace('\\', '_').strip('_')
-        if not safe_role or not safe_user:
+        filepath = _get_criteria_filepath(username, role_tag)
+        if not filepath:
             return jsonify({"error": "Invalid role_tag or username after sanitization"}), 400
-        filename = f"{safe_role} {safe_user}.json"
+        filename = os.path.basename(filepath)
 
         os.makedirs(CRITERIA_OUTPUT_DIR, exist_ok=True)
-        filepath = os.path.join(CRITERIA_OUTPUT_DIR, filename)
+
+        # Fetch profile names from the sourcing table for this user/role search
+        profile_names = []
+        try:
+            _pconn = _pg_connect()
+            try:
+                _pcur = _pconn.cursor()
+                _pcur.execute(
+                    "SELECT DISTINCT name FROM sourcing "
+                    "WHERE username=%s AND role_tag=%s AND name IS NOT NULL AND name != ''",
+                    (username, role_tag)
+                )
+                # Strip the "님" honorific suffix and surrounding whitespace
+                profile_names = [
+                    row[0].replace("님", "").strip()
+                    for row in _pcur.fetchall()
+                    if row[0]
+                ]
+                _pcur.close()
+            finally:
+                _pconn.close()
+        except Exception as _pe:
+            logger.warning(f"[save_search_criteria] Could not fetch profile names: {_pe}")
 
         record = {
             "role_tag": role_tag,
             "username": username,
             "saved_at": datetime.utcnow().isoformat() + "Z",
+            "name": profile_names,
             "criteria": {
                 "Job Title":  criteria.get("Job Title") or [],
                 "Seniority":  criteria.get("Seniority") or "",
@@ -7106,8 +7197,8 @@ def save_search_criteria():
         with open(filepath, "w", encoding="utf-8") as fh:
             json.dump(record, fh, ensure_ascii=False, indent=2)
 
-        logger.info(f"[save_search_criteria] Written to {filepath}")
-        return jsonify({"ok": True, "file": filename}), 200
+        logger.info(f"[save_search_criteria] Written to {filepath} with {len(profile_names)} profile(s)")
+        return jsonify({"ok": True, "file": filename, "name": len(profile_names)}), 200
 
     except Exception as exc:
         logger.exception("[save_search_criteria]")

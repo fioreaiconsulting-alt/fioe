@@ -77,6 +77,7 @@ from webbridge import (
     _extract_company_from_jobtitle, _gemini_extract_company_from_jobtitle,
     _role_tag_session_column_ensured,
     _increment_cse_query_count,
+    CRITERIA_OUTPUT_DIR, _get_criteria_filepath, _read_search_criteria,
 )
 
 def _job_runner(job_id, queries, fallback_queries, auto_expand, manual_urls, search_results_only, country, dynamic_target, job_titles):
@@ -4417,6 +4418,7 @@ def process_pending_assessments():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 def _generate_vskillset_for_profile(linkedinurl, target_skills, experience_text="", cv_data=None):
     """
     Generate vskillset for a profile using Gemini inference.
@@ -4875,7 +4877,18 @@ def process_bulk_assess():
                 except Exception as e_sync_jsk:
                     logger.warning(f"[BULK_ASSESS] jskillset sync failed for {linkedinurl}: {e_sync_jsk}")
 
-            target_skills = _fetch_jskillset_from_process(linkedinurl) or []
+            target_skills = []
+            # Priority 1: load from the criteria JSON file saved after the AutoSourcing search run.
+            # This is the authoritative source — never rely on cached/DB-derived values when the file exists.
+            _criteria = _read_search_criteria(recruiter_username, role_tag)
+            if _criteria:
+                _file_skills = _criteria.get("Skillset") or []
+                if _file_skills:
+                    target_skills = _file_skills
+                    logger.info(f"[BULK_ASSESS] target_skills loaded from criteria file ({len(target_skills)} skills) for {linkedinurl[:50]}")
+            # Priority 2: fall back to DB-derived values only if the file is unavailable.
+            if not target_skills:
+                target_skills = _fetch_jskillset_from_process(linkedinurl) or []
             if not target_skills and recruiter_username:
                 target_skills = _fetch_jskillset(recruiter_username) or []
 
