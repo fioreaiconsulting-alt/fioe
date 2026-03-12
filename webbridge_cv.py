@@ -3551,7 +3551,10 @@ def _core_assess_profile(data):
         _FALLBACK_ALIASES = {
             "uk": "united kingdom", "usa": "united states", "us": "united states",
             "uae": "united arab emirates",
+            "south korea": "korea", "republic of korea": "korea", "kr": "korea",
         }
+        # All aliases that resolve to "korea" plus "korea" itself — used for post-alias normalisation
+        _KOREA_VARIANTS = {k for k, v in _FALLBACK_ALIASES.items() if v == "korea"} | {"korea"}
 
         def _resolve(val):
             v = str(val).lower().strip()
@@ -3560,6 +3563,9 @@ def _core_assess_profile(data):
                 v = _json_aliases.get(v, v).lower()  # aliases may be title-cased in JSON
             else:
                 v = _FALLBACK_ALIASES.get(v, v)
+            # Normalise South Korea / Korea variants regardless of JSON alias source
+            if v in _KOREA_VARIANTS:
+                v = "korea"
             # Resolve city to country (JSON cities values are capitalised; lower for comparison)
             # Try full value, first comma-separated token, then last token
             # (handles "Tokyo" → "Japan", "Tokyo, JP" → "Japan", "Unknown City, Japan" → "Japan")
@@ -3583,7 +3589,7 @@ def _core_assess_profile(data):
         cc = _resolve(candidate_country)
         rc = _resolve(required_country)
         if cc == rc or cc in rc or rc in cc:
-            return "match", f"Country match: {candidate_country}"
+            return "match", "Location matches"
         return "unrelated", f"Country mismatch: candidate={candidate_country}, required={required_country}"
 
     # Derive required seniority from role_tag if not explicitly provided
@@ -3647,7 +3653,7 @@ def _core_assess_profile(data):
                 st, cm = country_heuristic(country, required_country)
             elif country:
                 # No required country specified; candidate has a location → no restriction, treat as match
-                st, cm = "match", "No country requirement; candidate location accepted"
+                st, cm = "match", "Location matches"
             else:
                 st, cm = "not_assessed", ""
             assessment_results[c] = {"status": st, "comment": cm}

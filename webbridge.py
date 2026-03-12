@@ -8177,7 +8177,7 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
                 else:
                     ap_data.append([str(cat), "-", "-", str(appraisal)])
             _add_table(
-                ["Category", "Weight", "Rating / Status", "Comment"],
+                ["Category", "Score", "Rating / Status", "Comment"],
                 ap_data,
                 col_widths_cm=[3.5, 1.8, 3.2, 8.5],
             )
