@@ -2044,17 +2044,7 @@ async function runBulkAssessmentFromSearch() {
     const allRows = document.querySelectorAll('#sourcingTable tbody tr');
     const linkedinurls = [];
     const alreadyAssessedUrls = [];
-    const skippedRoleTagUrls = [];
     const skippedNotInJsonUrls = [];
-
-    // Ineligible set: candidates blocked because the user proceeded to AutoSourcing
-    // without completing their assessment for them.
-    let _bulkIneligible;
-    try { _bulkIneligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]')); }
-    catch(_) { _bulkIneligible = new Set(); }
-
-    // Current session role_tag for validation
-    const currentRoleTag = normalizeRoleTag(sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '');
 
     // Load the criteria JSON profile list once for the bulk run
     const jsonProfileNames = await _getCriteriaProfiles();
@@ -2062,18 +2052,6 @@ async function runBulkAssessmentFromSearch() {
     allRows.forEach(tr => {
         if (tr.dataset.linkedinurl) {
             const linkedinurl = tr.dataset.linkedinurl;
-
-            // Block ineligible candidates.
-            if (_bulkIneligible.has(linkedinurl)) return;
-
-            // Validate that the sourcing record's role_tag exactly matches the current session
-            // role_tag. When a session role_tag is active, profiles that lack a role_tag or
-            // have a different one must be skipped — they belong to a different search session.
-            const rowRoleTag = normalizeRoleTag(tr.dataset.roleTag);
-            if (currentRoleTag && rowRoleTag !== currentRoleTag) {
-                skippedRoleTagUrls.push(linkedinurl);
-                return;
-            }
 
             // Cross-check profile name against the criteria JSON file.
             // Only profiles whose name appears in the JSON's profiles list are eligible.
@@ -2104,9 +2082,6 @@ async function runBulkAssessmentFromSearch() {
         }
     });
 
-    if (skippedRoleTagUrls.length > 0) {
-        console.log(`[Bulk Assessment] Skipped ${skippedRoleTagUrls.length} record(s) whose role_tag does not match current session role_tag "${currentRoleTag}".`);
-    }
     if (skippedNotInJsonUrls.length > 0) {
         console.log(`[Bulk Assessment] Skipped ${skippedNotInJsonUrls.length} record(s) whose name was not found in the criteria JSON file.`);
     }
@@ -2115,8 +2090,6 @@ async function runBulkAssessmentFromSearch() {
     if (linkedinurls.length === 0) {
         if (alreadyAssessedUrls.length > 0) {
             alert(`All ${alreadyAssessedUrls.length} profiles already have assessments. No new assessments needed.`);
-        } else if (skippedRoleTagUrls.length > 0) {
-            alert(`No profiles match the current search role. ${skippedRoleTagUrls.length} record(s) were skipped because their role_tag does not match the current session.`);
         } else {
             alert('No profiles found to assess');
         }
@@ -3700,17 +3673,6 @@ function buildRow(row) {
                     console.log(`[Upload CV] Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`);
                     console.log(`[Upload CV] LinkedIn URL: ${value}`);
 
-                    // Role-tag gate: silently skip upload if recruiter's role_tag differs from candidate's sourcing role_tag.
-                    if (isRoleTagMismatch(tr)) {
-                        console.warn('[Upload CV] Silently skipped: role_tag mismatch for', value);
-                        browseBtn.textContent = 'Upload CV';
-                        browseBtn.disabled = false;
-                        browseBtn.classList.remove('btn-spinning');
-                        browseBtn.style.background = 'white';
-                        browseBtn.style.color = '#0a66c2';
-                        return;
-                    }
-
                     try {
                         const res = await fetch(API_UPLOAD_CV, {
                           method: 'POST', body: fd, credentials: 'same-origin'
@@ -4446,24 +4408,6 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     // All assessments use the bulk workflow: the backend fetches all profile data from DB,
     // runs vskillset generation, and performs L2 (inference) assessment.
     // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
-
-    // Block candidates marked ineligible because the user proceeded to AutoSourcing without
-    // completing their assessment (stored in sv_assessment_ineligible via AutoSourcing).
-    try {
-        const ineligible = new Set(JSON.parse(localStorage.getItem('sv_assessment_ineligible') || '[]'));
-        if (ineligible.has(anchor)) {
-            console.warn(`[Assessment] Blocked ${anchor}: marked ineligible after AutoSourcing was accessed with pending assessments.`);
-            setStatus('Assessment blocked: this candidate was skipped when AutoSourcing was accessed with pending assessments.', 'info');
-            return false;
-        }
-    } catch(_) {}
-
-    // Role-tag gate: silently skip assessment if recruiter's session role_tag differs from the
-    // candidate's sourcing role_tag (both must be set and differ to block).
-    if (isRoleTagMismatch(tr)) {
-        console.warn(`[Assessment] Silently skipped ${anchor}: role_tag mismatch.`);
-        return false;
-    }
 
     // JSON profile-name gate: silently skip if this profile's name is not in the criteria JSON.
     try {
@@ -5533,7 +5477,7 @@ function renderTable(){
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
     downloadBtn.textContent = 'Download CV';
-    downloadBtn.title = 'Download stored PDF CV';
+    downloadBtn.title = 'Download criteria report as PDF';
     downloadBtn.style.width = '100%'; // Full width
     downloadBtn.style.display = 'none'; 
     downloadBtn.style.backgroundColor = '#f6f8fa';
@@ -5568,14 +5512,6 @@ function renderTable(){
       const origText = browseBtn.textContent;
       browseBtn.disabled = true;
       browseBtn.textContent = 'Uploading...';
-
-      // Role-tag gate: silently skip upload if recruiter's role_tag differs from candidate's sourcing role_tag.
-      if (isRoleTagMismatch(tr)) {
-          console.warn('[Browse File] Silently skipped: role_tag mismatch for', anchor);
-          browseBtn.disabled = false;
-          browseBtn.textContent = origText;
-          return;
-      }
 
       const fd = new FormData();
       fd.append('cv', file); 
@@ -5705,7 +5641,6 @@ function renderTable(){
           
           browseBtn.title = 'File uploaded successfully';
           
-          downloadBtn.style.display = 'inline-block';
           setCardCache(anchor, { cv: true }); 
           
            setTimeout(() => {
@@ -5744,17 +5679,31 @@ function renderTable(){
     });
 
     if (linkedinurl) {
+      const _candidateName = (name || '').replace(/님/g, '').trim();
       downloadBtn.addEventListener('click', () => {
         const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
         if (anchor) {
           const a = document.createElement('a');
-          a.href = API_DOWNLOAD_CV + '?linkedin=' + encodeURIComponent(anchor);
+          a.href = '/sourcing/download_criteria_pdf?linkedin=' + encodeURIComponent(anchor)
+                  + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
           a.download = '';
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
         }
       });
+      // Check if a criteria JSON file exists for this candidate and show/hide button accordingly
+      (async () => {
+        try {
+          const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
+                   + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
+          const res = await fetch('/sourcing/has_criteria_json?' + qs, { credentials: 'same-origin' });
+          if (res.ok) {
+            const data = await res.json();
+            downloadBtn.style.display = data.exists ? 'inline-block' : 'none';
+          }
+        } catch(_) {}
+      })();
     }
 
     /* Append elements to Action Container */
@@ -5902,7 +5851,7 @@ function renderTable(){
           } catch (e) { mid.textContent = cached.experience; }
         }
         if (cached.cv) {
-          downloadBtn.style.display = 'inline-block';
+          // Download CV button visibility is controlled by criteria JSON check (set at render time)
         }
         // Restore assessment HTML if present in cache (and wasn't already in row)
         // if (cached.assessmentHTML && (!rowMatchingContainer || !rowMatchingContainer.innerHTML.trim())) {
@@ -6244,9 +6193,7 @@ function renderTable(){
                   const prevCache = getCardCache(anchorLookup) || {};
                   const hasCV = !!(geo.cv || prevCache.cv);
 
-                  if (hasCV) {
-                    downloadBtn.style.display = 'inline-block';
-                  }
+                  // Download CV button visibility is controlled by criteria JSON check (set at render time)
                   
                   if(geo.experience || geo.education) {
                       let displayExp = geo.experience || '';
