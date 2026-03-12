@@ -5488,7 +5488,7 @@ function renderTable(){
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
     downloadBtn.textContent = 'Download CV';
-    downloadBtn.title = 'Download criteria report as PDF';
+    downloadBtn.title = 'Download assessment report as PDF (available after assessment is complete)';
     downloadBtn.style.width = '100%'; // Full width
     downloadBtn.style.display = 'none'; 
     downloadBtn.style.backgroundColor = '#f6f8fa';
@@ -5695,7 +5695,7 @@ function renderTable(){
         const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
         if (anchor) {
           const a = document.createElement('a');
-          a.href = '/sourcing/download_criteria_pdf?linkedin=' + encodeURIComponent(anchor)
+          a.href = '/sourcing/download_report?linkedin=' + encodeURIComponent(anchor)
                   + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
           a.download = '';
           document.body.appendChild(a);
@@ -5703,12 +5703,12 @@ function renderTable(){
           document.body.removeChild(a);
         }
       });
-      // Check if a criteria JSON file exists for this candidate and show/hide button accordingly
+      // Show Download CV button only when assessment is complete (criteria JSON + assessment result exist)
       (async () => {
         try {
           const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
                    + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
-          const res = await fetch('/sourcing/has_criteria_json?' + qs, { credentials: 'same-origin' });
+          const res = await fetch('/sourcing/has_report?' + qs, { credentials: 'same-origin' });
           if (res.ok) {
             const data = await res.json();
             downloadBtn.style.display = data.exists ? 'inline-block' : 'none';
@@ -5862,7 +5862,7 @@ function renderTable(){
           } catch (e) { mid.textContent = cached.experience; }
         }
         if (cached.cv) {
-          // Download CV button visibility is controlled by criteria JSON check (set at render time)
+          // Download CV button visibility is controlled by has_report check (set at render time — requires assessment completion)
         }
         // Restore assessment HTML if present in cache (and wasn't already in row)
         // if (cached.assessmentHTML && (!rowMatchingContainer || !rowMatchingContainer.innerHTML.trim())) {
@@ -6204,7 +6204,7 @@ function renderTable(){
                   const prevCache = getCardCache(anchorLookup) || {};
                   const hasCV = !!(geo.cv || prevCache.cv);
 
-                  // Download CV button visibility is controlled by criteria JSON check (set at render time)
+                  // Download CV button visibility is controlled by has_report check (set at render time — requires assessment completion)
                   
                   if(geo.experience || geo.education) {
                       let displayExp = geo.experience || '';

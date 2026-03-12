@@ -880,6 +880,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 SEARCH_XLS_DIR = r"F:\Recruiting Tools\Autosourcing\searchxls"
 os.makedirs(SEARCH_XLS_DIR, exist_ok=True)
 
+# Report output directory — stores final assessment report PDFs
+REPORT_TEMPLATES_DIR = os.getenv(
+    "REPORT_TEMPLATES_DIR",
+    r"F:\Recruiting Tools\Autosourcing\templates"
+)
+os.makedirs(REPORT_TEMPLATES_DIR, exist_ok=True)
+
 GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_CUSTOM_SEARCH_API_KEY")
 GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX") or os.getenv("GOOGLE_CUSTOM_SEARCH_CX")
 
@@ -7429,6 +7436,317 @@ def download_criteria_pdf():
     safe_role = re.sub(r'[<>:"/\\|?*]', '_', record.get("role_tag", "criteria"))
     safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
     fname = f"{safe_role} {safe_name}.pdf"
+    from flask import Response as _Response
+    return _Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assessment Report Generation (criteria JSON + bulk assessment results → PDF)
+# ---------------------------------------------------------------------------
+
+def _find_assessment_for_candidate(linkedin_url: str):
+    """Find the latest assessment result for a candidate.
+
+    Checks (in order):
+      1. OUTPUT_DIR/assessments/assessment_{sha256[:16]}.json  (individual assessment)
+      2. OUTPUT_DIR/bulk_*_results.json                        (most-recent bulk run)
+
+    Returns the assessment result dict, or None if not found.
+    """
+    if not linkedin_url:
+        return None
+    # 1. Individual assessment file (written by gemini_assess_profile / _assess_and_persist)
+    safe_name = "assessment_" + hashlib.sha256(linkedin_url.encode("utf-8")).hexdigest()[:16] + ".json"
+    assess_path = os.path.join(OUTPUT_DIR, "assessments", safe_name)
+    try:
+        with open(assess_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        pass
+    # 2. Bulk results files — scan newest first
+    if not os.path.isdir(OUTPUT_DIR):
+        return None
+    try:
+        bulk_files = sorted(
+            [f for f in os.listdir(OUTPUT_DIR) if f.endswith("_results.json")],
+            key=lambda f: os.path.getmtime(os.path.join(OUTPUT_DIR, f)),
+            reverse=True,
+        )
+        norm_url = linkedin_url.strip().lower()
+        for fname in bulk_files:
+            fpath = os.path.join(OUTPUT_DIR, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    records = json.load(fh)
+                if not isinstance(records, list):
+                    continue
+                for rec in records:
+                    if isinstance(rec, dict) and rec.get("linkedinurl", "").strip().lower() == norm_url:
+                        result = rec.get("result")
+                        if result and not result.get("_skipped"):
+                            return result
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _lines_to_pdf_bytes(lines: list) -> bytes:
+    """Convert a list of (kind, text) tuples to PDF bytes.
+
+    Kinds: 'title', 'section', 'key', 'item', 'gap'
+
+    Tries reportlab first; falls back to a raw minimal PDF.
+    """
+    try:
+        from reportlab.pdfgen import canvas as rl_canvas
+        from reportlab.lib.pagesizes import A4
+        import io as _io
+        buf = _io.BytesIO()
+        c = rl_canvas.Canvas(buf, pagesize=A4)
+        w, h = A4
+        y = h - 50
+        for kind, text in lines:
+            if kind == "gap":
+                y -= 10
+                continue
+            if kind == "title":
+                c.setFont("Helvetica-Bold", 16)
+            elif kind == "section":
+                c.setFont("Helvetica-Bold", 12)
+                y -= 4
+            elif kind == "key":
+                c.setFont("Helvetica-Bold", 11)
+            else:
+                c.setFont("Helvetica", 11)
+            safe = text.encode("latin-1", errors="replace").decode("latin-1")
+            c.drawString(40, y, safe)
+            y -= 16
+            if y < 60:
+                c.showPage()
+                y = h - 50
+        c.save()
+        return buf.getvalue()
+    except ImportError:
+        pass
+
+    # Raw minimal PDF fallback
+    def _pdf_str(s):
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    stream_lines = ["BT", "/F1 16 Tf", "40 792 Td"]
+    for kind, text in lines:
+        safe = text.encode("latin-1", errors="replace").decode("latin-1")
+        if not safe.strip() or kind == "gap":
+            stream_lines.append("0 -10 Td")
+            continue
+        size = 16 if kind == "title" else (12 if kind == "section" else 11)
+        bold = kind in ("title", "section", "key")
+        fname = "/FB" if bold else "/F1"
+        stream_lines.append(f"{fname} {size} Tf")
+        stream_lines.append(f"({_pdf_str(safe)}) Tj")
+        stream_lines.append("0 -16 Td")
+    stream_lines.append("ET")
+    stream = "\n".join(stream_lines).encode("latin-1")
+
+    def _obj(n, d, s=None):
+        out = f"{n} 0 obj\n{d}\n"
+        if s is not None:
+            out = out.encode("latin-1") + b"stream\n" + s + b"\nendstream\nendobj\n"
+            return out
+        return (out + "endobj\n").encode("latin-1")
+
+    o1 = _obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    o2 = _obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    o3 = _obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /FB 6 0 R >> >> >>")
+    slen = len(stream)
+    o4 = _obj(4, f"<< /Length {slen} >>", stream)
+    o5 = _obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    o6 = _obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+
+    header = b"%PDF-1.4\n"
+    body = o1 + o2 + o3 + o4 + o5 + o6
+    offsets = []
+    pos = len(header)
+    for chunk in (o1, o2, o3, o4, o5, o6):
+        offsets.append(pos)
+        pos += len(chunk)
+
+    xref_offset = len(header) + len(body)
+    xref = "xref\n0 7\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n"
+    trailer = f"trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    return header + body + (xref + trailer).encode("latin-1")
+
+
+def _build_report_lines(candidate_name: str, criteria_record: dict, assessment_result: dict) -> list:
+    """Build the (kind, text) lines for a full assessment report PDF."""
+    role_tag = criteria_record.get("role_tag", "")
+    saved_at = criteria_record.get("saved_at", "")
+    criteria = criteria_record.get("criteria") or {}
+
+    lines = []
+    lines.append(("title", "Assessment Report"))
+    lines.append(("gap", ""))
+    lines.append(("key", f"Candidate: {candidate_name}"))
+    lines.append(("key", f"Role: {role_tag}"))
+    lines.append(("key", f"Search Date: {saved_at}"))
+    lines.append(("gap", ""))
+
+    if assessment_result:
+        lines.append(("section", "ASSESSMENT SUMMARY"))
+        lines.append(("item", f"  Overall Score: {assessment_result.get('total_score', '—')}"))
+        stars = int(assessment_result.get("stars", 0) or 0)
+        lines.append(("item", f"  Stars: {'*' * stars}{'.' * (5 - stars)} ({stars}/5)"))
+        lines.append(("item", f"  Level: {assessment_result.get('assessment_level', '—')}"))
+        overall = assessment_result.get("overall_comment", "")
+        if overall:
+            lines.append(("item", f"  Overall: {overall}"))
+        lines.append(("gap", ""))
+
+        breakdown = assessment_result.get("criteria") or {}
+        if breakdown:
+            lines.append(("section", "SCORE BREAKDOWN"))
+            for cat, score in breakdown.items():
+                lines.append(("item", f"  {cat}: {score}"))
+            lines.append(("gap", ""))
+
+        appraisals = assessment_result.get("category_appraisals") or {}
+        if appraisals:
+            lines.append(("section", "CATEGORY APPRAISALS"))
+            for cat, appraisal in appraisals.items():
+                lines.append(("item", f"  {cat}: {appraisal}"))
+            lines.append(("gap", ""))
+
+        comments = assessment_result.get("comments") or []
+        if comments:
+            lines.append(("section", "SKILL COMMENTS"))
+            for c in comments:
+                if isinstance(c, dict):
+                    skill = c.get("skill") or c.get("category", "")
+                    match = c.get("match") or c.get("status", "")
+                    note = c.get("comment") or c.get("note", "")
+                    lines.append(("item", f"  {skill} [{match}]: {note}"))
+                else:
+                    lines.append(("item", f"  {c}"))
+            lines.append(("gap", ""))
+
+    lines.append(("section", "SEARCH CRITERIA"))
+    for k, v in criteria.items():
+        if isinstance(v, list):
+            v_str = ", ".join(str(x) for x in v) if v else "—"
+        else:
+            v_str = str(v) if v is not None else "—"
+        lines.append(("item", f"  {k}: {v_str}"))
+
+    return lines
+
+
+@app.get("/sourcing/has_report")
+def has_report():
+    """Check whether a full assessment report can be generated for the given candidate.
+
+    Requires both a criteria JSON file AND a completed assessment result.
+    Query params:
+        linkedin  – candidate LinkedIn URL
+        name      – candidate name
+    Returns { "exists": true/false }
+    """
+    name = (request.args.get("name") or "").strip()
+    linkedin = (request.args.get("linkedin") or "").strip()
+    if not name and not linkedin:
+        return jsonify({"exists": False}), 200
+    # Look up name from DB if missing
+    if not name and linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sourcing WHERE linkedinurl=%s AND name IS NOT NULL LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    name = row[0].replace("님", "").strip()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    if not name:
+        return jsonify({"exists": False}), 200
+    # criteria JSON must exist
+    fpath, _ = _find_criteria_file_for_candidate(name)
+    if not fpath:
+        return jsonify({"exists": False}), 200
+    # assessment result must also exist
+    assessment = _find_assessment_for_candidate(linkedin) if linkedin else None
+    return jsonify({"exists": assessment is not None}), 200
+
+
+@app.get("/sourcing/download_report")
+def download_report():
+    """Generate and download a formal assessment report PDF for a candidate.
+
+    Combines the criteria JSON and bulk/individual assessment results into one PDF.
+    The generated PDF is also saved to REPORT_TEMPLATES_DIR for record-keeping.
+
+    Query params:
+        linkedin  – candidate LinkedIn URL
+        name      – candidate name
+    """
+    name = (request.args.get("name") or "").strip()
+    linkedin = (request.args.get("linkedin") or "").strip()
+    if not name and not linkedin:
+        return "name or linkedin required", 400
+    # Look up name from DB if missing
+    if not name and linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sourcing WHERE linkedinurl=%s AND name IS NOT NULL LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    name = row[0].replace("님", "").strip()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning(f"[download_report] DB lookup failed: {exc}")
+    if not name:
+        return "No candidate name found", 404
+    fpath, criteria_record = _find_criteria_file_for_candidate(name)
+    if not criteria_record:
+        return "No criteria file found for this candidate", 404
+    assessment_result = _find_assessment_for_candidate(linkedin) if linkedin else None
+    try:
+        lines = _build_report_lines(name, criteria_record, assessment_result or {})
+        pdf_bytes = _lines_to_pdf_bytes(lines)
+    except Exception as exc:
+        logger.exception("[download_report] PDF generation failed")
+        return f"PDF generation failed: {exc}", 500
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    safe_role = re.sub(r'[<>:"/\\|?*]', '_', criteria_record.get("role_tag", "report"))
+    fname = f"{safe_name} {safe_role}.pdf"
+    # Persist to REPORT_TEMPLATES_DIR (already created at startup)
+    try:
+        out_path = os.path.join(REPORT_TEMPLATES_DIR, fname)
+        with open(out_path, "wb") as fh:
+            fh.write(pdf_bytes)
+        logger.info(f"[download_report] Saved report to {out_path}")
+    except Exception as exc:
+        logger.warning(f"[download_report] Could not save to templates dir: {exc}")
     from flask import Response as _Response
     return _Response(
         pdf_bytes,
