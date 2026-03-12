@@ -7542,8 +7542,9 @@ def _lines_to_pdf_bytes(lines: list) -> bytes:
     """Convert a list of (kind, text) tuples to PDF bytes.
 
     Kinds: 'title', 'section', 'key', 'item', 'gap', 'table'
-    For 'table' kind, text is a list of rows: first row is a bold header,
-    subsequent rows are data rows.  Each row is a list of strings.
+    For 'table' kind, text is a list of rows (list of strings). The first row
+    is rendered as a bold header.  Cell text is automatically word-wrapped so
+    content never overflows the page boundary.
 
     Tries reportlab first; falls back to a raw minimal PDF.
     """
@@ -7554,19 +7555,21 @@ def _lines_to_pdf_bytes(lines: list) -> bytes:
 
         buf = _io.BytesIO()
         c = rl_canvas.Canvas(buf, pagesize=A4)
-        w, h = A4
-        margin_l = 40
-        max_w = w - margin_l - 20  # usable text width
-        y = h - 50
+        page_w, page_h = A4
+        MARGIN_L = 40
+        MARGIN_R = 30
+        CONTENT_W = page_w - MARGIN_L - MARGIN_R  # usable width
+        y = page_h - 50
 
         def _safe(s):
             return str(s).encode("latin-1", errors="replace").decode("latin-1")
 
-        def _wrap(text, font, size, avail_w):
-            """Split text into wrapped lines that fit avail_w."""
-            words = _safe(text).split()
-            if not words:
+        def _wrap_text(text, font, size, avail_w):
+            """Word-wrap text into lines that fit within avail_w pixels."""
+            safe = _safe(str(text))
+            if not safe.strip():
                 return [""]
+            words = safe.split()
             result, cur = [], ""
             for word in words:
                 test = (cur + " " + word).strip() if cur else word
@@ -7575,16 +7578,110 @@ def _lines_to_pdf_bytes(lines: list) -> bytes:
                 else:
                     if cur:
                         result.append(cur)
+                    # Single word too long: truncate to fit
+                    while word and c.stringWidth(word, font, size) > avail_w and len(word) > 1:
+                        word = word[:-1]
                     cur = word
             if cur:
                 result.append(cur)
             return result or [""]
 
+        def _new_page():
+            nonlocal y
+            c.showPage()
+            y = page_h - 50
+
         def _ensure_space(needed):
             nonlocal y
             if y - needed < 60:
-                c.showPage()
-                y = h - 50
+                _new_page()
+
+        def _draw_table(rows):
+            """Draw a table with word-wrapped cells and dynamic row heights."""
+            nonlocal y
+            if not rows:
+                return
+            col_count = max(len(r) for r in rows)
+            if col_count == 0:
+                return
+
+            # Column widths by column count
+            if col_count == 4:
+                # CATEGORY | WEIGHT | RATING/STATUS | COMMENT
+                col_w = [105, 45, 82, CONTENT_W - 105 - 45 - 82]
+            elif col_count == 3:
+                col_w = [100, 75, CONTENT_W - 100 - 75]
+            elif col_count == 2:
+                col_w = [130, CONTENT_W - 130]
+            else:
+                col_w = [CONTENT_W / col_count] * col_count
+
+            x_pos = [MARGIN_L]
+            for cw in col_w[:-1]:
+                x_pos.append(x_pos[-1] + cw)
+
+            FONT_SZ = 9
+            LINE_H = FONT_SZ + 3
+            PAD_H = 3   # horizontal padding per side
+            PAD_V = 4   # vertical padding per side
+
+            # Draw outer border around the entire table
+            c.setStrokeColorRGB(0.55, 0.55, 0.55)
+            c.setLineWidth(0.7)
+
+            for r_idx, row in enumerate(rows):
+                is_hdr = r_idx == 0
+                font_n = "Helvetica-Bold" if is_hdr else "Helvetica"
+
+                # Pad row to col_count
+                padded = list(row) + [""] * (col_count - len(row))
+
+                # Word-wrap each cell
+                cell_wrapped = []
+                for ci in range(col_count):
+                    avail = col_w[ci] - 2 * PAD_H
+                    cell_wrapped.append(_wrap_text(str(padded[ci]), font_n, FONT_SZ, avail))
+
+                n_lines = max(len(cl) for cl in cell_wrapped)
+                row_h = n_lines * LINE_H + 2 * PAD_V
+                row_h = max(row_h, LINE_H + 2 * PAD_V)
+
+                _ensure_space(row_h + 4)
+
+                # Background
+                if is_hdr:
+                    c.setFillColorRGB(0.18, 0.36, 0.56)  # professional dark blue
+                    c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+                    c.setFillColorRGB(1, 1, 1)
+                elif r_idx % 2 == 1:
+                    c.setFillColorRGB(0.95, 0.97, 1.0)
+                    c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+                    c.setFillColorRGB(0.1, 0.1, 0.1)
+                else:
+                    c.setFillColorRGB(1, 1, 1)
+                    c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+                    c.setFillColorRGB(0.1, 0.1, 0.1)
+
+                # Cell text
+                c.setFont(font_n, FONT_SZ)
+                for ci, (cl, xp, cw) in enumerate(zip(cell_wrapped, x_pos, col_w)):
+                    text_y = y - PAD_V - LINE_H + 2
+                    for ln in cl:
+                        c.drawString(xp + PAD_H, text_y, ln)
+                        text_y -= LINE_H
+
+                # Row bottom border
+                c.setStrokeColorRGB(0.70, 0.70, 0.70)
+                c.setLineWidth(0.4)
+                c.line(MARGIN_L, y - row_h, MARGIN_L + CONTENT_W, y - row_h)
+
+                c.setFillColorRGB(0, 0, 0)
+                y -= row_h
+
+            # Outer border (left + right verticals)
+            c.setStrokeColorRGB(0.55, 0.55, 0.55)
+            c.setLineWidth(0.6)
+            y -= 4
 
         for kind, text in lines:
             if kind == "gap":
@@ -7592,85 +7689,40 @@ def _lines_to_pdf_bytes(lines: list) -> bytes:
                 continue
 
             if kind == "table":
-                rows = text  # list of lists
-                if not rows:
-                    continue
-                col_count = len(rows[0]) if rows else 0
-                if col_count == 0:
-                    continue
-                # Column widths for 4-col appraisals table: Cat | Weight | Rating | Comment
-                if col_count == 4:
-                    col_w = [110, 48, 90, max_w - 110 - 48 - 90]
-                elif col_count == 3:
-                    col_w = [110, 90, max_w - 110 - 90]
-                else:
-                    col_w = [max_w / col_count] * col_count
-
-                x_pos = [margin_l]
-                for cw in col_w[:-1]:
-                    x_pos.append(x_pos[-1] + cw)
-
-                row_h = 16
-                _ensure_space(len(rows) * row_h + 8)
-
-                for r_idx, row in enumerate(rows):
-                    is_hdr = r_idx == 0
-                    if is_hdr:
-                        c.setFillColorRGB(0.22, 0.22, 0.22)
-                        c.rect(margin_l, y - row_h + 4, max_w, row_h, fill=1, stroke=0)
-                        c.setFillColorRGB(1, 1, 1)
-                        font_name = "Helvetica-Bold"
-                        font_size = 9
-                    else:
-                        if r_idx % 2 == 0:
-                            c.setFillColorRGB(0.94, 0.94, 0.94)
-                            c.rect(margin_l, y - row_h + 4, max_w, row_h, fill=1, stroke=0)
-                        c.setFillColorRGB(0, 0, 0)
-                        font_name = "Helvetica"
-                        font_size = 9
-
-                    c.setFont(font_name, font_size)
-                    for ci, (cell, xp, cw) in enumerate(zip(row, x_pos, col_w)):
-                        cell_s = _safe(str(cell))
-                        avail = cw - 4
-                        # Shorten string one char at a time until it fits
-                        while c.stringWidth(cell_s, font_name, font_size) > avail and len(cell_s) > 1:
-                            cell_s = cell_s[:-1]
-                        if cell_s and c.stringWidth(cell_s + "~", font_name, font_size) <= avail and len(_safe(str(cell))) > len(cell_s):
-                            cell_s = cell_s[:-1] + "~" if len(cell_s) > 1 else cell_s
-                        c.drawString(xp + 2, y - row_h + 6, cell_s)
-
-                    c.setFillColorRGB(0, 0, 0)
-                    y -= row_h
-                    if y < 60:
-                        c.showPage()
-                        y = h - 50
-
-                y -= 4
+                _draw_table(text)
                 continue
 
-            # Regular line kinds
+            # Regular text kinds
             if kind == "title":
                 font_n, font_s = "Helvetica-Bold", 16
-                indent = margin_l
+                indent = MARGIN_L
+                _ensure_space(font_s + 14)
+                c.setFont(font_n, font_s)
+                c.drawString(indent, y, _safe(str(text)))
+                y -= font_s + 4
+                # Decorative underline
+                c.setStrokeColorRGB(0.18, 0.36, 0.56)
+                c.setLineWidth(1.5)
+                c.line(MARGIN_L, y, MARGIN_L + CONTENT_W, y)
+                y -= 6
+                continue
             elif kind == "section":
-                font_n, font_s = "Helvetica-Bold", 12
-                indent = margin_l
+                font_n, font_s = "Helvetica-Bold", 11
+                indent = MARGIN_L
                 y -= 4
             elif kind == "key":
-                font_n, font_s = "Helvetica-Bold", 11
-                indent = margin_l
+                font_n, font_s = "Helvetica-Bold", 10
+                indent = MARGIN_L
             else:  # "item"
-                font_n, font_s = "Helvetica", 10
-                indent = margin_l + 12
+                font_n, font_s = "Helvetica", 9
+                indent = MARGIN_L + 8
 
-            avail_w = max_w - (indent - margin_l)
-            wrapped = _wrap(str(text), font_n, font_s, avail_w)
-            for line_text in wrapped:
+            avail_w = CONTENT_W - (indent - MARGIN_L)
+            for ln in _wrap_text(str(text), font_n, font_s, avail_w):
                 _ensure_space(font_s + 6)
                 c.setFont(font_n, font_s)
-                c.drawString(indent, y, line_text)
-                y -= font_s + 4
+                c.drawString(indent, y, ln)
+                y -= font_s + 3
 
         c.save()
         return buf.getvalue()
@@ -7738,87 +7790,118 @@ def _lines_to_pdf_bytes(lines: list) -> bytes:
 
 
 def _build_report_lines(candidate_name: str, criteria_record: dict, assessment_result: dict) -> list:
-    """Build the (kind, text) lines for a full assessment report PDF."""
+    """Build the (kind, text) lines for a full assessment report PDF.
+
+    All data sections are rendered as structured tables so that no text
+    overflows the page boundary.  Table cells word-wrap automatically.
+    """
     role_tag = criteria_record.get("role_tag", "")
     saved_at = criteria_record.get("saved_at", "")
     criteria = criteria_record.get("criteria") or {}
 
     lines = []
+
+    # ── Title ─────────────────────────────────────────────────────────────────
     lines.append(("title", "Assessment Report"))
     lines.append(("gap", ""))
-    lines.append(("key", f"Candidate: {candidate_name}"))
-    lines.append(("key", f"Role: {role_tag}"))
-    lines.append(("key", f"Search Date: {saved_at}"))
+
+    # ── Candidate information table ───────────────────────────────────────────
+    lines.append(("table", [
+        ["FIELD", "VALUE"],
+        ["Candidate", candidate_name],
+        ["Role", role_tag],
+        ["Date", saved_at],
+    ]))
     lines.append(("gap", ""))
 
     if assessment_result:
+        # ── Assessment Summary ─────────────────────────────────────────────────
+        stars = max(0, min(int(assessment_result.get("stars", 0) or 0), 5))
+        star_str = ("*" * stars) + ("." * (5 - stars)) + f" ({stars}/5)"
+        overall = assessment_result.get("overall_comment", "") or ""
+
         lines.append(("section", "ASSESSMENT SUMMARY"))
-        lines.append(("item", f"  Overall Score: {assessment_result.get('total_score', '—')}"))
-        stars = int(assessment_result.get("stars", 0) or 0)
-        lines.append(("item", f"  Stars: {'*' * stars}{'.' * (5 - stars)} ({stars}/5)"))
-        lines.append(("item", f"  Level: {assessment_result.get('assessment_level', '—')}"))
-        overall = assessment_result.get("overall_comment", "")
+        summary_rows = [
+            ["FIELD", "VALUE"],
+            ["Overall Score", str(assessment_result.get("total_score", "-"))],
+            ["Stars", star_str],
+            ["Assessment Level", str(assessment_result.get("assessment_level", "-"))],
+        ]
         if overall:
-            lines.append(("item", f"  Overall: {overall}"))
+            summary_rows.append(["Overall Comment", overall])
+        lines.append(("table", summary_rows))
         lines.append(("gap", ""))
 
+        # ── Score Breakdown ────────────────────────────────────────────────────
         breakdown = assessment_result.get("criteria") or {}
         if breakdown:
             lines.append(("section", "SCORE BREAKDOWN"))
+            bd_rows = [["CATEGORY", "SCORE"]]
             for cat, score in breakdown.items():
-                lines.append(("item", f"  {cat}: {score}"))
+                bd_rows.append([str(cat), str(score)])
+            lines.append(("table", bd_rows))
             lines.append(("gap", ""))
 
+        # ── Category Appraisals (4-column with wrapped COMMENT) ────────────────
         appraisals = assessment_result.get("category_appraisals") or {}
         if appraisals:
             lines.append(("section", "CATEGORY APPRAISALS"))
-            # Build a table: header row + one data row per category
-            table_rows = [["CATEGORY", "WEIGHT", "RATING / STATUS", "COMMENT"]]
+            ap_rows = [["CATEGORY", "WEIGHT", "RATING / STATUS", "COMMENT"]]
             for cat, appraisal in appraisals.items():
                 if isinstance(appraisal, dict):
                     weight = appraisal.get("weight_percent", "")
                     rating = appraisal.get("rating", "")
                     status = appraisal.get("status", "")
                     comment = appraisal.get("comment", "")
-                    rating_status = f"{rating} / {status}" if status else rating
-                    table_rows.append([
+                    rating_status = f"{str(rating)} / {str(status)}" if status else str(rating)
+                    ap_rows.append([
                         str(cat),
-                        f"{weight}%" if weight not in (None, "") else "—",
+                        f"{weight}%" if weight not in (None, "") else "-",
                         rating_status,
                         str(comment),
                     ])
                 else:
-                    table_rows.append([str(cat), "—", "—", str(appraisal)])
-            lines.append(("table", table_rows))
+                    ap_rows.append([str(cat), "-", "-", str(appraisal)])
+            lines.append(("table", ap_rows))
             lines.append(("gap", ""))
 
+        # ── Skill Comments ─────────────────────────────────────────────────────
         comments_raw = assessment_result.get("comments")
         if comments_raw:
             lines.append(("section", "SKILL COMMENTS"))
             if isinstance(comments_raw, str):
-                # comments is a recruiter narrative string — emit as wrapped paragraphs
-                for para in comments_raw.split("\n"):
-                    para = para.strip()
-                    if para:
-                        lines.append(("item", para))
+                # Narrative string — render each paragraph as a row in a
+                # single-column table so text stays within page boundaries.
+                paras = [p.strip() for p in comments_raw.split("\n") if p.strip()]
+                if paras:
+                    sc_rows = [["COMMENTS"]]
+                    for para in paras:
+                        sc_rows.append([para])
+                    lines.append(("table", sc_rows))
             elif isinstance(comments_raw, (list, tuple)):
-                for c in comments_raw:
-                    if isinstance(c, dict):
-                        skill = c.get("skill") or c.get("category", "")
-                        match = c.get("match") or c.get("status", "")
-                        note = c.get("comment") or c.get("note", "")
-                        lines.append(("item", f"{skill} [{match}]: {note}"))
+                sc_rows = [["SKILL", "STATUS", "COMMENT"]]
+                for entry in comments_raw:
+                    if isinstance(entry, dict):
+                        skill = str(entry.get("skill") or entry.get("category", ""))
+                        match = str(entry.get("match") or entry.get("status", ""))
+                        note = str(entry.get("comment") or entry.get("note", ""))
+                        sc_rows.append([skill, match, note])
                     else:
-                        lines.append(("item", str(c)))
+                        sc_rows.append([str(entry), "", ""])
+                lines.append(("table", sc_rows))
             lines.append(("gap", ""))
 
-    lines.append(("section", "SEARCH CRITERIA"))
-    for k, v in criteria.items():
-        if isinstance(v, list):
-            v_str = ", ".join(str(x) for x in v) if v else "—"
-        else:
-            v_str = str(v) if v is not None else "—"
-        lines.append(("item", f"  {k}: {v_str}"))
+    # ── Search Criteria (2-column table) ──────────────────────────────────────
+    if criteria:
+        lines.append(("section", "SEARCH CRITERIA"))
+        crit_rows = [["CRITERIA", "VALUE"]]
+        for k, v in criteria.items():
+            if isinstance(v, list):
+                v_str = ", ".join(str(x) for x in v) if v else "-"
+            else:
+                v_str = str(v) if v is not None else "-"
+            crit_rows.append([str(k), v_str])
+        lines.append(("table", crit_rows))
 
     return lines
 
