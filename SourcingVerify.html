@@ -5696,19 +5696,23 @@ function renderTable(){
       fileInput.value = ''; 
     });
 
-    if (linkedinurl) {
+    {
       const _candidateName = (name || '').replace(/님/g, '').trim();
       downloadBtn.addEventListener('click', () => {
-        const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
-        if (anchor) {
-          const a = document.createElement('a');
-          a.href = '/sourcing/download_report?linkedin=' + encodeURIComponent(anchor)
-                  + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
-          a.download = '';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+        // Resolve LinkedIn URL from multiple sources, including the Name cell's <a> tag
+        const nameCellAnchor = tds[2] ? (tds[2].querySelector('a')?.href || '') : '';
+        const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || nameCellAnchor || '';
+        if (!anchor) {
+          alert('No LinkedIn URL found for this candidate.');
+          return;
         }
+        const a = document.createElement('a');
+        a.href = '/sourcing/download_report?linkedin=' + encodeURIComponent(anchor)
+                + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
       });
       // Button is always visible — no has_report gate needed
       const _checkReportExists = () => {};
