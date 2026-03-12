@@ -871,12 +871,15 @@ const _criteriaJsonCacheMap = new Map(); // key: "username|roleTag" → Set of n
 
 /**
  * Returns a Set of normalized profile names from the criteria JSON for the given
- * role_tag (defaults to the current session role_tag when omitted).
+ * role_tag. The role_tag MUST come from the sourcing table row — no session fallback.
+ * Returns null when the file cannot be found (file not found → caller must skip the row).
  * Results are cached per username+role_tag key so repeated bulk-row lookups are cheap.
  */
 async function _getCriteriaProfiles(roleTag) {
   const username = window.__SV_ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
-  const rt = (roleTag || sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+  // Strict: only use the explicitly supplied role_tag (from sourcing table).
+  // An empty roleTag means we cannot identify the correct JSON file → return null (skip).
+  const rt = (roleTag || '').trim();
   if (!username || !rt) return null;
   const cacheKey = username + '|' + rt;
   if (_criteriaJsonCacheMap.has(cacheKey)) return _criteriaJsonCacheMap.get(cacheKey);
@@ -892,11 +895,12 @@ async function _getCriteriaProfiles(roleTag) {
 }
 
 /**
- * Returns true if profileName is found (case-insensitive) in profileSet, or if profileSet is
- * null/empty (no restriction — criteria file not yet available or has no profiles list).
+ * Returns true only when profileName is found (case-insensitive) in profileSet.
+ * Strict mode: returns false when profileSet is null (file not found) or empty —
+ * the JSON file is the sole source of truth; no file or missing name means skip.
  */
 function _isProfileNameInJson(profileName, profileSet) {
-  if (!profileSet || profileSet.size === 0) return true; // no list = no restriction
+  if (!profileSet || profileSet.size === 0) return false; // no file or no names → skip
   return profileSet.has((profileName || '').replace(/님/g,'').trim().toLowerCase());
 }
 
