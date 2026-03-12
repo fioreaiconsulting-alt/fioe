@@ -5497,7 +5497,7 @@ function renderTable(){
     downloadBtn.textContent = 'Download Assessment';
     downloadBtn.title = 'Download assessment report as PDF (available after assessment is complete)';
     downloadBtn.style.width = '100%'; // Full width
-    downloadBtn.style.display = 'none'; 
+    downloadBtn.style.display = 'block';
     downloadBtn.style.backgroundColor = '#f6f8fa';
     downloadBtn.style.color = '#0969da';
     downloadBtn.style.border = '1px solid #d0d7de';
@@ -5716,10 +5716,7 @@ function renderTable(){
           const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
                    + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
           const res = await fetch('/sourcing/has_report?' + qs, { credentials: 'same-origin' });
-          if (res.ok) {
-            const data = await res.json();
-            downloadBtn.style.display = data.exists ? 'block' : 'none';
-          }
+          // Button is always visible — no hide logic here
         } catch(_) { /* non-critical visibility check – ignore network/parse errors */ }
       };
       _checkReportExists();
