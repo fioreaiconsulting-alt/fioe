@@ -7124,7 +7124,7 @@ def load_search_criteria():
     return jsonify({
         "ok": True,
         "criteria": record.get("criteria") or {},
-        "profiles": record.get("profiles") or [],
+        "name": record.get("name") or record.get("profiles") or [],
     }), 200
 
 
@@ -7166,7 +7166,12 @@ def save_search_criteria():
                     "WHERE username=%s AND role_tag=%s AND name IS NOT NULL AND name != ''",
                     (username, role_tag)
                 )
-                profile_names = [row[0] for row in _pcur.fetchall()]
+                # Strip the "님" honorific suffix and surrounding whitespace
+                profile_names = [
+                    row[0].replace("님", "").strip()
+                    for row in _pcur.fetchall()
+                    if row[0]
+                ]
                 _pcur.close()
             finally:
                 _pconn.close()
@@ -7177,7 +7182,7 @@ def save_search_criteria():
             "role_tag": role_tag,
             "username": username,
             "saved_at": datetime.utcnow().isoformat() + "Z",
-            "profiles": profile_names,
+            "name": profile_names,
             "criteria": {
                 "Job Title":  criteria.get("Job Title") or [],
                 "Seniority":  criteria.get("Seniority") or "",
@@ -7193,7 +7198,7 @@ def save_search_criteria():
             json.dump(record, fh, ensure_ascii=False, indent=2)
 
         logger.info(f"[save_search_criteria] Written to {filepath} with {len(profile_names)} profile(s)")
-        return jsonify({"ok": True, "file": filename, "profiles": len(profile_names)}), 200
+        return jsonify({"ok": True, "file": filename, "name": len(profile_names)}), 200
 
     except Exception as exc:
         logger.exception("[save_search_criteria]")

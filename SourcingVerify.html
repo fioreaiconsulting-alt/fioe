@@ -880,8 +880,8 @@ async function _getCriteriaProfiles() {
     const res = await fetch(`/load_search_criteria?username=${encodeURIComponent(username)}&role_tag=${encodeURIComponent(roleTag)}`, {credentials:'same-origin'});
     if (!res.ok) { _criteriaJsonCache = null; _criteriaJsonCacheKey = cacheKey; return null; }
     const data = await res.json();
-    const names = Array.isArray(data.profiles) ? data.profiles : [];
-    _criteriaJsonCache = new Set(names.map(n => (n||'').trim().toLowerCase()));
+    const names = Array.isArray(data.name) ? data.name : (Array.isArray(data.profiles) ? data.profiles : []);
+    _criteriaJsonCache = new Set(names.map(n => (n||'').replace(/님/g,'').trim().toLowerCase()));
     _criteriaJsonCacheKey = cacheKey;
     return _criteriaJsonCache;
   } catch(e) { console.warn('[_getCriteriaProfiles] Failed to load criteria JSON:', e); return null; }
@@ -893,7 +893,7 @@ async function _getCriteriaProfiles() {
  */
 function _isProfileNameInJson(profileName, profileSet) {
   if (!profileSet || profileSet.size === 0) return true; // no list = no restriction
-  return profileSet.has((profileName || '').trim().toLowerCase());
+  return profileSet.has((profileName || '').replace(/님/g,'').trim().toLowerCase());
 }
 
 function getLockedWeightRoles() {
