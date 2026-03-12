@@ -3637,6 +3637,8 @@ def gemini_assess_profile():
 
     # 2. Fetch Target Skillset — priority: criteria JSON file (authoritative), then DB.
     target_skills = []
+    required_seniority_from_criteria = ""
+    required_country_from_criteria = ""
     if username and role_tag:
         _criteria = _read_search_criteria(username, role_tag)
         if _criteria:
@@ -3644,6 +3646,8 @@ def gemini_assess_profile():
             if _file_skills:
                 target_skills = _file_skills
                 logger.info(f"[Gemini Assess] target_skills loaded from criteria file ({len(target_skills)}) for {linkedinurl[:50]}")
+            required_seniority_from_criteria = (_criteria.get("Seniority") or "").strip()
+            required_country_from_criteria = (_criteria.get("Country") or "").strip()
     # DB fallback when criteria file is unavailable
     if not target_skills and linkedinurl:
         target_skills = _fetch_jskillset_from_process(linkedinurl)
@@ -4105,6 +4109,8 @@ Return ONLY the JSON object, no other text."""
         "tenure": tenure,  # Average tenure per employer
         "vskillset_results": vskillset_results,  # vskillset inference results for scoring
         "product": product,  # Product list from DB (mirrors _assess_and_persist)
+        "required_seniority": required_seniority_from_criteria,
+        "required_country": required_country_from_criteria,
     }
     
     # Log data completeness before assessment

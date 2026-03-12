@@ -3501,9 +3501,16 @@ def _core_assess_profile(data):
 
     def seniority_heuristic(candidate_seniority, required_seniority):
         """
-        Assess seniority: the candidate level must be an exact match to the required level.
-        Acceptable cross-mappings: Lead → Manager, Expert → Director.
-        Exceeding or falling below the required level always scores 0 (unrelated).
+        Assess seniority using strict hierarchy defined by Search Criteria.
+
+        Required seniority → acceptable candidate seniorities:
+          Associate  → Junior, Mid, Senior
+          Manager    → Lead, Manager
+          Director   → Director, Expert, Executive
+
+        Any seniority level outside the defined set is not a valid match.
+        Candidate seniority must be within the acceptable set for the required level;
+        otherwise 0 stars/score (unrelated).
         """
         if not candidate_seniority: return "not_assessed", ""
         if not required_seniority: return "not_assessed", ""
@@ -3512,12 +3519,20 @@ def _core_assess_profile(data):
             return re.sub(r'-level$', '', str(s).lower().strip())
         cs = _norm(candidate_seniority)
         rs = _norm(required_seniority)
+        # Strict hierarchy: required level → set of acceptable candidate levels
+        _HIERARCHY = {
+            "associate": {"junior", "mid", "senior"},
+            "manager":   {"lead", "manager"},
+            "director":  {"director", "expert", "executive"},
+        }
+        acceptable = _HIERARCHY.get(rs)
+        if acceptable is not None:
+            if cs in acceptable:
+                return "match", f"Seniority match: {candidate_seniority} within {required_seniority} band"
+            return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
+        # Exact match for levels not covered by the hierarchy mapping
         if cs == rs:
             return "match", f"Seniority match: {candidate_seniority}"
-        # Acceptable cross-mappings: Lead ≡ Manager, Expert ≡ Director
-        _ACCEPTABLE = {("lead", "manager"), ("expert", "director")}
-        if (cs, rs) in _ACCEPTABLE:
-            return "match", f"Seniority equivalent: {candidate_seniority} ≡ {required_seniority}"
         return "unrelated", f"Seniority mismatch: candidate={candidate_seniority}, required={required_seniority}"
 
     def country_heuristic(candidate_country, required_country):
@@ -4854,12 +4869,16 @@ def process_bulk_assess():
             target_skills = []
             # Priority 1: load from the criteria JSON file saved after the AutoSourcing search run.
             # This is the authoritative source — never rely on cached/DB-derived values when the file exists.
+            required_seniority_from_criteria = ""
+            required_country_from_criteria = ""
             _criteria = _read_search_criteria(recruiter_username, role_tag)
             if _criteria:
                 _file_skills = _criteria.get("Skillset") or []
                 if _file_skills:
                     target_skills = _file_skills
                     logger.info(f"[BULK_ASSESS] target_skills loaded from criteria file ({len(target_skills)} skills) for {linkedinurl[:50]}")
+                required_seniority_from_criteria = (_criteria.get("Seniority") or "").strip()
+                required_country_from_criteria = (_criteria.get("Country") or "").strip()
             # Priority 2: fall back to DB-derived values only if the file is unavailable.
             if not target_skills:
                 target_skills = _fetch_jskillset_from_process(linkedinurl) or []
@@ -5046,7 +5065,9 @@ def process_bulk_assess():
                 "assessment_level": assessment_level,
                 "tenure": tenure,
                 "product": product,
-                "vskillset_results": vskillset_results  # Pass vskillset_results for scoring
+                "vskillset_results": vskillset_results,  # Pass vskillset_results for scoring
+                "required_seniority": required_seniority_from_criteria,
+                "required_country": required_country_from_criteria,
             }
 
             # run core assessment
