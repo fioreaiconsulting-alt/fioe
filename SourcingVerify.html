@@ -4654,6 +4654,13 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
         window.__sv_assessment_in_flight.delete(anchor);
         // Re-enable action buttons after individual assessment completes
         setSearchResultButtonsEnabled(true);
+        // Refresh Download Assessment button visibility now that assessment is done
+        try {
+            const dlBtn = document.querySelector('#details-container .sv-download-btn');
+            if (dlBtn && typeof dlBtn._checkReportExists === 'function') {
+                dlBtn._checkReportExists();
+            }
+        } catch(_) { /* non-critical UI update – ignore errors */ }
     }
 }
 
@@ -5235,7 +5242,13 @@ function renderTable(){
     if (!experience || experience === '—') experience = '—';
 
     const lnBtn = tr.querySelector('td[data-field="linkedinurl"] .view-btn');
-    const linkedinurl = lnBtn ? (lnBtn.dataset.profileUrl || '').trim() : (tds[6]?.textContent || '').trim();
+    // Resolve LinkedIn URL from all available sources: dataset on row (most reliable),
+    // view-btn profileUrl, Name cell <a> href, or credential cell text content.
+    const nameCellLink = tds[2] ? (tds[2].querySelector('a')?.href || '') : '';
+    const linkedinurl = tr.dataset.linkedinurl
+      || (lnBtn ? (lnBtn.dataset.profileUrl || '').trim() : '')
+      || nameCellLink
+      || (tds[6]?.textContent || '').trim();
 
     /* No newTr, just the content div */
     const content = document.createElement('div');
@@ -5487,10 +5500,10 @@ function renderTable(){
     const downloadBtn = document.createElement('button');
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
-    downloadBtn.textContent = 'Download CV';
-    downloadBtn.title = 'Download criteria report as PDF';
+    downloadBtn.textContent = 'Download Assessment';
+    downloadBtn.title = 'Download assessment report as Word document (available after assessment is complete)';
     downloadBtn.style.width = '100%'; // Full width
-    downloadBtn.style.display = 'none'; 
+    downloadBtn.style.display = 'block';
     downloadBtn.style.backgroundColor = '#f6f8fa';
     downloadBtn.style.color = '#0969da';
     downloadBtn.style.border = '1px solid #d0d7de';
@@ -5689,32 +5702,29 @@ function renderTable(){
       fileInput.value = ''; 
     });
 
-    if (linkedinurl) {
+    {
       const _candidateName = (name || '').replace(/님/g, '').trim();
       downloadBtn.addEventListener('click', () => {
-        const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || '';
-        if (anchor) {
-          const a = document.createElement('a');
-          a.href = '/sourcing/download_criteria_pdf?linkedin=' + encodeURIComponent(anchor)
-                  + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
-          a.download = '';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+        // Resolve LinkedIn URL from multiple sources, including the Name cell's <a> tag
+        const nameCellAnchor = tds[2] ? (tds[2].querySelector('a')?.href || '') : '';
+        const anchor = content.dataset.anchor || tr.dataset.linkedinurl || linkedinurl || nameCellAnchor || '';
+        if (!anchor) {
+          alert('No LinkedIn URL found for this candidate.');
+          return;
         }
+        const a = document.createElement('a');
+        a.href = '/sourcing/download_report?linkedin=' + encodeURIComponent(anchor)
+                + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
       });
-      // Check if a criteria JSON file exists for this candidate and show/hide button accordingly
-      (async () => {
-        try {
-          const qs = 'linkedin=' + encodeURIComponent(linkedinurl)
-                   + (_candidateName ? '&name=' + encodeURIComponent(_candidateName) : '');
-          const res = await fetch('/sourcing/has_criteria_json?' + qs, { credentials: 'same-origin' });
-          if (res.ok) {
-            const data = await res.json();
-            downloadBtn.style.display = data.exists ? 'inline-block' : 'none';
-          }
-        } catch(_) {}
-      })();
+      // Button is always visible — no has_report gate needed
+      const _checkReportExists = () => {};
+      _checkReportExists();
+      // Store checker on the button so it can be re-invoked after assessment completes
+      downloadBtn._checkReportExists = _checkReportExists;
     }
 
     /* Append elements to Action Container */
@@ -5862,7 +5872,7 @@ function renderTable(){
           } catch (e) { mid.textContent = cached.experience; }
         }
         if (cached.cv) {
-          // Download CV button visibility is controlled by criteria JSON check (set at render time)
+          // Download Assessment button visibility is controlled by has_report check (set at render time — requires assessment completion)
         }
         // Restore assessment HTML if present in cache (and wasn't already in row)
         // if (cached.assessmentHTML && (!rowMatchingContainer || !rowMatchingContainer.innerHTML.trim())) {
@@ -6204,7 +6214,7 @@ function renderTable(){
                   const prevCache = getCardCache(anchorLookup) || {};
                   const hasCV = !!(geo.cv || prevCache.cv);
 
-                  // Download CV button visibility is controlled by criteria JSON check (set at render time)
+                  // Download Assessment button visibility is controlled by has_report check (set at render time — requires assessment completion)
                   
                   if(geo.experience || geo.education) {
                       let displayExp = geo.experience || '';

@@ -880,6 +880,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 SEARCH_XLS_DIR = r"F:\Recruiting Tools\Autosourcing\searchxls"
 os.makedirs(SEARCH_XLS_DIR, exist_ok=True)
 
+# Report output directory — stores final assessment report PDFs
+REPORT_TEMPLATES_DIR = os.getenv(
+    "REPORT_TEMPLATES_DIR",
+    r"F:\Recruiting Tools\Autosourcing\templates"
+)
+os.makedirs(REPORT_TEMPLATES_DIR, exist_ok=True)
+
 GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_CUSTOM_SEARCH_API_KEY")
 GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX") or os.getenv("GOOGLE_CUSTOM_SEARCH_CX")
 
@@ -4353,6 +4360,21 @@ Return ONLY the JSON object, no other text."""
     except Exception as e:
         logger.warning(f"[Gemini Assess -> DB rating] {e}")
 
+    # Write assessment result to disk so has_report / _find_assessment_for_candidate can
+    # locate it without requiring a bulk run.  Mirrors the path used by _assess_and_persist
+    # in webbridge_cv.py.
+    if linkedinurl:
+        try:
+            _safe_name = "assessment_" + hashlib.sha256(linkedinurl.encode("utf-8")).hexdigest()[:16] + ".json"
+            _assess_dir = os.path.join(OUTPUT_DIR, "assessments")
+            os.makedirs(_assess_dir, exist_ok=True)
+            _out_path = os.path.join(_assess_dir, _safe_name)
+            with open(_out_path, "w", encoding="utf-8") as _fh:
+                json.dump(out_obj, _fh, indent=2, ensure_ascii=False)
+            logger.info(f"[Gemini Assess] Persisted assessment file: {_out_path}")
+        except Exception as _e_file:
+            logger.warning(f"[Gemini Assess] Failed to write assessment file: {_e_file}")
+
     return jsonify(out_obj), 200
 
 # ... [Login/Register/Auth functions kept as is] ...
@@ -7433,6 +7455,881 @@ def download_criteria_pdf():
     return _Response(
         pdf_bytes,
         mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assessment Report Generation (criteria JSON + bulk assessment results → PDF)
+# ---------------------------------------------------------------------------
+
+def _find_assessment_for_candidate(linkedin_url: str):
+    """Find the latest assessment result for a candidate.
+
+    Checks (in order):
+      1. OUTPUT_DIR/assessments/assessment_{sha256[:16]}.json  (individual assessment)
+      2. OUTPUT_DIR/bulk_*_results.json                        (most-recent bulk run)
+
+    Returns the assessment result dict, or None if not found.
+    """
+    if not linkedin_url:
+        return None
+    # 1. Individual assessment file (written by gemini_assess_profile / _assess_and_persist)
+    safe_name = "assessment_" + hashlib.sha256(linkedin_url.encode("utf-8")).hexdigest()[:16] + ".json"
+    assess_path = os.path.join(OUTPUT_DIR, "assessments", safe_name)
+    try:
+        with open(assess_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        pass
+    # 2. Bulk results files — scan newest first
+    if not os.path.isdir(OUTPUT_DIR):
+        return None
+    try:
+        bulk_files = sorted(
+            [f for f in os.listdir(OUTPUT_DIR) if f.endswith("_results.json")],
+            key=lambda f: os.path.getmtime(os.path.join(OUTPUT_DIR, f)),
+            reverse=True,
+        )
+        norm_url = linkedin_url.strip().lower()
+        for fname in bulk_files:
+            fpath = os.path.join(OUTPUT_DIR, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    records = json.load(fh)
+                if not isinstance(records, list):
+                    continue
+                for rec in records:
+                    if isinstance(rec, dict) and rec.get("linkedinurl", "").strip().lower() == norm_url:
+                        result = rec.get("result")
+                        if result and not result.get("_skipped"):
+                            # Attach vskillset from the record sibling if not already present
+                            if "vskillset" not in result and rec.get("vskillset"):
+                                result = dict(result)
+                                result["vskillset"] = rec.get("vskillset")
+                            return result
+            except Exception:
+                continue
+    except Exception:
+        pass
+    # 3. DB fallback — read the `rating` column from the process table.
+    #    This covers candidates assessed via the individual path before file-writing
+    #    was added, and acts as a safety net when the on-disk file is missing.
+    try:
+        conn = _pg_connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT rating FROM process WHERE linkedinurl = %s AND rating IS NOT NULL"
+                " ORDER BY rating_updated_at DESC NULLS LAST LIMIT 1",
+                (linkedin_url,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0]:
+                rating = row[0]
+                if isinstance(rating, str):
+                    try:
+                        rating = json.loads(rating)
+                    except Exception:
+                        rating = None
+                if isinstance(rating, dict) and not rating.get("_skipped"):
+                    return rating
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return None
+
+
+def _lines_to_pdf_bytes(lines: list) -> bytes:
+    """Convert a list of (kind, text) tuples to PDF bytes.
+
+    Kinds: 'title', 'section', 'key', 'item', 'gap', 'table'
+    For 'table' kind, text is a list of rows (list of strings). The first row
+    is rendered as a bold header.  Cell text is automatically word-wrapped so
+    content never overflows the page boundary.
+
+    Tries reportlab first; falls back to a raw minimal PDF.
+    """
+    try:
+        from reportlab.pdfgen import canvas as rl_canvas
+        from reportlab.lib.pagesizes import A4
+        import io as _io
+
+        buf = _io.BytesIO()
+        c = rl_canvas.Canvas(buf, pagesize=A4)
+        page_w, page_h = A4
+        MARGIN_L = 40
+        MARGIN_R = 30
+        CONTENT_W = page_w - MARGIN_L - MARGIN_R  # usable width
+        y = page_h - 50
+
+        def _safe(s):
+            return str(s).encode("latin-1", errors="replace").decode("latin-1")
+
+        def _wrap_text(text, font, size, avail_w):
+            """Word-wrap text into lines that fit within avail_w pixels."""
+            safe = _safe(str(text))
+            if not safe.strip():
+                return [""]
+            words = safe.split()
+            result, cur = [], ""
+            for word in words:
+                test = (cur + " " + word).strip() if cur else word
+                if c.stringWidth(test, font, size) <= avail_w:
+                    cur = test
+                else:
+                    if cur:
+                        result.append(cur)
+                    # Single word too long: truncate to fit
+                    while word and c.stringWidth(word, font, size) > avail_w and len(word) > 1:
+                        word = word[:-1]
+                    cur = word
+            if cur:
+                result.append(cur)
+            return result or [""]
+
+        def _new_page():
+            nonlocal y
+            c.showPage()
+            y = page_h - 50
+
+        def _ensure_space(needed):
+            nonlocal y
+            if y - needed < 60:
+                _new_page()
+
+        def _draw_table(rows):
+            """Draw a table with word-wrapped cells and dynamic row heights."""
+            nonlocal y
+            if not rows:
+                return
+            col_count = max(len(r) for r in rows)
+            if col_count == 0:
+                return
+
+            # Column widths by column count
+            if col_count == 4:
+                # CATEGORY | WEIGHT | RATING/STATUS | COMMENT
+                col_w = [105, 45, 82, CONTENT_W - 105 - 45 - 82]
+            elif col_count == 3:
+                col_w = [100, 75, CONTENT_W - 100 - 75]
+            elif col_count == 2:
+                col_w = [130, CONTENT_W - 130]
+            else:
+                col_w = [CONTENT_W / col_count] * col_count
+
+            x_pos = [MARGIN_L]
+            for cw in col_w[:-1]:
+                x_pos.append(x_pos[-1] + cw)
+
+            FONT_SZ = 9
+            LINE_H = FONT_SZ + 3
+            PAD_H = 3   # horizontal padding per side
+            PAD_V = 4   # vertical padding per side
+
+            # Draw outer border around the entire table
+            c.setStrokeColorRGB(0.55, 0.55, 0.55)
+            c.setLineWidth(0.7)
+
+            for r_idx, row in enumerate(rows):
+                is_hdr = r_idx == 0
+                font_n = "Helvetica-Bold" if is_hdr else "Helvetica"
+
+                # Pad row to col_count
+                padded = list(row) + [""] * (col_count - len(row))
+
+                # Word-wrap each cell
+                cell_wrapped = []
+                for ci in range(col_count):
+                    avail = col_w[ci] - 2 * PAD_H
+                    cell_wrapped.append(_wrap_text(str(padded[ci]), font_n, FONT_SZ, avail))
+
+                n_lines = max(len(cl) for cl in cell_wrapped)
+                row_h = n_lines * LINE_H + 2 * PAD_V
+                row_h = max(row_h, LINE_H + 2 * PAD_V)
+
+                _ensure_space(row_h + 4)
+
+                # Background
+                if is_hdr:
+                    c.setFillColorRGB(0.18, 0.36, 0.56)  # professional dark blue
+                    c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+                    c.setFillColorRGB(1, 1, 1)
+                elif r_idx % 2 == 1:
+                    c.setFillColorRGB(0.95, 0.97, 1.0)
+                    c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+                    c.setFillColorRGB(0.1, 0.1, 0.1)
+                else:
+                    c.setFillColorRGB(1, 1, 1)
+                    c.rect(MARGIN_L, y - row_h, CONTENT_W, row_h, fill=1, stroke=0)
+                    c.setFillColorRGB(0.1, 0.1, 0.1)
+
+                # Cell text
+                c.setFont(font_n, FONT_SZ)
+                for ci, (cl, xp, cw) in enumerate(zip(cell_wrapped, x_pos, col_w)):
+                    text_y = y - PAD_V - LINE_H + 2
+                    for ln in cl:
+                        c.drawString(xp + PAD_H, text_y, ln)
+                        text_y -= LINE_H
+
+                # Row bottom border
+                c.setStrokeColorRGB(0.70, 0.70, 0.70)
+                c.setLineWidth(0.4)
+                c.line(MARGIN_L, y - row_h, MARGIN_L + CONTENT_W, y - row_h)
+
+                c.setFillColorRGB(0, 0, 0)
+                y -= row_h
+
+            # Outer border (left + right verticals)
+            c.setStrokeColorRGB(0.55, 0.55, 0.55)
+            c.setLineWidth(0.6)
+            y -= 4
+
+        for kind, text in lines:
+            if kind == "gap":
+                y -= 10
+                continue
+
+            if kind == "table":
+                _draw_table(text)
+                continue
+
+            # Regular text kinds
+            if kind == "title":
+                font_n, font_s = "Helvetica-Bold", 16
+                indent = MARGIN_L
+                _ensure_space(font_s + 14)
+                c.setFont(font_n, font_s)
+                c.drawString(indent, y, _safe(str(text)))
+                y -= font_s + 4
+                # Decorative underline
+                c.setStrokeColorRGB(0.18, 0.36, 0.56)
+                c.setLineWidth(1.5)
+                c.line(MARGIN_L, y, MARGIN_L + CONTENT_W, y)
+                y -= 6
+                continue
+            elif kind == "section":
+                font_n, font_s = "Helvetica-Bold", 11
+                indent = MARGIN_L
+                y -= 4
+            elif kind == "key":
+                font_n, font_s = "Helvetica-Bold", 10
+                indent = MARGIN_L
+            else:  # "item"
+                font_n, font_s = "Helvetica", 9
+                indent = MARGIN_L + 8
+
+            avail_w = CONTENT_W - (indent - MARGIN_L)
+            for ln in _wrap_text(str(text), font_n, font_s, avail_w):
+                _ensure_space(font_s + 6)
+                c.setFont(font_n, font_s)
+                c.drawString(indent, y, ln)
+                y -= font_s + 3
+
+        c.save()
+        return buf.getvalue()
+    except ImportError:
+        pass
+
+    # Raw minimal PDF fallback
+    def _pdf_str(s):
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    stream_lines = ["BT", "/F1 16 Tf", "40 792 Td"]
+    for kind, text in lines:
+        if kind == "table":
+            rows = text
+            for r_idx, row in enumerate(rows):
+                row_text = " | ".join(str(c) for c in row)
+                safe = row_text.encode("latin-1", errors="replace").decode("latin-1")
+                fname = "/FB" if r_idx == 0 else "/F1"
+                stream_lines.append(f"{fname} 9 Tf")
+                stream_lines.append(f"({_pdf_str(safe)}) Tj")
+                stream_lines.append("0 -14 Td")
+            continue
+        safe = str(text).encode("latin-1", errors="replace").decode("latin-1")
+        if not safe.strip() or kind == "gap":
+            stream_lines.append("0 -10 Td")
+            continue
+        size = 16 if kind == "title" else (12 if kind == "section" else 11)
+        bold = kind in ("title", "section", "key")
+        fname = "/FB" if bold else "/F1"
+        stream_lines.append(f"{fname} {size} Tf")
+        stream_lines.append(f"({_pdf_str(safe)}) Tj")
+        stream_lines.append("0 -16 Td")
+    stream_lines.append("ET")
+    stream = "\n".join(stream_lines).encode("latin-1")
+
+    def _obj(n, d, s=None):
+        out = f"{n} 0 obj\n{d}\n"
+        if s is not None:
+            out = out.encode("latin-1") + b"stream\n" + s + b"\nendstream\nendobj\n"
+            return out
+        return (out + "endobj\n").encode("latin-1")
+
+    o1 = _obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    o2 = _obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    o3 = _obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /FB 6 0 R >> >> >>")
+    slen = len(stream)
+    o4 = _obj(4, f"<< /Length {slen} >>", stream)
+    o5 = _obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    o6 = _obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+
+    header = b"%PDF-1.4\n"
+    body = o1 + o2 + o3 + o4 + o5 + o6
+    offsets = []
+    pos = len(header)
+    for chunk in (o1, o2, o3, o4, o5, o6):
+        offsets.append(pos)
+        pos += len(chunk)
+
+    xref_offset = len(header) + len(body)
+    xref = "xref\n0 7\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n"
+    trailer = f"trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    return header + body + (xref + trailer).encode("latin-1")
+
+
+def _build_report_lines(candidate_name: str, criteria_record: dict, assessment_result: dict) -> list:
+    """Build the (kind, text) lines for a full assessment report PDF.
+
+    All data sections are rendered as structured tables so that no text
+    overflows the page boundary.  Table cells word-wrap automatically.
+    """
+    role_tag = criteria_record.get("role_tag", "")
+    saved_at = criteria_record.get("saved_at", "")
+    criteria = criteria_record.get("criteria") or {}
+
+    lines = []
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    lines.append(("title", "Assessment Report"))
+    lines.append(("gap", ""))
+
+    # ── Candidate information table ───────────────────────────────────────────
+    lines.append(("table", [
+        ["FIELD", "VALUE"],
+        ["Candidate", candidate_name],
+        ["Role", role_tag],
+        ["Date", saved_at],
+    ]))
+    lines.append(("gap", ""))
+
+    if assessment_result:
+        # ── Assessment Summary ─────────────────────────────────────────────────
+        stars = max(0, min(int(assessment_result.get("stars", 0) or 0), 5))
+        star_str = ("*" * stars) + ("." * (5 - stars)) + f" ({stars}/5)"
+        overall = assessment_result.get("overall_comment", "") or ""
+
+        lines.append(("section", "ASSESSMENT SUMMARY"))
+        summary_rows = [
+            ["FIELD", "VALUE"],
+            ["Overall Score", str(assessment_result.get("total_score", "-"))],
+            ["Stars", star_str],
+            ["Assessment Level", str(assessment_result.get("assessment_level", "-"))],
+        ]
+        if overall:
+            summary_rows.append(["Overall Comment", overall])
+        lines.append(("table", summary_rows))
+        lines.append(("gap", ""))
+
+        # ── Score Breakdown ────────────────────────────────────────────────────
+        breakdown = assessment_result.get("criteria") or {}
+        if breakdown:
+            lines.append(("section", "SCORE BREAKDOWN"))
+            bd_rows = [["CATEGORY", "SCORE"]]
+            for cat, score in breakdown.items():
+                bd_rows.append([str(cat), str(score)])
+            lines.append(("table", bd_rows))
+            lines.append(("gap", ""))
+
+        # ── Category Appraisals (4-column with wrapped COMMENT) ────────────────
+        appraisals = assessment_result.get("category_appraisals") or {}
+        if appraisals:
+            lines.append(("section", "CATEGORY APPRAISALS"))
+            ap_rows = [["CATEGORY", "WEIGHT", "RATING / STATUS", "COMMENT"]]
+            for cat, appraisal in appraisals.items():
+                if isinstance(appraisal, dict):
+                    weight = appraisal.get("weight_percent", "")
+                    rating = appraisal.get("rating", "")
+                    status = appraisal.get("status", "")
+                    comment = appraisal.get("comment", "")
+                    rating_status = f"{str(rating)} / {str(status)}" if status else str(rating)
+                    ap_rows.append([
+                        str(cat),
+                        f"{weight}%" if weight not in (None, "") else "-",
+                        rating_status,
+                        str(comment),
+                    ])
+                else:
+                    ap_rows.append([str(cat), "-", "-", str(appraisal)])
+            lines.append(("table", ap_rows))
+            lines.append(("gap", ""))
+
+        # ── Skill Comments ─────────────────────────────────────────────────────
+        comments_raw = assessment_result.get("comments")
+        if comments_raw:
+            lines.append(("section", "SKILL COMMENTS"))
+            if isinstance(comments_raw, str):
+                # Narrative string — render each paragraph as a row in a
+                # single-column table so text stays within page boundaries.
+                paras = [p.strip() for p in comments_raw.split("\n") if p.strip()]
+                if paras:
+                    sc_rows = [["COMMENTS"]]
+                    for para in paras:
+                        sc_rows.append([para])
+                    lines.append(("table", sc_rows))
+            elif isinstance(comments_raw, (list, tuple)):
+                sc_rows = [["SKILL", "STATUS", "COMMENT"]]
+                for entry in comments_raw:
+                    if isinstance(entry, dict):
+                        skill = str(entry.get("skill") or entry.get("category", ""))
+                        match = str(entry.get("match") or entry.get("status", ""))
+                        note = str(entry.get("comment") or entry.get("note", ""))
+                        sc_rows.append([skill, match, note])
+                    else:
+                        sc_rows.append([str(entry), "", ""])
+                lines.append(("table", sc_rows))
+            lines.append(("gap", ""))
+
+    # ── Search Criteria (2-column table) ──────────────────────────────────────
+    if criteria:
+        lines.append(("section", "SEARCH CRITERIA"))
+        crit_rows = [["CRITERIA", "VALUE"]]
+        for k, v in criteria.items():
+            if isinstance(v, list):
+                v_str = ", ".join(str(x) for x in v) if v else "-"
+            else:
+                v_str = str(v) if v is not None else "-"
+            crit_rows.append([str(k), v_str])
+        lines.append(("table", crit_rows))
+
+    return lines
+
+
+@app.get("/sourcing/has_report")
+def has_report():
+    """Check whether a full assessment report can be generated for the given candidate.
+
+    Requires both a criteria JSON file AND a completed assessment result.
+    Query params:
+        linkedin  – candidate LinkedIn URL
+        name      – candidate name
+    Returns { "exists": true/false }
+    """
+    name = (request.args.get("name") or "").strip()
+    linkedin = (request.args.get("linkedin") or "").strip()
+    if not name and not linkedin:
+        return jsonify({"exists": False}), 200
+    # Look up name from DB if missing
+    if not name and linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sourcing WHERE linkedinurl=%s AND name IS NOT NULL LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    name = row[0].replace("님", "").strip()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    if not name:
+        return jsonify({"exists": False}), 200
+    # criteria JSON must exist
+    fpath, _ = _find_criteria_file_for_candidate(name)
+    if not fpath:
+        return jsonify({"exists": False}), 200
+    # assessment result must also exist
+    assessment = _find_assessment_for_candidate(linkedin) if linkedin else None
+    return jsonify({"exists": assessment is not None}), 200
+
+
+def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_result: dict,
+                       candidate_jobtitle: str = "") -> bytes:
+    """Generate a well-structured Word document (.docx) assessment report.
+
+    Uses python-docx tables for every data section so text is always contained
+    within column boundaries — no overflow or alignment issues.
+
+    Returns the raw .docx bytes.
+    """
+    import io as _io
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Cm
+        from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+    except ImportError:
+        raise RuntimeError("python-docx is not installed; cannot generate DOCX report")
+
+    role_tag = criteria_record.get("role_tag", "")
+    saved_at = criteria_record.get("saved_at", "")
+    criteria = criteria_record.get("criteria") or {}
+
+    # Format date as YYYY-MM-DD only (strip time component)
+    date_str = str(saved_at)
+    if "T" in date_str:
+        date_str = date_str.split("T")[0]
+    elif len(date_str) > 10:
+        date_str = date_str[:10]
+
+    # Use candidate's current job title when available, else fall back to role_tag
+    display_role = candidate_jobtitle or role_tag
+
+    doc = Document()
+
+    # ── Page margins ──────────────────────────────────────────────────────────
+    for section in doc.sections:
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+
+    # ── Styles helpers ────────────────────────────────────────────────────────
+    DARK_BLUE = RGBColor(0x12, 0x36, 0x5E)   # header bg approximated as font colour
+    HDR_BG = "123660"                         # dark navy hex for table header shading
+    ALT_BG = "EBF0F8"                         # light blue for alternating rows
+    WHITE_BG = "FFFFFF"
+
+    def _shade_cell(cell, hex_color):
+        """Apply solid background shading to a table cell."""
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), hex_color)
+        tcPr.append(shd)
+
+    def _set_col_widths(table, widths_cm):
+        """Set absolute column widths."""
+        for row in table.rows:
+            for idx, cell in enumerate(row.cells):
+                if idx < len(widths_cm):
+                    cell.width = Cm(widths_cm[idx])
+
+    def _add_table(headers, rows_data, col_widths_cm=None):
+        """Add a formatted table with a dark header row and alternating rows."""
+        all_rows = [headers] + rows_data
+        tbl = doc.add_table(rows=len(all_rows), cols=len(headers))
+        tbl.style = "Table Grid"
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+
+        for r_idx, row_vals in enumerate(all_rows):
+            is_hdr = r_idx == 0
+            row = tbl.rows[r_idx]
+            for c_idx, val in enumerate(row_vals):
+                cell = row.cells[c_idx]
+                cell.text = str(val) if val is not None else ""
+                para = cell.paragraphs[0]
+                run = para.runs[0] if para.runs else para.add_run(cell.text)
+                run.text = str(val) if val is not None else ""
+                run.font.size = Pt(9)
+                run.font.bold = is_hdr
+                if is_hdr:
+                    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                    _shade_cell(cell, HDR_BG)
+                elif r_idx % 2 == 0:
+                    _shade_cell(cell, ALT_BG)
+                else:
+                    _shade_cell(cell, WHITE_BG)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+
+        if col_widths_cm:
+            _set_col_widths(tbl, col_widths_cm)
+        return tbl
+
+    def _add_section_heading(text):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(10)
+        p.paragraph_format.space_after = Pt(2)
+        run = p.add_run(text.upper())
+        run.font.bold = True
+        run.font.size = Pt(11)
+        run.font.color.rgb = DARK_BLUE
+        # Underline the section heading
+        p2 = doc.add_paragraph()
+        p2.paragraph_format.space_before = Pt(0)
+        p2.paragraph_format.space_after = Pt(4)
+        run2 = p2.add_run("─" * 60)
+        run2.font.size = Pt(7)
+        run2.font.color.rgb = DARK_BLUE
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    title_p = doc.add_paragraph()
+    title_run = title_p.add_run("Assessment Report")
+    title_run.font.bold = True
+    title_run.font.size = Pt(18)
+    title_run.font.color.rgb = DARK_BLUE
+    title_p.paragraph_format.space_after = Pt(6)
+
+    # ── Candidate info table ──────────────────────────────────────────────────
+    _add_section_heading("Candidate Information")
+    _add_table(
+        ["Field", "Value"],
+        [
+            ["Candidate", candidate_name],
+            ["Role", display_role],
+            ["Date", date_str],
+        ],
+        col_widths_cm=[4.5, 12.5],
+    )
+    doc.add_paragraph()
+
+    if assessment_result:
+        # ── Assessment Summary ─────────────────────────────────────────────────
+        stars = max(0, min(int(assessment_result.get("stars", 0) or 0), 5))
+        star_str = ("★" * stars) + ("☆" * (5 - stars)) + f"  ({stars}/5)"
+        overall = str(assessment_result.get("overall_comment", "") or "")
+        # Ensure overall score shows as e.g. "96%" without duplicating the % symbol
+        raw_score = str(assessment_result.get("total_score", "-")).rstrip("%")
+        score_display = f"{raw_score}%" if raw_score != "-" else "-"
+
+        _add_section_heading("Assessment Summary")
+        summary_data = [
+            ["Overall Score", score_display],
+            ["Stars", star_str],
+            ["Level", str(assessment_result.get("assessment_level", "-"))],
+        ]
+        if overall:
+            summary_data.append(["Overall Comment", overall])
+        _add_table(["Field", "Value"], summary_data, col_widths_cm=[4.5, 12.5])
+        doc.add_paragraph()
+
+        # ── Search Criteria + Score Breakdown (combined) ───────────────────────
+        # Map common criteria keys to score breakdown keys so scores appear inline
+        _score_key_map = {
+            "job_titles": ["jobtitle_role_tag", "jobtitle", "job_title"],
+            "job_title": ["jobtitle_role_tag", "jobtitle"],
+            "country": ["country"],
+            "countries": ["country"],
+            "companies": ["company"],
+            "company": ["company"],
+            "sectors": ["sector"],
+            "sector": ["sector"],
+            "tenure": ["tenure"],
+            "min_tenure": ["tenure"],
+            "skills": ["skillset"],
+            "skillset": ["skillset"],
+            "seniority": ["seniority"],
+        }
+        breakdown = assessment_result.get("criteria") or {}
+
+        def _get_score_for_criteria(crit_key):
+            """Return score value string for a criteria key, or '' if none."""
+            candidates = _score_key_map.get(crit_key.lower(), [crit_key.lower()])
+            for c in candidates:
+                if c in breakdown:
+                    return str(breakdown[c])
+            return ""
+
+        if criteria:
+            _add_section_heading("Search Criteria")
+            crit_data = []
+            seen_score_keys = set()
+            for k, v in criteria.items():
+                if isinstance(v, list):
+                    v_str = ", ".join(str(x) for x in v) if v else "-"
+                else:
+                    v_str = str(v) if v is not None else "-"
+                score_val = _get_score_for_criteria(k)
+                crit_data.append([str(k), v_str, score_val])
+                # Track which score keys have been used
+                for sk in _score_key_map.get(k.lower(), [k.lower()]):
+                    seen_score_keys.add(sk)
+            # Append any score breakdown categories not yet covered by criteria keys
+            for cat, score in breakdown.items():
+                if cat not in seen_score_keys:
+                    crit_data.append([str(cat), "-", str(score)])
+            _add_table(
+                ["Criteria", "Value", "Score"],
+                crit_data,
+                col_widths_cm=[4.0, 10.5, 2.5],
+            )
+            doc.add_paragraph()
+
+        # ── Category Appraisals ────────────────────────────────────────────────
+        appraisals = assessment_result.get("category_appraisals") or {}
+        if appraisals:
+            _add_section_heading("Category Appraisals")
+            ap_data = []
+            for cat, appraisal in appraisals.items():
+                if isinstance(appraisal, dict):
+                    weight = appraisal.get("weight_percent", "")
+                    rating = str(appraisal.get("rating", "") or "")
+                    status = str(appraisal.get("status", "") or "")
+                    comment = str(appraisal.get("comment", "") or "")
+                    rating_status = f"{rating} / {status}" if status else rating
+                    ap_data.append([
+                        str(cat),
+                        f"{weight}%" if weight not in (None, "") else "-",
+                        rating_status,
+                        comment,
+                    ])
+                else:
+                    ap_data.append([str(cat), "-", "-", str(appraisal)])
+            _add_table(
+                ["Category", "Weight", "Rating / Status", "Comment"],
+                ap_data,
+                col_widths_cm=[3.5, 1.8, 3.2, 8.5],
+            )
+            doc.add_paragraph()
+
+        # ── Conclusion (formerly Skill Comments) ───────────────────────────────
+        comments_raw = assessment_result.get("comments")
+        if comments_raw:
+            _add_section_heading("Conclusion")
+            if isinstance(comments_raw, str):
+                paras = [p.strip() for p in comments_raw.split("\n") if p.strip()]
+                if paras:
+                    _add_table(["Comments"], [[p] for p in paras], col_widths_cm=[17.0])
+            elif isinstance(comments_raw, (list, tuple)):
+                sc_data = []
+                for entry in comments_raw:
+                    if isinstance(entry, dict):
+                        skill = str(entry.get("skill") or entry.get("category", ""))
+                        match = str(entry.get("match") or entry.get("status", ""))
+                        note = str(entry.get("comment") or entry.get("note", ""))
+                        sc_data.append([skill, match, note])
+                    else:
+                        sc_data.append([str(entry), "", ""])
+                _add_table(["Skill", "Status", "Comment"], sc_data, col_widths_cm=[4.0, 3.0, 10.0])
+            doc.add_paragraph()
+
+        # ── Verified Skillset ──────────────────────────────────────────────────
+        vskillset = assessment_result.get("vskillset")
+        if vskillset:
+            _add_section_heading("Verified Skillset")
+            # vskillset may be a list of dicts or a single dict
+            if isinstance(vskillset, dict):
+                vskillset = [vskillset]
+            if isinstance(vskillset, list) and vskillset:
+                vs_data = []
+                for item in vskillset:
+                    if isinstance(item, dict):
+                        skill = str(item.get("skill", ""))
+                        prob = str(item.get("probability", ""))
+                        if prob:
+                            prob = prob.rstrip("%") + "%"
+                        cat = str(item.get("category", ""))
+                        reason = str(item.get("reason", ""))
+                        source = str(item.get("source", ""))
+                        vs_data.append([skill, prob, cat, reason, source])
+                    else:
+                        vs_data.append([str(item), "", "", "", ""])
+                _add_table(
+                    ["Skill", "Probability", "Category", "Reason", "Source"],
+                    vs_data,
+                    col_widths_cm=[3.0, 2.0, 2.0, 8.0, 2.0],
+                )
+                doc.add_paragraph()
+
+    elif criteria:
+        # No assessment yet — still show Search Criteria
+        _add_section_heading("Search Criteria")
+        crit_data = []
+        for k, v in criteria.items():
+            if isinstance(v, list):
+                v_str = ", ".join(str(x) for x in v) if v else "-"
+            else:
+                v_str = str(v) if v is not None else "-"
+            crit_data.append([str(k), v_str])
+        _add_table(["Criteria", "Value"], crit_data, col_widths_cm=[5.5, 11.5])
+
+    buf = _io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@app.get("/sourcing/download_report")
+def download_report():
+    """Generate and download a formal assessment report as a Word document (.docx).
+
+    Combines the criteria JSON and bulk/individual assessment results into one document.
+    The generated file is also saved to REPORT_TEMPLATES_DIR for record-keeping.
+
+    Query params:
+        linkedin  – candidate LinkedIn URL
+        name      – candidate name
+    """
+    name = (request.args.get("name") or "").strip()
+    linkedin = (request.args.get("linkedin") or "").strip()
+    if not name and not linkedin:
+        return "name or linkedin required", 400
+    # Look up name from DB if missing
+    if not name and linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sourcing WHERE linkedinurl=%s AND name IS NOT NULL LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    name = row[0].replace("님", "").strip()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning(f"[download_report] DB lookup failed: {exc}")
+    if not name:
+        return "No candidate name found", 404
+    # Fetch candidate's current job title from DB for the report
+    candidate_jobtitle = ""
+    if linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT jobtitle FROM sourcing WHERE linkedinurl=%s AND jobtitle IS NOT NULL"
+                    " ORDER BY id DESC LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    candidate_jobtitle = row[0].strip()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning(f"[download_report] jobtitle lookup failed: {exc}")
+    fpath, criteria_record = _find_criteria_file_for_candidate(name)
+    if not criteria_record:
+        return "No criteria file found for this candidate", 404
+    assessment_result = _find_assessment_for_candidate(linkedin) if linkedin else None
+    try:
+        docx_bytes = _build_report_docx(name, criteria_record, assessment_result or {}, candidate_jobtitle=candidate_jobtitle)
+    except Exception as exc:
+        logger.exception("[download_report] DOCX generation failed")
+        return f"Report generation failed: {exc}", 500
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    safe_role = re.sub(r'[<>:"/\\|?*]', '_', criteria_record.get("role_tag", "report"))
+    fname = f"{safe_name} {safe_role}.docx"
+    # Persist to REPORT_TEMPLATES_DIR (already created at startup)
+    try:
+        out_path = os.path.join(REPORT_TEMPLATES_DIR, fname)
+        with open(out_path, "wb") as fh:
+            fh.write(docx_bytes)
+        logger.info(f"[download_report] Saved report to {out_path}")
+    except Exception as exc:
+        logger.warning(f"[download_report] Could not save to templates dir: {exc}")
+    from flask import Response as _Response
+    return _Response(
+        docx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
