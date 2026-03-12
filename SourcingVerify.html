@@ -5242,7 +5242,13 @@ function renderTable(){
     if (!experience || experience === '—') experience = '—';
 
     const lnBtn = tr.querySelector('td[data-field="linkedinurl"] .view-btn');
-    const linkedinurl = lnBtn ? (lnBtn.dataset.profileUrl || '').trim() : (tds[6]?.textContent || '').trim();
+    // Resolve LinkedIn URL from all available sources: dataset on row (most reliable),
+    // view-btn profileUrl, Name cell <a> href, or credential cell text content.
+    const nameCellLink = tds[2] ? (tds[2].querySelector('a')?.href || '') : '';
+    const linkedinurl = tr.dataset.linkedinurl
+      || (lnBtn ? (lnBtn.dataset.profileUrl || '').trim() : '')
+      || nameCellLink
+      || (tds[6]?.textContent || '').trim();
 
     /* No newTr, just the content div */
     const content = document.createElement('div');
@@ -5495,7 +5501,7 @@ function renderTable(){
     downloadBtn.className = 'sv-assess-btn sv-download-btn';
     downloadBtn.type = 'button';
     downloadBtn.textContent = 'Download Assessment';
-    downloadBtn.title = 'Download assessment report as PDF (available after assessment is complete)';
+    downloadBtn.title = 'Download assessment report as Word document (available after assessment is complete)';
     downloadBtn.style.width = '100%'; // Full width
     downloadBtn.style.display = 'block';
     downloadBtn.style.backgroundColor = '#f6f8fa';

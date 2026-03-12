@@ -7949,12 +7949,224 @@ def has_report():
     return jsonify({"exists": assessment is not None}), 200
 
 
+def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_result: dict) -> bytes:
+    """Generate a well-structured Word document (.docx) assessment report.
+
+    Uses python-docx tables for every data section so text is always contained
+    within column boundaries — no overflow or alignment issues.
+
+    Returns the raw .docx bytes.
+    """
+    import io as _io
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Cm
+        from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+    except ImportError:
+        raise RuntimeError("python-docx is not installed; cannot generate DOCX report")
+
+    role_tag = criteria_record.get("role_tag", "")
+    saved_at = criteria_record.get("saved_at", "")
+    criteria = criteria_record.get("criteria") or {}
+
+    doc = Document()
+
+    # ── Page margins ──────────────────────────────────────────────────────────
+    for section in doc.sections:
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+
+    # ── Styles helpers ────────────────────────────────────────────────────────
+    DARK_BLUE = RGBColor(0x12, 0x36, 0x5E)   # header bg approximated as font colour
+    HDR_BG = "123660"                         # dark navy hex for table header shading
+    ALT_BG = "EBF0F8"                         # light blue for alternating rows
+    WHITE_BG = "FFFFFF"
+
+    def _shade_cell(cell, hex_color):
+        """Apply solid background shading to a table cell."""
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), hex_color)
+        tcPr.append(shd)
+
+    def _set_col_widths(table, widths_cm):
+        """Set absolute column widths."""
+        for row in table.rows:
+            for idx, cell in enumerate(row.cells):
+                if idx < len(widths_cm):
+                    cell.width = Cm(widths_cm[idx])
+
+    def _add_table(headers, rows_data, col_widths_cm=None):
+        """Add a formatted table with a dark header row and alternating rows."""
+        all_rows = [headers] + rows_data
+        tbl = doc.add_table(rows=len(all_rows), cols=len(headers))
+        tbl.style = "Table Grid"
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+
+        for r_idx, row_vals in enumerate(all_rows):
+            is_hdr = r_idx == 0
+            row = tbl.rows[r_idx]
+            for c_idx, val in enumerate(row_vals):
+                cell = row.cells[c_idx]
+                cell.text = str(val) if val is not None else ""
+                para = cell.paragraphs[0]
+                run = para.runs[0] if para.runs else para.add_run(cell.text)
+                run.text = str(val) if val is not None else ""
+                run.font.size = Pt(9)
+                run.font.bold = is_hdr
+                if is_hdr:
+                    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                    _shade_cell(cell, HDR_BG)
+                elif r_idx % 2 == 0:
+                    _shade_cell(cell, ALT_BG)
+                else:
+                    _shade_cell(cell, WHITE_BG)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+
+        if col_widths_cm:
+            _set_col_widths(tbl, col_widths_cm)
+        return tbl
+
+    def _add_section_heading(text):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(10)
+        p.paragraph_format.space_after = Pt(2)
+        run = p.add_run(text.upper())
+        run.font.bold = True
+        run.font.size = Pt(11)
+        run.font.color.rgb = DARK_BLUE
+        # Underline the section heading
+        p2 = doc.add_paragraph()
+        p2.paragraph_format.space_before = Pt(0)
+        p2.paragraph_format.space_after = Pt(4)
+        run2 = p2.add_run("─" * 60)
+        run2.font.size = Pt(7)
+        run2.font.color.rgb = DARK_BLUE
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    title_p = doc.add_paragraph()
+    title_run = title_p.add_run("Assessment Report")
+    title_run.font.bold = True
+    title_run.font.size = Pt(18)
+    title_run.font.color.rgb = DARK_BLUE
+    title_p.paragraph_format.space_after = Pt(6)
+
+    # ── Candidate info table ──────────────────────────────────────────────────
+    _add_section_heading("Candidate Information")
+    _add_table(
+        ["Field", "Value"],
+        [
+            ["Candidate", candidate_name],
+            ["Role", role_tag],
+            ["Date", saved_at],
+        ],
+        col_widths_cm=[4.5, 12.5],
+    )
+    doc.add_paragraph()
+
+    if assessment_result:
+        # ── Assessment Summary ─────────────────────────────────────────────────
+        stars = max(0, min(int(assessment_result.get("stars", 0) or 0), 5))
+        star_str = ("★" * stars) + ("☆" * (5 - stars)) + f"  ({stars}/5)"
+        overall = str(assessment_result.get("overall_comment", "") or "")
+
+        _add_section_heading("Assessment Summary")
+        summary_data = [
+            ["Overall Score", str(assessment_result.get("total_score", "-")) + "%"],
+            ["Stars", star_str],
+            ["Level", str(assessment_result.get("assessment_level", "-"))],
+        ]
+        if overall:
+            summary_data.append(["Overall Comment", overall])
+        _add_table(["Field", "Value"], summary_data, col_widths_cm=[4.5, 12.5])
+        doc.add_paragraph()
+
+        # ── Score Breakdown ────────────────────────────────────────────────────
+        breakdown = assessment_result.get("criteria") or {}
+        if breakdown:
+            _add_section_heading("Score Breakdown")
+            bd_data = [[str(cat), str(score)] for cat, score in breakdown.items()]
+            _add_table(["Category", "Score"], bd_data, col_widths_cm=[8.5, 8.5])
+            doc.add_paragraph()
+
+        # ── Category Appraisals ────────────────────────────────────────────────
+        appraisals = assessment_result.get("category_appraisals") or {}
+        if appraisals:
+            _add_section_heading("Category Appraisals")
+            ap_data = []
+            for cat, appraisal in appraisals.items():
+                if isinstance(appraisal, dict):
+                    weight = appraisal.get("weight_percent", "")
+                    rating = str(appraisal.get("rating", "") or "")
+                    status = str(appraisal.get("status", "") or "")
+                    comment = str(appraisal.get("comment", "") or "")
+                    rating_status = f"{rating} / {status}" if status else rating
+                    ap_data.append([
+                        str(cat),
+                        f"{weight}%" if weight not in (None, "") else "-",
+                        rating_status,
+                        comment,
+                    ])
+                else:
+                    ap_data.append([str(cat), "-", "-", str(appraisal)])
+            _add_table(
+                ["Category", "Weight", "Rating / Status", "Comment"],
+                ap_data,
+                col_widths_cm=[3.5, 1.8, 3.2, 8.5],
+            )
+            doc.add_paragraph()
+
+        # ── Skill Comments ─────────────────────────────────────────────────────
+        comments_raw = assessment_result.get("comments")
+        if comments_raw:
+            _add_section_heading("Skill Comments")
+            if isinstance(comments_raw, str):
+                paras = [p.strip() for p in comments_raw.split("\n") if p.strip()]
+                if paras:
+                    _add_table(["Comments"], [[p] for p in paras], col_widths_cm=[17.0])
+            elif isinstance(comments_raw, (list, tuple)):
+                sc_data = []
+                for entry in comments_raw:
+                    if isinstance(entry, dict):
+                        skill = str(entry.get("skill") or entry.get("category", ""))
+                        match = str(entry.get("match") or entry.get("status", ""))
+                        note = str(entry.get("comment") or entry.get("note", ""))
+                        sc_data.append([skill, match, note])
+                    else:
+                        sc_data.append([str(entry), "", ""])
+                _add_table(["Skill", "Status", "Comment"], sc_data, col_widths_cm=[4.0, 3.0, 10.0])
+            doc.add_paragraph()
+
+    # ── Search Criteria ────────────────────────────────────────────────────────
+    if criteria:
+        _add_section_heading("Search Criteria")
+        crit_data = []
+        for k, v in criteria.items():
+            if isinstance(v, list):
+                v_str = ", ".join(str(x) for x in v) if v else "-"
+            else:
+                v_str = str(v) if v is not None else "-"
+            crit_data.append([str(k), v_str])
+        _add_table(["Criteria", "Value"], crit_data, col_widths_cm=[5.5, 11.5])
+
+    buf = _io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 @app.get("/sourcing/download_report")
 def download_report():
-    """Generate and download a formal assessment report PDF for a candidate.
+    """Generate and download a formal assessment report as a Word document (.docx).
 
-    Combines the criteria JSON and bulk/individual assessment results into one PDF.
-    The generated PDF is also saved to REPORT_TEMPLATES_DIR for record-keeping.
+    Combines the criteria JSON and bulk/individual assessment results into one document.
+    The generated file is also saved to REPORT_TEMPLATES_DIR for record-keeping.
 
     Query params:
         linkedin  – candidate LinkedIn URL
@@ -7989,26 +8201,25 @@ def download_report():
         return "No criteria file found for this candidate", 404
     assessment_result = _find_assessment_for_candidate(linkedin) if linkedin else None
     try:
-        lines = _build_report_lines(name, criteria_record, assessment_result or {})
-        pdf_bytes = _lines_to_pdf_bytes(lines)
+        docx_bytes = _build_report_docx(name, criteria_record, assessment_result or {})
     except Exception as exc:
-        logger.exception("[download_report] PDF generation failed")
-        return f"PDF generation failed: {exc}", 500
+        logger.exception("[download_report] DOCX generation failed")
+        return f"Report generation failed: {exc}", 500
     safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
     safe_role = re.sub(r'[<>:"/\\|?*]', '_', criteria_record.get("role_tag", "report"))
-    fname = f"{safe_name} {safe_role}.pdf"
+    fname = f"{safe_name} {safe_role}.docx"
     # Persist to REPORT_TEMPLATES_DIR (already created at startup)
     try:
         out_path = os.path.join(REPORT_TEMPLATES_DIR, fname)
         with open(out_path, "wb") as fh:
-            fh.write(pdf_bytes)
+            fh.write(docx_bytes)
         logger.info(f"[download_report] Saved report to {out_path}")
     except Exception as exc:
         logger.warning(f"[download_report] Could not save to templates dir: {exc}")
     from flask import Response as _Response
     return _Response(
-        pdf_bytes,
-        mimetype="application/pdf",
+        docx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
