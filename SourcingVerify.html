@@ -867,23 +867,27 @@ function isRoleTagMismatch(tr) {
 }
 
 /* Cache the criteria JSON (profiles list) for the current session to avoid repeated fetches */
-let _criteriaJsonCache = null;
-let _criteriaJsonCacheKey = '';
+const _criteriaJsonCacheMap = new Map(); // key: "username|roleTag" → Set of names
 
-async function _getCriteriaProfiles() {
+/**
+ * Returns a Set of normalized profile names from the criteria JSON for the given
+ * role_tag (defaults to the current session role_tag when omitted).
+ * Results are cached per username+role_tag key so repeated bulk-row lookups are cheap.
+ */
+async function _getCriteriaProfiles(roleTag) {
   const username = window.__SV_ACTIVE_USERNAME || sessionStorage.getItem('username') || localStorage.getItem('username') || '';
-  const roleTag = (sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
-  if (!username || !roleTag) return null;
-  const cacheKey = username + '|' + roleTag;
-  if (_criteriaJsonCache !== null && _criteriaJsonCacheKey === cacheKey) return _criteriaJsonCache;
+  const rt = (roleTag || sessionStorage.getItem('role_tag') || localStorage.getItem('role_tag') || '').trim();
+  if (!username || !rt) return null;
+  const cacheKey = username + '|' + rt;
+  if (_criteriaJsonCacheMap.has(cacheKey)) return _criteriaJsonCacheMap.get(cacheKey);
   try {
-    const res = await fetch(`/load_search_criteria?username=${encodeURIComponent(username)}&role_tag=${encodeURIComponent(roleTag)}`, {credentials:'same-origin'});
-    if (!res.ok) { _criteriaJsonCache = null; _criteriaJsonCacheKey = cacheKey; return null; }
+    const res = await fetch(`/load_search_criteria?username=${encodeURIComponent(username)}&role_tag=${encodeURIComponent(rt)}`, {credentials:'same-origin'});
+    if (!res.ok) { _criteriaJsonCacheMap.set(cacheKey, null); return null; }
     const data = await res.json();
     const names = Array.isArray(data.name) ? data.name : (Array.isArray(data.profiles) ? data.profiles : []);
-    _criteriaJsonCache = new Set(names.map(n => (n||'').replace(/님/g,'').trim().toLowerCase()));
-    _criteriaJsonCacheKey = cacheKey;
-    return _criteriaJsonCache;
+    const nameSet = new Set(names.map(n => (n||'').replace(/님/g,'').trim().toLowerCase()));
+    _criteriaJsonCacheMap.set(cacheKey, nameSet);
+    return nameSet;
   } catch(e) { console.warn('[_getCriteriaProfiles] Failed to load criteria JSON:', e); return null; }
 }
 
@@ -2046,21 +2050,22 @@ async function runBulkAssessmentFromSearch() {
     const alreadyAssessedUrls = [];
     const skippedNotInJsonUrls = [];
 
-    // Load the criteria JSON profile list once for the bulk run
-    const jsonProfileNames = await _getCriteriaProfiles();
-
-    allRows.forEach(tr => {
+    for (const tr of allRows) {
         if (tr.dataset.linkedinurl) {
             const linkedinurl = tr.dataset.linkedinurl;
 
-            // Cross-check profile name against the criteria JSON file.
-            // Only profiles whose name appears in the JSON's profiles list are eligible.
+            // Cross-check profile name against the criteria JSON file that corresponds to
+            // the row's OWN role_tag (from the sourcing table), not the session role_tag.
+            // This ensures "Site Activation Manager" rows are checked against the SAM JSON,
+            // while "Cloud Engineer" rows are checked against the Cloud Engineer JSON.
             const rowData = rowsData.find(r => (r.linkedinurl || '').trim() === linkedinurl.trim());
             const profileName = (rowData && rowData.name) || '';
+            const rowRoleTag = (tr.dataset.roleTag || '').trim();
+            const jsonProfileNames = await _getCriteriaProfiles(rowRoleTag);
             if (!_isProfileNameInJson(profileName, jsonProfileNames)) {
-                console.warn(`[Bulk Assessment] Skipped "${profileName}" (${linkedinurl}): name not found in criteria JSON.`);
+                console.warn(`[Bulk Assessment] Skipped "${profileName}" (${linkedinurl}): name not found in criteria JSON for role_tag "${rowRoleTag}".`);
                 skippedNotInJsonUrls.push(linkedinurl);
-                return;
+                continue;
             }
 
             // Check if profile already has an assessment score
@@ -2080,10 +2085,10 @@ async function runBulkAssessmentFromSearch() {
                 linkedinurls.push(linkedinurl);
             }
         }
-    });
+    }
 
     if (skippedNotInJsonUrls.length > 0) {
-        console.log(`[Bulk Assessment] Skipped ${skippedNotInJsonUrls.length} record(s) whose name was not found in the criteria JSON file.`);
+        console.log(`[Bulk Assessment] Skipped ${skippedNotInJsonUrls.length} record(s) whose name was not found in their respective criteria JSON file.`);
     }
     
     // Check if there are any profiles to assess
@@ -4409,13 +4414,15 @@ async function performCombinedAssessment(tr, anchor, analyzeData, isLevel2Reques
     // runs vskillset generation, and performs L2 (inference) assessment.
     // analyzeData and isLevel2Request are retained for API compatibility but no longer used.
 
-    // JSON profile-name gate: silently skip if this profile's name is not in the criteria JSON.
+    // JSON profile-name gate: silently skip if this profile's name is not in the criteria JSON
+    // that corresponds to the row's OWN role_tag (from sourcing table).
     try {
         const rowData = rowsData.find(r => (r.linkedinurl || '').trim() === (anchor || '').trim());
         const profileName = (rowData && rowData.name) || '';
-        const jsonProfiles = await _getCriteriaProfiles();
+        const rowRoleTag = ((tr && tr.dataset && tr.dataset.roleTag) || '').trim();
+        const jsonProfiles = await _getCriteriaProfiles(rowRoleTag);
         if (!_isProfileNameInJson(profileName, jsonProfiles)) {
-            console.warn(`[Assessment] Silently skipped ${anchor}: profile name "${profileName}" not found in criteria JSON.`);
+            console.warn(`[Assessment] Silently skipped ${anchor}: profile name "${profileName}" not found in criteria JSON for role_tag "${rowRoleTag}".`);
             return false;
         }
     } catch(e) { console.warn('[performCombinedAssessment] Profile name check failed:', e); }
