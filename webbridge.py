@@ -3637,6 +3637,8 @@ def gemini_assess_profile():
 
     # 2. Fetch Target Skillset — priority: criteria JSON file (authoritative), then DB.
     target_skills = []
+    required_seniority_from_criteria = ""
+    required_country_from_criteria = ""
     if username and role_tag:
         _criteria = _read_search_criteria(username, role_tag)
         if _criteria:
@@ -3644,6 +3646,8 @@ def gemini_assess_profile():
             if _file_skills:
                 target_skills = _file_skills
                 logger.info(f"[Gemini Assess] target_skills loaded from criteria file ({len(target_skills)}) for {linkedinurl[:50]}")
+            required_seniority_from_criteria = (_criteria.get("Seniority") or "").strip()
+            required_country_from_criteria = (_criteria.get("Country") or "").strip()
     # DB fallback when criteria file is unavailable
     if not target_skills and linkedinurl:
         target_skills = _fetch_jskillset_from_process(linkedinurl)
@@ -4105,6 +4109,8 @@ Return ONLY the JSON object, no other text."""
         "tenure": tenure,  # Average tenure per employer
         "vskillset_results": vskillset_results,  # vskillset inference results for scoring
         "product": product,  # Product list from DB (mirrors _assess_and_persist)
+        "required_seniority": required_seniority_from_criteria,
+        "required_country": required_country_from_criteria,
     }
     
     # Log data completeness before assessment
@@ -7988,6 +7994,25 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
 
     doc = Document()
 
+    # ── Criteria key → human-readable label (also used as appraisal category lookup) ──
+    _CRIT_LABEL = {
+        "job_titles": "Job Title",
+        "job_title": "Job Title",
+        "jobtitle_role_tag": "Job Title",
+        "jobtitle": "Job Title",
+        "country": "Country",
+        "countries": "Country",
+        "company": "Company",
+        "companies": "Company",
+        "sector": "Sector",
+        "sectors": "Sector",
+        "tenure": "Tenure",
+        "min_tenure": "Tenure",
+        "skills": "Skillset",
+        "skillset": "Skillset",
+        "seniority": "Seniority",
+    }
+
     # ── Page margins ──────────────────────────────────────────────────────────
     for section in doc.sections:
         section.top_margin = Cm(2)
@@ -8106,84 +8131,106 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
         _add_table(["Field", "Value"], summary_data, col_widths_cm=[4.5, 12.5])
         doc.add_paragraph()
 
-        # ── Search Criteria + Score Breakdown (combined) ───────────────────────
-        # Map common criteria keys to score breakdown keys so scores appear inline
-        _score_key_map = {
-            "job_titles": ["jobtitle_role_tag", "jobtitle", "job_title"],
-            "job_title": ["jobtitle_role_tag", "jobtitle"],
-            "country": ["country"],
-            "countries": ["country"],
-            "companies": ["company"],
-            "company": ["company"],
-            "sectors": ["sector"],
-            "sector": ["sector"],
-            "tenure": ["tenure"],
-            "min_tenure": ["tenure"],
-            "skills": ["skillset"],
-            "skillset": ["skillset"],
-            "seniority": ["seniority"],
-        }
-        breakdown = assessment_result.get("criteria") or {}
+        # ── Category Appraisals (build early so weights are available for criteria table) ──
+        appraisals = assessment_result.get("category_appraisals") or {}
 
-        def _get_score_for_criteria(crit_key):
-            """Return score value string for a criteria key, or '' if none."""
-            candidates = _score_key_map.get(crit_key.lower(), [crit_key.lower()])
-            for c in candidates:
-                if c in breakdown:
-                    return str(breakdown[c])
+        def _get_weight_for_criteria(crit_key):
+            """Return weight_percent string from category_appraisals for a criteria key."""
+            ap_label = _CRIT_LABEL.get(crit_key.lower(), "")
+            for ap_cat, ap_val in appraisals.items():
+                if (ap_label and ap_cat.lower() == ap_label.lower()) or ap_cat.lower() == crit_key.lower():
+                    if isinstance(ap_val, dict):
+                        w = ap_val.get("weight_percent", "")
+                        if w not in (None, ""):
+                            return f"{w}%"
             return ""
 
         if criteria:
             _add_section_heading("Search Criteria")
             crit_data = []
-            seen_score_keys = set()
             for k, v in criteria.items():
                 if isinstance(v, list):
                     v_str = ", ".join(str(x) for x in v) if v else "-"
                 else:
                     v_str = str(v) if v is not None else "-"
-                score_val = _get_score_for_criteria(k)
-                crit_data.append([str(k), v_str, score_val])
-                # Track which score keys have been used
-                for sk in _score_key_map.get(k.lower(), [k.lower()]):
-                    seen_score_keys.add(sk)
-            # Append any score breakdown categories not yet covered by criteria keys
-            for cat, score in breakdown.items():
-                if cat not in seen_score_keys:
-                    crit_data.append([str(cat), "-", str(score)])
+                display_name = _CRIT_LABEL.get(k.lower(), str(k))
+                weight_val = _get_weight_for_criteria(k)
+                crit_data.append([display_name, v_str, weight_val])
             _add_table(
-                ["Criteria", "Value", "Score"],
+                ["Criteria", "Value", "Weight"],
                 crit_data,
                 col_widths_cm=[4.0, 10.5, 2.5],
             )
             doc.add_paragraph()
 
         # ── Category Appraisals ────────────────────────────────────────────────
-        appraisals = assessment_result.get("category_appraisals") or {}
         if appraisals:
             _add_section_heading("Category Appraisals")
+            # Build reverse mapping: display_name → criteria breakdown score
+            criteria_breakdown = assessment_result.get("criteria") or {}
+            _label_to_keys = {}
+            for _k, _v in _CRIT_LABEL.items():
+                _label_to_keys.setdefault(_v, []).append(_k)
+
+            def _get_score_for_category(display_name):
+                """Return actual computed score for a category from the criteria breakdown."""
+                dn_lower = display_name.lower()
+                try:
+                    # Try direct lowercase match
+                    if dn_lower in criteria_breakdown:
+                        return str(round(float(criteria_breakdown[dn_lower]), 1))
+                    # Try mapped internal keys
+                    for _key in _label_to_keys.get(display_name, []):
+                        if _key in criteria_breakdown:
+                            return str(round(float(criteria_breakdown[_key]), 1))
+                except (ValueError, TypeError):
+                    pass
+                return "-"
+
             ap_data = []
             for cat, appraisal in appraisals.items():
                 if isinstance(appraisal, dict):
-                    weight = appraisal.get("weight_percent", "")
+                    score_val = _get_score_for_category(str(cat))
                     rating = str(appraisal.get("rating", "") or "")
                     status = str(appraisal.get("status", "") or "")
                     comment = str(appraisal.get("comment", "") or "")
                     rating_status = f"{rating} / {status}" if status else rating
-                    ap_data.append([
-                        str(cat),
-                        f"{weight}%" if weight not in (None, "") else "-",
-                        rating_status,
-                        comment,
-                    ])
+                    ap_data.append([str(cat), score_val, rating_status, comment])
                 else:
                     ap_data.append([str(cat), "-", "-", str(appraisal)])
             _add_table(
-                ["Category", "Weight", "Rating / Status", "Comment"],
+                ["Category", "Score", "Rating / Status", "Comment"],
                 ap_data,
                 col_widths_cm=[3.5, 1.8, 3.2, 8.5],
             )
             doc.add_paragraph()
+
+        # ── Verified Skillset (below Category Appraisals) ─────────────────────
+        vskillset = assessment_result.get("vskillset")
+        if vskillset:
+            _add_section_heading("Verified Skillset")
+            # vskillset may be a list of dicts or a single dict
+            if isinstance(vskillset, dict):
+                vskillset = [vskillset]
+            if isinstance(vskillset, list) and vskillset:
+                vs_data = []
+                for item in vskillset:
+                    if isinstance(item, dict):
+                        skill = str(item.get("skill", ""))
+                        prob = str(item.get("probability", ""))
+                        if prob:
+                            prob = prob.rstrip("%") + "%"
+                        cat = str(item.get("category", ""))
+                        reason = str(item.get("reason", ""))
+                        vs_data.append([skill, prob, cat, reason])
+                    else:
+                        vs_data.append([str(item), "", "", ""])
+                _add_table(
+                    ["Skill", "Probability", "Category", "Reason"],
+                    vs_data,
+                    col_widths_cm=[3.0, 2.0, 2.0, 10.0],
+                )
+                doc.add_paragraph()
 
         # ── Conclusion (formerly Skill Comments) ───────────────────────────────
         comments_raw = assessment_result.get("comments")
@@ -8206,34 +8253,6 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
                 _add_table(["Skill", "Status", "Comment"], sc_data, col_widths_cm=[4.0, 3.0, 10.0])
             doc.add_paragraph()
 
-        # ── Verified Skillset ──────────────────────────────────────────────────
-        vskillset = assessment_result.get("vskillset")
-        if vskillset:
-            _add_section_heading("Verified Skillset")
-            # vskillset may be a list of dicts or a single dict
-            if isinstance(vskillset, dict):
-                vskillset = [vskillset]
-            if isinstance(vskillset, list) and vskillset:
-                vs_data = []
-                for item in vskillset:
-                    if isinstance(item, dict):
-                        skill = str(item.get("skill", ""))
-                        prob = str(item.get("probability", ""))
-                        if prob:
-                            prob = prob.rstrip("%") + "%"
-                        cat = str(item.get("category", ""))
-                        reason = str(item.get("reason", ""))
-                        source = str(item.get("source", ""))
-                        vs_data.append([skill, prob, cat, reason, source])
-                    else:
-                        vs_data.append([str(item), "", "", "", ""])
-                _add_table(
-                    ["Skill", "Probability", "Category", "Reason", "Source"],
-                    vs_data,
-                    col_widths_cm=[3.0, 2.0, 2.0, 8.0, 2.0],
-                )
-                doc.add_paragraph()
-
     elif criteria:
         # No assessment yet — still show Search Criteria
         _add_section_heading("Search Criteria")
@@ -8243,7 +8262,8 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
                 v_str = ", ".join(str(x) for x in v) if v else "-"
             else:
                 v_str = str(v) if v is not None else "-"
-            crit_data.append([str(k), v_str])
+            display_name = _CRIT_LABEL.get(k.lower(), str(k))
+            crit_data.append([display_name, v_str])
         _add_table(["Criteria", "Value"], crit_data, col_widths_cm=[5.5, 11.5])
 
     buf = _io.BytesIO()
