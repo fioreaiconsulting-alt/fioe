@@ -6413,6 +6413,46 @@ def _gemini_extract_company_from_jobtitle(job_title_raw: str, candidates=None):
 
 
 # ---------------------------------------------------------------------------
+# Criteria-file helpers — must be defined BEFORE `import webbridge_cv` because
+# webbridge_cv.py imports these names from this module at its top level.
+CRITERIA_OUTPUT_DIR = os.getenv(
+    "CRITERIA_OUTPUT_DIR",
+    r"F:\Recruiting Tools\Autosourcing\output\Criteras"
+)
+
+
+def _get_criteria_filepath(username, role_tag):
+    """Return the full path for the criteria JSON file for the given user/role_tag.
+    Returns None if either argument is empty.
+    """
+    username = (username or "").strip()
+    role_tag = (role_tag or "").strip()
+    if not username or not role_tag:
+        return None
+    safe_role = re.sub(r'[<>:"/\\|?*\.]', '_', role_tag).strip('_')
+    safe_user = re.sub(r'[<>:"/\\|?*\.]', '_', username).strip('_')
+    if not safe_role or not safe_user:
+        return None
+    return os.path.join(CRITERIA_OUTPUT_DIR, f"{safe_role} {safe_user}.json")
+
+
+def _read_search_criteria(username, role_tag):
+    """Load and return the criteria dict from the saved JSON file, or None if not found."""
+    filepath = _get_criteria_filepath(username, role_tag)
+    if not filepath:
+        return None
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data.get("criteria") or None
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.warning(f"[load_search_criteria] Failed to read {filepath}", exc_info=True)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Import second-half routes (job runner, sourcing, CV processing, bulk assess).
 # webbridge_cv.py is a sibling module that imports shared state from this file;
 # the circular import is safe because all names below are defined before this
@@ -7055,43 +7095,6 @@ def byok_validate():
         log_error(source="byok_validate", message=str(exc), severity="error",
                   username=username, endpoint="/api/porting/byok/validate")
         return jsonify({"error": "Validation failed", "detail": str(exc)}), 500
-
-
-CRITERIA_OUTPUT_DIR = os.getenv(
-    "CRITERIA_OUTPUT_DIR",
-    r"F:\Recruiting Tools\Autosourcing\output\Criteras"
-)
-
-
-def _get_criteria_filepath(username, role_tag):
-    """Return the full path for the criteria JSON file for the given user/role_tag.
-    Returns None if either argument is empty.
-    """
-    username = (username or "").strip()
-    role_tag = (role_tag or "").strip()
-    if not username or not role_tag:
-        return None
-    safe_role = re.sub(r'[<>:"/\\|?*\.]', '_', role_tag).strip('_')
-    safe_user = re.sub(r'[<>:"/\\|?*\.]', '_', username).strip('_')
-    if not safe_role or not safe_user:
-        return None
-    return os.path.join(CRITERIA_OUTPUT_DIR, f"{safe_role} {safe_user}.json")
-
-
-def _read_search_criteria(username, role_tag):
-    """Load and return the criteria dict from the saved JSON file, or None if not found."""
-    filepath = _get_criteria_filepath(username, role_tag)
-    if not filepath:
-        return None
-    try:
-        with open(filepath, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data.get("criteria") or None
-    except FileNotFoundError:
-        return None
-    except Exception:
-        logger.warning(f"[load_search_criteria] Failed to read {filepath}", exc_info=True)
-        return None
 
 
 @app.get("/load_search_criteria")
