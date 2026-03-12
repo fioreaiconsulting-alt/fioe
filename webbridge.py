@@ -7099,21 +7099,33 @@ def byok_validate():
 
 @app.get("/load_search_criteria")
 def load_search_criteria():
-    """Return the saved search criteria for the given username and role_tag.
+    """Return the saved search criteria and profile list for the given username and role_tag.
 
     Query params:
         username  – recruiter username
         role_tag  – recruiter's active role tag
-    Returns the criteria JSON object, or 404 if no file exists.
+    Returns the criteria JSON object (including profiles list), or 404 if no file exists.
     """
     username = (request.args.get("username") or "").strip()
     role_tag = (request.args.get("role_tag") or "").strip()
     if not username or not role_tag:
         return jsonify({"error": "username and role_tag are required"}), 400
-    criteria = _read_search_criteria(username, role_tag)
-    if criteria is None:
+    filepath = _get_criteria_filepath(username, role_tag)
+    if not filepath:
         return jsonify({"error": "No criteria file found"}), 404
-    return jsonify({"ok": True, "criteria": criteria}), 200
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            record = json.load(fh)
+    except FileNotFoundError:
+        return jsonify({"error": "No criteria file found"}), 404
+    except Exception as exc:
+        logger.warning(f"[load_search_criteria] Failed to read {filepath}: {exc}")
+        return jsonify({"error": "Failed to read criteria file"}), 500
+    return jsonify({
+        "ok": True,
+        "criteria": record.get("criteria") or {},
+        "profiles": record.get("profiles") or [],
+    }), 200
 
 
 @app.post("/save_search_criteria")
@@ -7143,10 +7155,29 @@ def save_search_criteria():
 
         os.makedirs(CRITERIA_OUTPUT_DIR, exist_ok=True)
 
+        # Fetch profile names from the sourcing table for this user/role search
+        profile_names = []
+        try:
+            _pconn = _pg_connect()
+            try:
+                _pcur = _pconn.cursor()
+                _pcur.execute(
+                    "SELECT DISTINCT name FROM sourcing "
+                    "WHERE username=%s AND role_tag=%s AND name IS NOT NULL AND name != ''",
+                    (username, role_tag)
+                )
+                profile_names = [row[0] for row in _pcur.fetchall()]
+                _pcur.close()
+            finally:
+                _pconn.close()
+        except Exception as _pe:
+            logger.warning(f"[save_search_criteria] Could not fetch profile names: {_pe}")
+
         record = {
             "role_tag": role_tag,
             "username": username,
             "saved_at": datetime.utcnow().isoformat() + "Z",
+            "profiles": profile_names,
             "criteria": {
                 "Job Title":  criteria.get("Job Title") or [],
                 "Seniority":  criteria.get("Seniority") or "",
@@ -7161,8 +7192,8 @@ def save_search_criteria():
         with open(filepath, "w", encoding="utf-8") as fh:
             json.dump(record, fh, ensure_ascii=False, indent=2)
 
-        logger.info(f"[save_search_criteria] Written to {filepath}")
-        return jsonify({"ok": True, "file": filename}), 200
+        logger.info(f"[save_search_criteria] Written to {filepath} with {len(profile_names)} profile(s)")
+        return jsonify({"ok": True, "file": filename, "profiles": len(profile_names)}), 200
 
     except Exception as exc:
         logger.exception("[save_search_criteria]")
