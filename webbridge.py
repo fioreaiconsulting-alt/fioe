@@ -7503,6 +7503,10 @@ def _find_assessment_for_candidate(linkedin_url: str):
                     if isinstance(rec, dict) and rec.get("linkedinurl", "").strip().lower() == norm_url:
                         result = rec.get("result")
                         if result and not result.get("_skipped"):
+                            # Attach vskillset from the record sibling if not already present
+                            if "vskillset" not in result and rec.get("vskillset"):
+                                result = dict(result)
+                                result["vskillset"] = rec.get("vskillset")
                             return result
             except Exception:
                 continue
@@ -7949,7 +7953,8 @@ def has_report():
     return jsonify({"exists": assessment is not None}), 200
 
 
-def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_result: dict) -> bytes:
+def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_result: dict,
+                       candidate_jobtitle: str = "") -> bytes:
     """Generate a well-structured Word document (.docx) assessment report.
 
     Uses python-docx tables for every data section so text is always contained
@@ -7970,6 +7975,16 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
     role_tag = criteria_record.get("role_tag", "")
     saved_at = criteria_record.get("saved_at", "")
     criteria = criteria_record.get("criteria") or {}
+
+    # Format date as YYYY-MM-DD only (strip time component)
+    date_str = str(saved_at)
+    if "T" in date_str:
+        date_str = date_str.split("T")[0]
+    elif len(date_str) > 10:
+        date_str = date_str[:10]
+
+    # Use candidate's current job title when available, else fall back to role_tag
+    display_role = candidate_jobtitle or role_tag
 
     doc = Document()
 
@@ -8064,8 +8079,8 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
         ["Field", "Value"],
         [
             ["Candidate", candidate_name],
-            ["Role", role_tag],
-            ["Date", saved_at],
+            ["Role", display_role],
+            ["Date", date_str],
         ],
         col_widths_cm=[4.5, 12.5],
     )
@@ -8076,10 +8091,13 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
         stars = max(0, min(int(assessment_result.get("stars", 0) or 0), 5))
         star_str = ("★" * stars) + ("☆" * (5 - stars)) + f"  ({stars}/5)"
         overall = str(assessment_result.get("overall_comment", "") or "")
+        # Ensure overall score shows as e.g. "96%" without duplicating the % symbol
+        raw_score = str(assessment_result.get("total_score", "-")).rstrip("%")
+        score_display = f"{raw_score}%" if raw_score != "-" else "-"
 
         _add_section_heading("Assessment Summary")
         summary_data = [
-            ["Overall Score", str(assessment_result.get("total_score", "-")) + "%"],
+            ["Overall Score", score_display],
             ["Stars", star_str],
             ["Level", str(assessment_result.get("assessment_level", "-"))],
         ]
@@ -8088,12 +8106,56 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
         _add_table(["Field", "Value"], summary_data, col_widths_cm=[4.5, 12.5])
         doc.add_paragraph()
 
-        # ── Score Breakdown ────────────────────────────────────────────────────
+        # ── Search Criteria + Score Breakdown (combined) ───────────────────────
+        # Map common criteria keys to score breakdown keys so scores appear inline
+        _score_key_map = {
+            "job_titles": ["jobtitle_role_tag", "jobtitle", "job_title"],
+            "job_title": ["jobtitle_role_tag", "jobtitle"],
+            "country": ["country"],
+            "countries": ["country"],
+            "companies": ["company"],
+            "company": ["company"],
+            "sectors": ["sector"],
+            "sector": ["sector"],
+            "tenure": ["tenure"],
+            "min_tenure": ["tenure"],
+            "skills": ["skillset"],
+            "skillset": ["skillset"],
+            "seniority": ["seniority"],
+        }
         breakdown = assessment_result.get("criteria") or {}
-        if breakdown:
-            _add_section_heading("Score Breakdown")
-            bd_data = [[str(cat), str(score)] for cat, score in breakdown.items()]
-            _add_table(["Category", "Score"], bd_data, col_widths_cm=[8.5, 8.5])
+
+        def _get_score_for_criteria(crit_key):
+            """Return score value string for a criteria key, or '' if none."""
+            candidates = _score_key_map.get(crit_key.lower(), [crit_key.lower()])
+            for c in candidates:
+                if c in breakdown:
+                    return str(breakdown[c])
+            return ""
+
+        if criteria:
+            _add_section_heading("Search Criteria")
+            crit_data = []
+            seen_score_keys = set()
+            for k, v in criteria.items():
+                if isinstance(v, list):
+                    v_str = ", ".join(str(x) for x in v) if v else "-"
+                else:
+                    v_str = str(v) if v is not None else "-"
+                score_val = _get_score_for_criteria(k)
+                crit_data.append([str(k), v_str, score_val])
+                # Track which score keys have been used
+                for sk in _score_key_map.get(k.lower(), [k.lower()]):
+                    seen_score_keys.add(sk)
+            # Append any score breakdown categories not yet covered by criteria keys
+            for cat, score in breakdown.items():
+                if cat not in seen_score_keys:
+                    crit_data.append([str(cat), "-", str(score)])
+            _add_table(
+                ["Criteria", "Value", "Score"],
+                crit_data,
+                col_widths_cm=[4.0, 10.5, 2.5],
+            )
             doc.add_paragraph()
 
         # ── Category Appraisals ────────────────────────────────────────────────
@@ -8123,10 +8185,10 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
             )
             doc.add_paragraph()
 
-        # ── Skill Comments ─────────────────────────────────────────────────────
+        # ── Conclusion (formerly Skill Comments) ───────────────────────────────
         comments_raw = assessment_result.get("comments")
         if comments_raw:
-            _add_section_heading("Skill Comments")
+            _add_section_heading("Conclusion")
             if isinstance(comments_raw, str):
                 paras = [p.strip() for p in comments_raw.split("\n") if p.strip()]
                 if paras:
@@ -8144,8 +8206,36 @@ def _build_report_docx(candidate_name: str, criteria_record: dict, assessment_re
                 _add_table(["Skill", "Status", "Comment"], sc_data, col_widths_cm=[4.0, 3.0, 10.0])
             doc.add_paragraph()
 
-    # ── Search Criteria ────────────────────────────────────────────────────────
-    if criteria:
+        # ── Verified Skillset ──────────────────────────────────────────────────
+        vskillset = assessment_result.get("vskillset")
+        if vskillset:
+            _add_section_heading("Verified Skillset")
+            # vskillset may be a list of dicts or a single dict
+            if isinstance(vskillset, dict):
+                vskillset = [vskillset]
+            if isinstance(vskillset, list) and vskillset:
+                vs_data = []
+                for item in vskillset:
+                    if isinstance(item, dict):
+                        skill = str(item.get("skill", ""))
+                        prob = str(item.get("probability", ""))
+                        if prob:
+                            prob = prob.rstrip("%") + "%"
+                        cat = str(item.get("category", ""))
+                        reason = str(item.get("reason", ""))
+                        source = str(item.get("source", ""))
+                        vs_data.append([skill, prob, cat, reason, source])
+                    else:
+                        vs_data.append([str(item), "", "", "", ""])
+                _add_table(
+                    ["Skill", "Probability", "Category", "Reason", "Source"],
+                    vs_data,
+                    col_widths_cm=[3.0, 2.0, 2.0, 8.0, 2.0],
+                )
+                doc.add_paragraph()
+
+    elif criteria:
+        # No assessment yet — still show Search Criteria
         _add_section_heading("Search Criteria")
         crit_data = []
         for k, v in criteria.items():
@@ -8196,12 +8286,32 @@ def download_report():
             logger.warning(f"[download_report] DB lookup failed: {exc}")
     if not name:
         return "No candidate name found", 404
+    # Fetch candidate's current job title from DB for the report
+    candidate_jobtitle = ""
+    if linkedin:
+        try:
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT jobtitle FROM sourcing WHERE linkedinurl=%s AND jobtitle IS NOT NULL"
+                    " ORDER BY id DESC LIMIT 1",
+                    (linkedin,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0]:
+                    candidate_jobtitle = row[0].strip()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning(f"[download_report] jobtitle lookup failed: {exc}")
     fpath, criteria_record = _find_criteria_file_for_candidate(name)
     if not criteria_record:
         return "No criteria file found for this candidate", 404
     assessment_result = _find_assessment_for_candidate(linkedin) if linkedin else None
     try:
-        docx_bytes = _build_report_docx(name, criteria_record, assessment_result or {})
+        docx_bytes = _build_report_docx(name, criteria_record, assessment_result or {}, candidate_jobtitle=candidate_jobtitle)
     except Exception as exc:
         logger.exception("[download_report] DOCX generation failed")
         return f"Report generation failed: {exc}", 500
