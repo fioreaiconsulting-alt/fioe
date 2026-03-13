@@ -2079,6 +2079,92 @@ function CandidatesTable({
     );
   };
 
+  // ── DB Port: Excel export with two sheets ─────────────────────────────
+  const handleDbPortExport = () => {
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1 column definitions (user-facing)
+    const S1_COLS = [
+      { header: 'name',           get: c => c.name || '' },
+      { header: 'company',        get: c => c.company || c.organisation || '' },
+      { header: 'jobtitle',       get: c => c.role || c.jobtitle || '' },
+      { header: 'country',        get: c => c.country || '' },
+      { header: 'linkedinurl',    get: c => c.linkedinurl || '' },
+      { header: 'product',        get: c => c.type || c.product || '' },
+      { header: 'sector',         get: c => c.sector || '' },
+      { header: 'jobfamily',      get: c => c.job_family || c.jobfamily || '' },
+      { header: 'geographic',     get: c => c.geographic || '' },
+      { header: 'seniority',      get: c => c.seniority || '' },
+      { header: 'skillset',       get: c => Array.isArray(c.skillset) ? c.skillset.join(', ') : (c.skillset || '') },
+      { header: 'sourcingstatus', get: c => c.sourcing_status || c.sourcingstatus || '' },
+      { header: 'email',          get: c => c.email || '' },
+      { header: 'mobile',         get: c => c.mobile || '' },
+      { header: 'office',         get: c => c.office || '' },
+      { header: 'rating',         get: c => c.rating || '' },
+      { header: 'comment',        get: c => c.comment || '' },
+      { header: 'compensation',   get: c => c.compensation || '' },
+    ];
+
+    const s1Rows = (allCandidates || []).map(c => {
+      const row = {};
+      S1_COLS.forEach(col => { row[col.header] = col.get(c); });
+      return row;
+    });
+
+    const ws1 = XLSX.utils.json_to_sheet(s1Rows, { header: S1_COLS.map(col => col.header) });
+    ws1['!cols'] = S1_COLS.map(col => ({ wch: col.header === 'linkedinurl' || col.header === 'skillset' ? 40 : 22 }));
+
+    // Add Excel dropdown validations (data validation)
+    const DEFAULT_MAX_VALIDATION_ROWS = 1000;
+    const maxRow = Math.max((s1Rows.length || 0) + 1, DEFAULT_MAX_VALIDATION_ROWS);
+    const colLetter = idx => {
+      // Convert 0-based column index to Excel letter(s): 0→A, 25→Z, 26→AA, 52→BA …
+      if (idx < 26) return String.fromCharCode(65 + idx);
+      return String.fromCharCode(64 + Math.floor(idx / 26)) + String.fromCharCode(65 + (idx % 26));
+    };
+    const seniorityIdx  = S1_COLS.findIndex(c => c.header === 'seniority');
+    const geoIdx        = S1_COLS.findIndex(c => c.header === 'geographic');
+    const statusIdx     = S1_COLS.findIndex(c => c.header === 'sourcingstatus');
+    const seniorityList = 'Junior,Mid,Senior,Lead,Manager,Director,Executive';
+    const geoList       = 'North America,South America,Western Europe,Eastern Europe,Middle East,Asia,Australia/Oceania,Africa';
+    const statusList    = (statusOptions || []).join(',');
+    ws1['!dataValidations'] = [
+      { type: 'list', sqref: `${colLetter(seniorityIdx)}2:${colLetter(seniorityIdx)}${maxRow}`, formula1: `"${seniorityList}"`, showDropDown: false },
+      { type: 'list', sqref: `${colLetter(geoIdx)}2:${colLetter(geoIdx)}${maxRow}`, formula1: `"${geoList}"`, showDropDown: false },
+      ...(statusList ? [{ type: 'list', sqref: `${colLetter(statusIdx)}2:${colLetter(statusIdx)}${maxRow}`, formula1: `"${statusList}"`, showDropDown: false }] : []),
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws1, 'Candidate Data');
+
+    // Sheet 2: full DB copy
+    const S2_FIELDS = [
+      'id', 'name', 'company', 'jobtitle', 'country', 'linkedinurl', 'username', 'userid',
+      'product', 'sector', 'jobfamily', 'geographic', 'seniority', 'skillset', 'sourcingstatus',
+      'email', 'mobile', 'office', 'role_tag', 'experience', 'cv', 'education', 'exp', 'rating',
+      'pic', 'tenure', 'comment', 'vskillset', 'compensation', 'lskillset', 'jskillset',
+      'rating_level', 'rating_updated_at', 'rating_version', 'personal', 'search_vector',
+    ];
+    const s2Rows = (allCandidates || []).map(c => {
+      const row = {};
+      S2_FIELDS.forEach(f => {
+        let v = c[f];
+        if (f === 'company'        && (v == null || v === '')) v = c.organisation;
+        if (f === 'jobtitle'       && (v == null || v === '')) v = c.role;
+        if (f === 'product'        && (v == null || v === '')) v = c.type;
+        if (f === 'jobfamily'      && (v == null || v === '')) v = c.job_family;
+        if (f === 'sourcingstatus' && (v == null || v === '')) v = c.sourcing_status;
+        if (typeof v === 'object' && v !== null) { try { v = JSON.stringify(v); } catch { v = ''; } }
+        row[f] = v ?? '';
+      });
+      return row;
+    });
+    const ws2 = XLSX.utils.json_to_sheet(s2Rows, { header: S2_FIELDS });
+    ws2['!cols'] = S2_FIELDS.map(() => ({ wch: 18 }));
+    XLSX.utils.book_append_sheet(wb, ws2, 'DB Copy');
+
+    XLSX.writeFile(wb, `db_port_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   return (
     <>
       <div className="app-card" style={{
@@ -2147,6 +2233,15 @@ function CandidatesTable({
             style={{ padding: '8px 16px', marginLeft: 0 }}
           >
             Configure SMTP
+          </button>
+
+          <button
+            onClick={handleDbPortExport}
+            id="exportExcelBtn"
+            title="Export to Excel: Sheet 1 = User-facing data with dropdowns; Sheet 2 = Full DB copy"
+            style={{ padding: '8px 16px' }}
+          >
+            📥 DB Port
           </button>
           
           {deleteError && <div style={{ color: 'var(--danger)', fontSize: 14 }}>{deleteError}</div>}
