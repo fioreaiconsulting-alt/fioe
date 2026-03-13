@@ -1646,9 +1646,9 @@ pre {
           <strong id="dynamicCompanyHeader"></strong>
           <div class="section-divider" style="height:1px; background:var(--border); margin:12px 0;"></div>
           
-          <!-- Hide Advanced Toggle - Now small button at top -->
+          <!-- Hide Advanced Toggle - Now small button at top (admin only) -->
           <input id="hideAdvancedChk" type="checkbox" checked style="display:none;">
-          <div style="margin-bottom:16px;">
+          <div id="hideAdvancedWrap" style="margin-bottom:16px; display:none;">
             <button class="primary" id="hideAdvancedToggle" style="padding:8px 16px; font-size:13px;" aria-pressed="true">
               <span>Hide advanced fields</span>
             </button>
@@ -3412,21 +3412,34 @@ function injectSpinnerStylesOnce(){
   document.head.appendChild(st);
 }
 // Cycling status phrases shown while autosourcing is in progress
-var _btnStatusPhrases=['Searching Profiles','Analyzing Profiles','Compiling Results','Mapping Talent'];
 var _btnStatusInterval=null;
+// Map pct progress to phase label
+function _btnPhrase(found, target){
+  if(target > 0){
+    var pct = found / target;
+    if(pct < 1/3) return 'Searching Profiles';
+    if(pct < 2/3) return 'Analyzing Profiles';
+    return 'Compiling Results';
+  }
+  // No target known — use count thresholds
+  if(found < 10) return 'Searching Profiles';
+  if(found < 30) return 'Analyzing Profiles';
+  return 'Compiling Results';
+}
 function applySearchingSpinner(btn){
   if(!btn) return;
   injectSpinnerStylesOnce();
   if(!btn.dataset.originalLabel) btn.dataset.originalLabel=btn.textContent;
   btn.classList.add('btn-loading');
-  var phraseIdx=0;
-  function setPhrase(){
-    btn.innerHTML='<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">'+_btnStatusPhrases[phraseIdx]+'</span>';
-    phraseIdx=(phraseIdx+1)%_btnStatusPhrases.length;
-  }
-  setPhrase();
-  if(_btnStatusInterval) clearInterval(_btnStatusInterval);
-  _btnStatusInterval=setInterval(setPhrase,2200);
+  btn.innerHTML='<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">Searching Profiles: 0</span>';
+}
+// Update the button label with current count (called from pollJob on each poll)
+function updateBtnStatus(btn, found, target){
+  if(!btn || btn.dataset.state !== 'searching') return;
+  var phrase = _btnPhrase(found, target);
+  var label = btn.querySelector('.btn-label');
+  if(label){ label.textContent = `${phrase}: ${found}`; }
+  else { btn.innerHTML=`<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">${phrase}: ${found}</span>`; }
 }
 function removeSearchingSpinner(btn){
   if(!btn) return;
@@ -3514,6 +3527,11 @@ function applyAdminVisibility(){
     } else {
       queriesSection.style.removeProperty('display');
     }
+  }
+  // Advanced Feature button: only visible for admins
+  const hideAdvancedWrap = document.getElementById('hideAdvancedWrap');
+  if(hideAdvancedWrap){
+    hideAdvancedWrap.style.display = isAdmin ? 'block' : 'none';
   }
 }
 
@@ -3766,15 +3784,14 @@ async function pollJob(jobId){
   const progressFill=document.getElementById('sourcingProgressFill');
   const profileCount=document.getElementById('sourcingProfileCount');
   let interval=1500;
-  // Show progress bar when polling starts
-  if(progressWrap) show(progressWrap);
+  // Keep progress bar hidden — count is shown in button text instead
   if(progressFill){ progressFill.classList.remove('prog-done'); progressFill.classList.add('prog-running'); }
   function extractFinalRowCount(html){ if(!html) return null; const m=/Wrote\s+(\d+)\s+rows/i.exec(html); return m?parseInt(m[1],10):null; }
   function updateProgressBar(found, target){
-    if(!progressFill || !profileCount) return;
-    profileCount.textContent=found;
-    // When target is unknown (0), show an indeterminate 50% stripe rather than misleading 100%.
-    // When target is known, fill proportionally (capped at 100%).
+    if(profileCount) profileCount.textContent=found;
+    // Drive button status text with live count
+    updateBtnStatus(btn, found, target);
+    if(!progressFill) return;
     const pct = target > 0 ? Math.min(100, Math.round((found / target) * 100)) : (found > 0 ? 50 : 0);
     progressFill.style.width=pct+'%';
   }
