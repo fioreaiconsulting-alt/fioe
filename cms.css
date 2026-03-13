@@ -243,8 +243,8 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 /* Export/action buttons */
 #exportExcelBtn { background: linear-gradient(180deg,var(--cool-blue),#3f78bb); border-color:#2f63a0; box-shadow:0 8px 18px rgba(76,130,184,0.15); border-radius:10px; }
 #exportCsvBtn { background: linear-gradient(180deg,var(--robins-egg),#27dff1); border-color:#1bbfda; box-shadow:0 8px 18px rgba(109,234,249,0.12); border-radius:10px; color:#1f2328; font-weight:700; }
-#sortScoreBtn { background: linear-gradient(180deg,#8b5cf6,#7c3aed); border-color:#6d28d9; color:white; box-shadow:0 8px 18px rgba(139,92,246,0.15); border-radius:10px; font-weight:700; }
-#bulkUploadBtn { background: linear-gradient(180deg,#ffffff,#f0f0f0); color:#333; border-color:#ccc; box-shadow:0 2px 5px rgba(0,0,0,0.1); border-radius:10px; font-weight:700; }
+#sortScoreBtn { background: linear-gradient(180deg,var(--cool-blue),var(--azure-dragon)); border-color:var(--azure-dragon); color:white; box-shadow:0 8px 18px rgba(7,54,121,0.2); border-radius:10px; font-weight:700; }
+#bulkUploadBtn { background: linear-gradient(180deg,#ffffff,var(--desired-dawn)); color:var(--black-beauty); border-color:var(--argent); box-shadow:0 2px 5px rgba(34,37,41,0.1); border-radius:10px; font-weight:700; }
 
 #marketAnalysisBtn { display:none; }
 
@@ -692,7 +692,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
 .rebate-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.45);
+    background: rgba(34,37,41,0.65);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -702,7 +702,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
     background: #ffffff;
     width: min(620px, 94%);
     border-radius: 12px;
-    box-shadow: 0 18px 60px -18px rgba(0,0,0,0.5);
+    box-shadow: 0 18px 60px -18px rgba(34,37,41,0.4);
     padding: 20px 22px;
     color: #0f1724;
     font-family: "Roboto Condensed", sans-serif;
@@ -752,7 +752,7 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
     background: #ffffff;
     width: min(620px, 94%);
     border-radius: 12px;
-    box-shadow: 0 18px 60px -18px rgba(0,0,0,0.5);
+    box-shadow: 0 18px 60px -18px rgba(34,37,41,0.4);
     padding: 20px 22px;
     color: #0f1724;
     font-family: "Roboto Condensed", sans-serif;
@@ -775,9 +775,9 @@ td[contenteditable="true"]:focus { background:#fffef5; outline:2px solid rgba(7,
     justify-content: flex-end;
 }
 .appeal-modal .btn-submit {
-    background: linear-gradient(180deg,#0ea5e9,#0284c7);
+    background: linear-gradient(180deg,var(--cool-blue),var(--azure-dragon));
     color: #fff;
-    border: 1px solid rgba(2,132,199,0.12);
+    border: 1px solid rgba(7,54,121,0.12);
     padding: 8px 14px;
     border-radius: 8px;
     font-weight: 800;
