@@ -818,10 +818,13 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                   ref={glossaryRef}
                   tabIndex={0}
                   style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', cursor: 'pointer', fontSize: 13, outline: 'none' }}
-                  onMouseEnter={() => { if (!glossaryLocked) setShowTagGlossary(true); }}
-                  onMouseLeave={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
-                  onFocus={() => setShowTagGlossary(true)}
-                  onBlur={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    const next = !showTagGlossary;
+                    setShowTagGlossary(next);
+                    setGlossaryLocked(next);
+                    if (!next) { setCopiedTag(''); }
+                  }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
                   <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Tag Glossary</span>
@@ -854,41 +857,39 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                       e.stopPropagation();
                       navigator.clipboard.writeText(tag).catch(() => {});
                       setCopiedTag(tag);
-                      setGlossaryLocked(true);
                     };
                     return (
                       <div
-                        style={{ position: 'absolute', top: '110%', right: 0, zIndex: 9999, background: 'var(--azure-dragon)', color: '#f1f5f9', borderRadius: 10, padding: '12px 14px', minWidth: 320, boxShadow: '0 6px 24px rgba(7,54,121,0.3)', fontSize: 12, lineHeight: 1.7 }}
-                        onMouseEnter={() => setShowTagGlossary(true)}
-                        onMouseLeave={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
+                        style={{ position: 'absolute', top: '110%', right: 0, zIndex: 9999, background: '#222529', color: '#f1f5f9', borderRadius: 10, padding: '12px 14px', minWidth: 320, boxShadow: '0 6px 24px rgba(0,0,0,0.4)', fontSize: 12, lineHeight: 1.7 }}
+                        onClick={e => e.stopPropagation()}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.15)', paddingBottom: 6 }}>
                           <span style={{ fontWeight: 700, fontSize: 12, letterSpacing: '0.4px' }}>Available Template Tags</span>
                           <button
                             type="button"
                             onClick={copyAll}
                             title="Copy all tags"
-                            style={{ background: glossaryCopied ? '#6deaf9' : 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 5, color: glossaryCopied ? '#073679' : '#fff', cursor: 'pointer', fontSize: 11, padding: '3px 8px', fontWeight: 700, transition: 'all 0.15s' }}
+                            style={{ background: glossaryCopied ? '#6deaf9' : 'rgba(255,255,255,0.12)', border: 'none', borderRadius: 5, color: glossaryCopied ? '#073679' : '#fff', cursor: 'pointer', fontSize: 11, padding: '3px 8px', fontWeight: 700, transition: 'all 0.15s' }}
                           >
                             {glossaryCopied ? '✓ Copied!' : '⎘ Copy All'}
                           </button>
                         </div>
                         {TAG_GROUPS.map(g => (
                           <div key={g.label} style={{ marginBottom: 6 }}>
-                            <div style={{ fontWeight: 700, fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 3 }}>{g.label}</div>
+                            <div style={{ fontWeight: 700, fontSize: 10, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 3 }}>{g.label}</div>
                             {g.tags.map(({ tag, desc }) => (
                               <div key={tag} style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
                                 <b
                                   onClick={e => copyTag(e, tag)}
                                   title="Click to copy this tag"
-                                  style={{ color: copiedTag === tag ? '#6deaf9' : g.color, cursor: 'pointer', borderRadius: 4, padding: '0 3px', transition: 'background 0.15s', background: copiedTag === tag ? 'rgba(109,234,249,0.1)' : 'transparent', userSelect: 'none' }}
+                                  style={{ color: copiedTag === tag ? '#6deaf9' : g.color, cursor: 'pointer', borderRadius: 4, padding: '0 3px', transition: 'background 0.15s', background: copiedTag === tag ? 'rgba(109,234,249,0.12)' : 'transparent', userSelect: 'none' }}
                                 >{tag}</b>
-                                <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>– {desc}</span>
+                                <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>– {desc}</span>
                               </div>
                             ))}
                           </div>
                         ))}
-                        <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.4)', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 5 }}>Click any tag to copy it · "⎘ Copy All" copies all tags{glossaryLocked ? ' · Click outside to close' : ''}</div>
+                        <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.35)', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 5 }}>Click any tag to copy it · "⎘ Copy All" copies all tags · Click outside to close</div>
                       </div>
                     );
                   })()}
@@ -1467,7 +1468,8 @@ function CandidatesTable({
   onViewProfile, // NEW PROP to handle viewing profile
   statusOptions, // Prop for status options
   onOpenStatusModal, // Prop to open status modal
-  allCandidates, // Passed for bulk verification/sync
+  allCandidates, // Passed for bulk verification/sync (filtered view)
+  exportCandidates, // Full unfiltered candidate list for DB Port export
   user // Logged-in user for template tags
 }) {
   const COLUMN_WIDTHS_KEY = 'candidateTableColumnWidths';
@@ -2161,7 +2163,11 @@ function CandidatesTable({
       { header: 'compensation',   get: c => c.compensation || '' },
     ];
 
-    const s1Rows = (allCandidates || []).map(c => {
+    // Use the full unfiltered candidate list so the export contains every record
+    // for the user regardless of active search/filters.
+    const exportSrc = exportCandidates || allCandidates || [];
+
+    const s1Rows = exportSrc.map(c => {
       const row = {};
       S1_COLS.forEach(col => { row[col.header] = xlsxStr(col.get(c)); });
       return row;
@@ -2200,7 +2206,7 @@ function CandidatesTable({
       'pic', 'tenure', 'comment', 'vskillset', 'compensation', 'lskillset', 'jskillset',
       'rating_level', 'rating_updated_at', 'rating_version', 'personal', 'search_vector',
     ];
-    const s2Rows = (allCandidates || []).map(c => {
+    const s2Rows = exportSrc.map(c => {
       const row = {};
       S2_FIELDS.forEach(f => {
         let v = c[f];
@@ -4666,6 +4672,7 @@ export default function App() {
                 statusOptions={statusOptions}
                 onOpenStatusModal={() => setStatusModalOpen(true)}
                 allCandidates={filteredCandidates}
+                exportCandidates={candidates}
                 user={user}
               />
           }
