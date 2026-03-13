@@ -257,6 +257,8 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   const [meetLink, setMeetLink] = useState('');
   const [icsString, setIcsString] = useState('');
   const [calendarError, setCalendarError] = useState('');
+  const [slotStartDate, setSlotStartDate] = useState('');
+  const [slotEndDate, setSlotEndDate] = useState('');
 
   // Template & AI State
   const [templates, setTemplates] = useState([]);
@@ -292,6 +294,8 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
       setMeetLink('');
       setIcsString('');
       setCalendarError('');
+      setSlotStartDate('');
+      setSlotEndDate('');
     }
   }, [isOpen]);
 
@@ -454,10 +458,19 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
     setSelectedSlotIndex(null);
     setCalendarError('');
     try {
-      // default: next 3 days from now
       const now = new Date();
-      const startISO = new Date(now.getTime()).toISOString();
-      const endISO = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      // Use user-selected dates if provided, otherwise default to next 3 days
+      let startISO, endISO;
+      if (slotStartDate) {
+        startISO = new Date(slotStartDate + 'T00:00:00').toISOString();
+      } else {
+        startISO = now.toISOString();
+      }
+      if (slotEndDate) {
+        endISO = new Date(slotEndDate + 'T23:59:59').toISOString();
+      } else {
+        endISO = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      }
       const res = await fetch('http://localhost:4000/calendar/freebusy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -899,24 +912,48 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input type="checkbox" checked={addMeet} onChange={e => setAddMeet(e.target.checked)} />
                   <span style={{ fontSize: 13, fontWeight: 700 }}>Add Google Meet</span>
                 </label>
-
-                <button
-                  type="button"
-                  onClick={handleFindSlots}
-                  disabled={!addMeet || slotsLoading}
-                  className="btn-secondary"
-                  style={{ padding: '6px 10px' }}
-                >
-                  {slotsLoading ? 'Finding slots...' : 'Find Available Slots'}
-                </button>
-
-                {calendarError && <div style={{ color: '#b91c1c', fontSize: 13 }}>{calendarError}</div>}
               </div>
+
+              {addMeet && (
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                  <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#92400e', fontWeight: 600 }}>From:</span>
+                    <input
+                      type="date"
+                      value={slotStartDate}
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={e => setSlotStartDate(e.target.value)}
+                      style={{ padding: '4px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 13 }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#92400e', fontWeight: 600 }}>To:</span>
+                    <input
+                      type="date"
+                      value={slotEndDate}
+                      min={slotStartDate || new Date().toISOString().slice(0, 10)}
+                      onChange={e => setSlotEndDate(e.target.value)}
+                      style={{ padding: '4px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 13 }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleFindSlots}
+                    disabled={slotsLoading}
+                    className="btn-secondary"
+                    style={{ padding: '6px 10px' }}
+                  >
+                    {slotsLoading ? 'Finding slots...' : 'Find Available Slots'}
+                  </button>
+                </div>
+              )}
+
+              {calendarError && <div style={{ color: '#b91c1c', fontSize: 13, marginBottom: 8 }}>{calendarError}</div>}
 
               {calendarSlots && calendarSlots.length > 0 && addMeet && (
                 <div style={{ marginTop: 8 }}>
@@ -1293,11 +1330,29 @@ const CHECKBOX_COL_WIDTH = 36;
 const FROZEN_EDGE_BORDER_COLOR = '#cbd5e1'; // subtle separator for permanent edge columns
 const FROZEN_COL_BORDER_COLOR = '#93c5fd';  // blue separator for user-pinned columns (📌)
 
+// Small component to display candidate avatar with graceful fallback on image error
+function CandidateAvatar({ picSrc, initials, avatarBg, avatarText }) {
+  const [imgFailed, setImgFailed] = React.useState(false);
+  if (picSrc && !imgFailed) {
+    return (
+      <img
+        src={picSrc}
+        alt={initials}
+        style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid #e5e7eb' }}
+        onError={() => setImgFailed(true)}
+      />
+    );
+  }
+  return (
+    <span style={{ width: 28, height: 28, borderRadius: '50%', background: avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: avatarText, flexShrink: 0, letterSpacing: '0.5px' }}>{initials}</span>
+  );
+}
+
 function CandidatesTable({
   candidates = [],
   onDelete, deleteError, onSave, onAutoSave, type, page, setPage, totalPages, editRows, setEditRows,
   skillsetMapping,
-  filters, onChangeFilter, onClearAllFilters,
+  searchExpanded, onToggleSearch, globalSearchInput, onGlobalSearchChange, onGlobalSearchSubmit, onClearSearch,
   onViewProfile, // NEW PROP to handle viewing profile
   statusOptions, // Prop for status options
   onOpenStatusModal, // Prop to open status modal
@@ -1342,8 +1397,6 @@ function CandidatesTable({
   const [smtpConfig, setSmtpConfig] = useState(null);
   const [smtpModalOpen, setSmtpModalOpen] = useState(false);
 
-  // Filter row visibility toggle (matches Bulk Upload vskillset-section pattern)
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   // Load saved SMTP config from server when user logs in.
   // The login response already includes the full config (with password) so we
@@ -1881,10 +1934,11 @@ function CandidatesTable({
       const avatarPalette = ['#4c82b8', '#073679', '#6deaf9'];
       const avatarBg = avatarPalette[(rawName.charCodeAt(0) || 0) % 3];
       const avatarText = avatarBg === '#6deaf9' ? '#222529' : '#fff';
+      const picSrc = c.pic && typeof c.pic === 'string' ? c.pic : null;
       return (
         <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <span style={{ width: 28, height: 28, borderRadius: '50%', background: avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: avatarText, flexShrink: 0, letterSpacing: '0.5px' }}>{initials}</span>
+            <CandidateAvatar picSrc={picSrc} initials={initials} avatarBg={avatarBg} avatarText={avatarText} />
             <input type="text" value={displayValue} onChange={e => handleEditChange(c.id, 'name', e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
           </div>
         </td>
@@ -1953,11 +2007,11 @@ function CandidatesTable({
           )}
 
           <button
-            onClick={onClearAllFilters}
-            disabled={!Object.values(filters||{}).some(v => v)}
+            onClick={onClearSearch}
+            disabled={!globalSearchInput}
             className="btn-secondary"
             style={{ padding: '8px 16px' }}
-          >Clear Filters</button>
+          >Clear Search</button>
 
           {selectedIds.length > 0 && (
             <button
@@ -2095,12 +2149,42 @@ function CandidatesTable({
           </div>
         )}
 
-        {/* Filter toggle bar — same pattern as Bulk Upload vskillset-section */}
+        {/* Search bar — collapsible, styled like SourcingVerify.html */}
         <div className="vskillset-section" style={{ marginBottom: 8 }}>
-          <div className="vskillset-header" onClick={() => setFiltersExpanded(prev => !prev)} style={{ cursor: 'pointer' }}>
-            <span className="vskillset-title">Column Filters</span>
-            <span className="vskillset-arrow">{filtersExpanded ? '▼' : '▶'}</span>
+          <div className="vskillset-header" onClick={onToggleSearch} style={{ cursor: 'pointer' }}>
+            <span className="vskillset-title">🔍 Search Candidates</span>
+            <span className="vskillset-arrow">{searchExpanded ? '▼' : '▶'}</span>
           </div>
+          {searchExpanded && (
+            <div style={{ padding: '10px 12px', background: '#fff', border: '1px solid var(--neutral-border)', borderTop: 0, borderRadius: '0 0 6px 6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                <div style={{ position: 'relative', flex: 1, maxWidth: 540 }}>
+                  <input
+                    type="search"
+                    value={globalSearchInput}
+                    onChange={e => onGlobalSearchChange(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && onGlobalSearchSubmit()}
+                    placeholder="Search by name, job title, company, skills…"
+                    autoComplete="off"
+                    style={{ width: '100%', padding: '7px 36px 7px 12px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 14, boxSizing: 'border-box', outline: 'none' }}
+                    aria-label="Search candidates"
+                  />
+                  {globalSearchInput && (
+                    <span
+                      onClick={onClearSearch}
+                      style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#57606a', fontSize: 16 }}
+                      title="Clear search"
+                    >✕</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={onGlobalSearchSubmit}
+                  style={{ padding: '7px 16px', background: '#0969da', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap' }}
+                >Search</button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Single table: checkbox+Name sticky-left, Sourcing Status+Actions sticky-right, middle scrolls */}
@@ -2149,36 +2233,6 @@ function CandidatesTable({
                 })()}
                 <th style={{ position: 'sticky', right: 0, top: 0, zIndex: 40, width: FROZEN_ACTIONS_WIDTH, background: '#f1f5f9', fontSize: 12, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, fontFamily: 'Orbitron', height: HEADER_ROW_HEIGHT, textAlign: 'center' }}>Actions</th>
               </tr>
-              {/* Row 2: filter inputs — hidden when filtersExpanded is false */}
-              {filtersExpanded && (
-              <tr style={{ height: HEADER_ROW_HEIGHT }}>
-                <th style={{ position: 'sticky', left: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: CHECKBOX_COL_WIDTH, minWidth: CHECKBOX_COL_WIDTH, textAlign: 'center', background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }}>
-                </th>
-                {(() => {
-                  return visibleFields.map(f => {
-                    const isLeft = f.key === 'name';
-                    const isRight = f.key === 'sourcing_status';
-                    const isPinned = !isLeft && !isRight && frozenMiddleCols.has(f.key);
-                    let frozenStyle;
-                    if (isLeft) {
-                      frozenStyle = { position: 'sticky', left: CHECKBOX_COL_WIDTH, zIndex: 39, borderRight: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
-                    } else if (isRight) {
-                      frozenStyle = { position: 'sticky', right: FROZEN_ACTIONS_WIDTH, zIndex: 39, borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, background: '#ffffff' };
-                    } else if (isPinned) {
-                      frozenStyle = { position: 'sticky', left: computePinnedLeftOffsets[f.key], zIndex: 29, borderRight: `2px solid ${FROZEN_COL_BORDER_COLOR}`, background: '#ffffff' };
-                    } else {
-                      frozenStyle = { background: '#ffffff' };
-                    }
-                    return (
-                      <th key={'filter-' + f.key} style={{ position: 'sticky', top: HEADER_ROW_HEIGHT, zIndex: (isLeft || isRight) ? 39 : (isPinned ? 29 : 15), width: colWidths[f.key] || DEFAULT_WIDTH, minWidth: MIN_WIDTH, padding: 4, borderBottom: '1px solid var(--neutral-border)', borderRight: '1px solid #f1f5f9', height: HEADER_ROW_HEIGHT, ...frozenStyle }}>
-                        <input type="text" value={filters[f.key] || ''} onChange={e => onChangeFilter(f.key, e.target.value)} placeholder="Filter..." style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', fontSize: 12, background: '#f8fafc' }} />
-                      </th>
-                    );
-                  });
-                })()}
-                <th style={{ position: 'sticky', right: 0, top: HEADER_ROW_HEIGHT, zIndex: 39, width: FROZEN_ACTIONS_WIDTH, background: '#ffffff', borderBottom: '1px solid var(--neutral-border)', borderLeft: `1px solid ${FROZEN_EDGE_BORDER_COLOR}`, height: HEADER_ROW_HEIGHT }} />
-              </tr>
-              )}
             </thead>
             <tbody>
               {candidates.map((c, idx) => {
@@ -2218,7 +2272,7 @@ function CandidatesTable({
               {!candidates.length && (
                 <tr>
                   <td colSpan={visibleFields.length + 2} style={{ padding: 16, textAlign: 'center', color: 'var(--argent)', fontSize: 14 }}>
-                    No candidates match current filters.
+                    No candidates match the current search.
                   </td>
                 </tr>
               )}
@@ -3407,15 +3461,9 @@ export default function App() {
     localStorage.setItem(`sourcingStatuses_${user.username}`, JSON.stringify(updated));
   };
 
-  const [filters, setFilters] = useState({});
-  const handleChangeFilter = (field, value) => {
-    setFilters(prev => ({ ...prev, [field]: value }));
-    setPage(1);
-  };
-  const clearAllFilters = () => {
-    setFilters({});
-    setPage(1);
-  };
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [globalSearchInput, setGlobalSearchInput] = useState('');
+  const [globalSearch, setGlobalSearch] = useState('');
 
   // Check auth on mount
   useEffect(() => {
@@ -3715,16 +3763,12 @@ export default function App() {
   }, [mergedCandidates, selectedJobFamily, selectedOrganisation, selectedCountry, baseFilter]);
 
   const filteredCandidates = useMemo(()=>{
-    const activeKeys = Object.entries(filters).filter(([,v])=> v && String(v).trim()!=='');
-    if(!activeKeys.length) return intersectionFiltered;
-    return intersectionFiltered.filter(c=>{
-      return activeKeys.every(([k,v])=>{
-        const cell = c[k];
-        if(cell==null) return false;
-        return String(cell).toLowerCase().includes(String(v).toLowerCase());
-      });
+    const q = (globalSearch || '').trim().toLowerCase();
+    if (!q) return intersectionFiltered;
+    return intersectionFiltered.filter(c => {
+      return Object.values(c).some(v => v != null && String(v).toLowerCase().includes(q));
     });
-  },[intersectionFiltered, filters]);
+  },[intersectionFiltered, globalSearch]);
 
   const totalPages = Math.max(1, Math.ceil((filteredCandidates||[]).length / PER_PAGE));
   const pagedCandidates = useMemo(()=> (filteredCandidates||[]).slice((page-1)*PER_PAGE, page*PER_PAGE), [filteredCandidates,page]);
@@ -4360,9 +4404,12 @@ export default function App() {
                 editRows={editRows}
                 setEditRows={setEditRows}
                 skillsetMapping={skillsetMapping}
-                filters={filters}
-                onChangeFilter={handleChangeFilter}
-                onClearAllFilters={clearAllFilters}
+                searchExpanded={searchExpanded}
+                onToggleSearch={() => setSearchExpanded(prev => !prev)}
+                globalSearchInput={globalSearchInput}
+                onGlobalSearchChange={v => { setGlobalSearchInput(v); }}
+                onGlobalSearchSubmit={() => { setGlobalSearch(globalSearchInput); setPage(1); }}
+                onClearSearch={() => { setGlobalSearchInput(''); setGlobalSearch(''); setPage(1); }}
                 onViewProfile={handleViewProfile}
                 statusOptions={statusOptions}
                 onOpenStatusModal={() => setStatusModalOpen(true)}

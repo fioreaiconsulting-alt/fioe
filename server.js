@@ -2180,6 +2180,7 @@ app.post('/candidates/:id/calculate-unmatched', requireLogin, async (req, res) =
             lskillset: r.lskillset ?? null,
             linkedinurl: r.linkedinurl ?? null,
             jskillset: r.jskillset ?? null,
+            pic: picToDataUri(r.pic),
             
             // fallbacks
             role: r.role ?? r.jobtitle ?? null,
@@ -2377,6 +2378,7 @@ app.post('/candidates/bulk-update', requireLogin, async (req, res) => {
           sourcingstatus: r.sourcingstatus ?? null,
           product: r.product ?? null,
           lskillset: r.lskillset ?? null,
+          pic: picToDataUri(r.pic),
           role: r.role ?? r.jobtitle ?? null,
           organisation: normalizeCompanyName(r.company || r.organisation) ?? (r.organisation ?? r.company ?? null),
           job_family: r.job_family ?? r.jobfamily ?? null,
