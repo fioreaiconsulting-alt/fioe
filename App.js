@@ -2127,18 +2127,16 @@ function CandidatesTable({
     );
   };
 
-  // ── DB Port: Excel export with two sheets ─────────────────────────────
+  // ── DB Port: Excel export — SpreadsheetML XML format (native dropdown support) ──
   const handleDbPortExport = () => {
-    // Excel cells cannot exceed 32767 characters (OOXML spec).
-    // Values longer than this (e.g. base64 pics, large JSON blobs) are silently
-    // truncated to prevent the "Text length must not exceed 32767" error.
-    const XLSX_MAX_CELL_LEN = 32767;
-    const xlsxStr = v => {
+    // Max cell length (SpreadsheetML / OOXML spec).
+    const MAX_LEN = 32767;
+    const cellStr = v => {
       const s = v == null ? '' : String(v);
-      return s.length > XLSX_MAX_CELL_LEN ? s.slice(0, XLSX_MAX_CELL_LEN) : s;
+      return s.length > MAX_LEN ? s.slice(0, MAX_LEN) : s;
     };
-
-    const wb = XLSX.utils.book_new();
+    // Escape special XML characters in cell content.
+    const ex = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
     // Sheet 1 column definitions (user-facing)
     const S1_COLS = [
@@ -2161,64 +2159,72 @@ function CandidatesTable({
       { header: 'compensation',   get: c => c.compensation || '' },
     ];
 
-    const s1Rows = (allCandidates || []).map(c => {
-      const row = {};
-      S1_COLS.forEach(col => { row[col.header] = xlsxStr(col.get(c)); });
-      return row;
-    });
+    // Build header + data rows for Sheet 1
+    const headerRow = `<Row>${S1_COLS.map(col => `<Cell ss:StyleID="hdr"><Data ss:Type="String">${ex(col.header)}</Data></Cell>`).join('')}</Row>`;
+    const dataRows  = (allCandidates || []).map(c =>
+      `<Row>${S1_COLS.map(col => `<Cell><Data ss:Type="String">${ex(cellStr(col.get(c)))}</Data></Cell>`).join('')}</Row>`
+    ).join('');
+    const colDefs = S1_COLS.map(col =>
+      `<Column ss:Width="${['linkedinurl','skillset'].includes(col.header) ? 200 : 110}"/>`
+    ).join('');
 
-    const ws1 = XLSX.utils.json_to_sheet(s1Rows, { header: S1_COLS.map(col => col.header) });
-    ws1['!cols'] = S1_COLS.map(col => ({ wch: col.header === 'linkedinurl' || col.header === 'skillset' ? 40 : 22 }));
-
-    // Add Excel dropdown validations (data validation)
-    const DEFAULT_MAX_VALIDATION_ROWS = 1000;
-    const maxRow = Math.max((s1Rows.length || 0) + 1, DEFAULT_MAX_VALIDATION_ROWS);
-    const colLetter = idx => {
-      // Convert 0-based column index to Excel letter(s): 0→A, 25→Z, 26→AA, 52→BA …
-      if (idx < 26) return String.fromCharCode(65 + idx);
-      return String.fromCharCode(64 + Math.floor(idx / 26)) + String.fromCharCode(65 + (idx % 26));
+    // Data validation — SpreadsheetML <DataValidation> (natively supported, no Pro required).
+    // Column indices are 1-based in R1C1 notation.
+    const maxVRows = Math.max((allCandidates || []).length + 2, 1001);
+    const geoCol    = S1_COLS.findIndex(c => c.header === 'geographic')     + 1;
+    const senCol    = S1_COLS.findIndex(c => c.header === 'seniority')      + 1;
+    const stCol     = S1_COLS.findIndex(c => c.header === 'sourcingstatus') + 1;
+    const GEO_VALS  = ['North America','South America','Western Europe','Eastern Europe','Middle East','Asia','Australia/Oceania','Africa'];
+    const SEN_VALS  = ['Junior','Mid','Senior','Lead','Manager','Director','Executive'];
+    const ST_VALS   = statusOptions || [];
+    const makeValidation = (col1, values) => {
+      if (!col1 || !values.length) return '';
+      // SpreadsheetML uses semicolons (;) to separate list items in inline validation formulas.
+      const valStr = values.map(v => `"${ex(v)}"`).join(';');
+      return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
+             ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
+             ` <Type>List</Type>\n <ShowDropDown/>\n` +
+             ` <Value>${valStr}</Value>\n</DataValidation>`;
     };
-    const seniorityIdx  = S1_COLS.findIndex(c => c.header === 'seniority');
-    const geoIdx        = S1_COLS.findIndex(c => c.header === 'geographic');
-    const statusIdx     = S1_COLS.findIndex(c => c.header === 'sourcingstatus');
-    const seniorityList = 'Junior,Mid,Senior,Lead,Manager,Director,Executive';
-    const geoList       = 'North America,South America,Western Europe,Eastern Europe,Middle East,Asia,Australia/Oceania,Africa';
-    const statusList    = (statusOptions || []).join(',');
-    ws1['!dataValidations'] = [
-      { type: 'list', sqref: `${colLetter(seniorityIdx)}2:${colLetter(seniorityIdx)}${maxRow}`, formula1: `"${seniorityList}"`, showDropDown: false },
-      { type: 'list', sqref: `${colLetter(geoIdx)}2:${colLetter(geoIdx)}${maxRow}`, formula1: `"${geoList}"`, showDropDown: false },
-      ...(statusList ? [{ type: 'list', sqref: `${colLetter(statusIdx)}2:${colLetter(statusIdx)}${maxRow}`, formula1: `"${statusList}"`, showDropDown: false }] : []),
-    ];
+    const validationXml = [
+      makeValidation(geoCol,  GEO_VALS),
+      makeValidation(senCol,  SEN_VALS),
+      makeValidation(stCol,   ST_VALS),
+    ].join('\n');
 
-    XLSX.utils.book_append_sheet(wb, ws1, 'Candidate Data');
+    // Sheet 2: full candidate JSON rows — one JSON object per row in column A.
+    // The sheet is hidden so it doesn't clutter the workbook view.
+    // The upload handler detects '__json_export_v1__' in A1 for seamless re-import.
+    const jsonHeaderRow = `<Row><Cell><Data ss:Type="String">__json_export_v1__</Data></Cell></Row>`;
+    const jsonRows = (allCandidates || []).map(c => {
+      let s; try { s = JSON.stringify(c); } catch { s = '{}'; }
+      if (s.length > MAX_LEN) s = s.slice(0, MAX_LEN);
+      return `<Row><Cell><Data ss:Type="String">${ex(s)}</Data></Cell></Row>`;
+    }).join('');
 
-    // Sheet 2: full DB copy
-    const S2_FIELDS = [
-      'id', 'name', 'company', 'jobtitle', 'country', 'linkedinurl', 'username', 'userid',
-      'product', 'sector', 'jobfamily', 'geographic', 'seniority', 'skillset', 'sourcingstatus',
-      'email', 'mobile', 'office', 'role_tag', 'experience', 'cv', 'education', 'exp', 'rating',
-      'pic', 'tenure', 'comment', 'vskillset', 'compensation', 'lskillset', 'jskillset',
-      'rating_level', 'rating_updated_at', 'rating_version', 'personal', 'search_vector',
-    ];
-    const s2Rows = (allCandidates || []).map(c => {
-      const row = {};
-      S2_FIELDS.forEach(f => {
-        let v = c[f];
-        if (f === 'company'        && (v == null || v === '')) v = c.organisation;
-        if (f === 'jobtitle'       && (v == null || v === '')) v = c.role;
-        if (f === 'product'        && (v == null || v === '')) v = c.type;
-        if (f === 'jobfamily'      && (v == null || v === '')) v = c.job_family;
-        if (f === 'sourcingstatus' && (v == null || v === '')) v = c.sourcing_status;
-        if (typeof v === 'object' && v !== null) { try { v = JSON.stringify(v); } catch { v = ''; } }
-        row[f] = xlsxStr(v);
-      });
-      return row;
-    });
-    const ws2 = XLSX.utils.json_to_sheet(s2Rows, { header: S2_FIELDS });
-    ws2['!cols'] = S2_FIELDS.map(() => ({ wch: 18 }));
-    XLSX.utils.book_append_sheet(wb, ws2, 'DB Copy');
+    const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n` +
+`<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n` +
+` xmlns:o="urn:schemas-microsoft-com:office:office"\n` +
+` xmlns:x="urn:schemas-microsoft-com:office:excel"\n` +
+` xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n` +
+` xmlns:html="http://www.w3.org/TR/REC-html40">\n` +
+` <Styles><Style ss:ID="hdr"><Font ss:Bold="1"/></Style></Styles>\n` +
+` <Worksheet ss:Name="Candidate Data">\n` +
+`  <Table ss:DefaultColumnWidth="110">${colDefs}${headerRow}${dataRows}</Table>\n` +
+`  ${validationXml}\n` +
+` </Worksheet>\n` +
+` <Worksheet ss:Name="DB Copy" ss:Visibility="Hidden">\n` +
+`  <Table>${jsonHeaderRow}${jsonRows}</Table>\n` +
+` </Worksheet>\n` +
+`</Workbook>`;
 
-    XLSX.writeFile(wb, `db_port_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `db_port_${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -2241,13 +2247,6 @@ function CandidatesTable({
               style={{ padding: '8px 16px' }}
             >{deleting ? 'Deleting…' : 'Delete'}</button>
           )}
-
-          <button
-            onClick={onClearSearch}
-            disabled={!globalSearchInput}
-            className="btn-secondary"
-            style={{ padding: '8px 16px' }}
-          >Clear Search</button>
 
           {selectedIds.length > 0 && (
             <button
@@ -2427,6 +2426,13 @@ function CandidatesTable({
                   onClick={onGlobalSearchSubmit}
                   style={{ padding: '7px 16px', background: '#0969da', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap' }}
                 >Search</button>
+                <button
+                  type="button"
+                  onClick={onClearSearch}
+                  disabled={!globalSearchInput}
+                  className="btn-secondary"
+                  style={{ padding: '7px 14px', fontSize: 14, whiteSpace: 'nowrap' }}
+                >Clear Search</button>
               </div>
             </div>
           )}
@@ -3361,6 +3367,39 @@ function CandidateUpload({ onUpload }) {
     } else if (ext==='xlsx' || ext==='xls'){
       file.arrayBuffer().then(data=>{
         const wb=XLSX.read(data);
+
+        // ── DB Port re-import: detect the hidden "DB Copy" JSON sheet ─────────
+        // When the file was exported via "DB Port", Sheet 2 ("DB Copy") is hidden
+        // and contains one JSON-stringified candidate object per row, with
+        // '__json_export_v1__' as a sentinel in the first cell.
+        const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
+        if (dbCopyName) {
+          const ws2 = wb.Sheets[dbCopyName];
+          const raw = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
+          if (raw.length > 0 && String(raw[0][0]).trim() === '__json_export_v1__') {
+            const candidates = raw.slice(1)
+              .filter(row => row[0])
+              .map(row => {
+                try { return JSON.parse(row[0]); }
+                catch (e) { console.warn('[DB Port re-import] Failed to parse JSON row:', e); return null; }
+              })
+              .filter(c => c && c.id);
+            if (candidates.length > 0) {
+              fetch('http://localhost:4000/candidates/bulk',{
+                method:'POST',
+                headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+                body: JSON.stringify({ candidates }),
+                credentials:'include'
+              })
+              .then(res=>{ if(!res.ok) throw new Error(`Bulk upload failed with status ${res.status}`); setFile(null); setError(''); onUpload && onUpload(); })
+              .catch(()=> setError('Failed to upload candidates.'))
+              .finally(()=> setUploading(false));
+              return;
+            }
+          }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         const ws=wb.Sheets[wb.SheetNames[0]];
         const json=XLSX.utils.sheet_to_json(ws);
         const headers = json.length > 0 ? Object.keys(json[0]) : [];
