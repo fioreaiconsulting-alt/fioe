@@ -3950,7 +3950,8 @@ function updateSectorEnabledState(){
         
         // Skill Adjacency button is always available in the Job Title suggestions box;
         // no separate show/hide needed now that highlightTalentWrapper is removed.
-        // Trigger Start Autosourcing visibility check (JD is now uploaded)
+        // Mark JD as uploaded and trigger Start Autosourcing visibility check
+        jdUploaded = true;
         if(typeof window._wizSyncStartBar === 'function') window._wizSyncStartBar();
         
         const chatFormData = new FormData();
