@@ -1025,12 +1025,19 @@ pre {
 .wiz-sb-edit-btn:hover { background: var(--wiz-blue); color: #fff; }
 
 /* Start Autosourcing bar at the bottom of the search form */
+/* Main grid hidden until wizard is complete */
+.main-grid.wiz-locked-grid {
+  display: none;
+}
+
 #startSourcingBar { margin-top: 20px; }
 #startSourcingBar.flow-actions .primary {
   width: 100%;
   text-align: center;
   font-size: 15px;
   padding: 14px 24px;
+  background: linear-gradient(135deg, #073679, #052a5e);
+  color: #fff;
 }
 
 /* Skill Adjacency button tooltip */
@@ -1345,7 +1352,7 @@ pre {
     <!-- End Autosourcing Flow -->
 
     <!-- Main Grid Layout -->
-    <div class="main-grid">
+    <div class="main-grid wiz-locked-grid" id="mainGrid">
       
       <!-- Left Column: Inputs -->
       <div style="display: flex; flex-direction: column; gap: 16px;">
@@ -1398,11 +1405,7 @@ pre {
           </div>
         </div>
 
-        <!-- Spotlight Adjacent Skills -->
-        <div id="highlightTalentWrapper" class="hidden" data-field-section="aiAssistedSearch">
-          <button class="primary highlight-btn" id="highlightTalentBtn" aria-describedby="highlightHelper" style="width:100%;" title="Suggest roles and companies for your transferable skills.">Spotlight Adjacent Skills</button>
-          <div class="helper" id="highlightHelper" style="text-align:center;">Based on uploaded JD skills</div>
-        </div>
+        <!-- Spotlight Adjacent Skills button replaced by Skill Adjacency in Job Title suggestions box -->
 
         <!-- Location -->
         <div data-field-section="aiAssistedSearch" data-ai-field="locationSector">
@@ -2788,6 +2791,8 @@ function updateSourcingSection() {
       }
     }
   }
+  // Re-evaluate Start Autosourcing button visibility whenever sourcing state changes
+  if(typeof window._wizSyncStartBar === 'function') window._wizSyncStartBar();
 }
 
 (function initSmartSearchToggles(){
@@ -2927,13 +2932,8 @@ function updateSourcingSection() {
           }
         }
         
-        // Spotlight Adjacent Skills should only show when AI-Assisted Search is active
-        // The visibility is controlled by data-field-section="aiAssistedSearch"
-        // Force hide when AI-Assisted Search is turned off
-        const highlightWrapper = document.getElementById('highlightTalentWrapper');
-        if (highlightWrapper && !this.checked) {
-          highlightWrapper.classList.add('hidden');
-        }
+        // Spotlight Adjacent Skills was removed; Skill Adjacency replaces it in the Job Title box
+        // No separate visibility update needed here
         
         // Show/hide Skill Section when AI-Assisted Search is toggled
         const skillAggregator = document.getElementById('skillAggregator');
@@ -3832,8 +3832,6 @@ function updateSectorEnabledState(){
   const browseBtn = document.getElementById('browseJdBtn');
   const nameSpan = document.getElementById('jdFileName');
   const spinner = document.getElementById('jdUploadSpinner');
-  const highlightWrapper = document.getElementById('highlightTalentWrapper');
-  const highlightBtn = document.getElementById('highlightTalentBtn');
 
   // Drag and drop functionality
   if (dropZone) {
@@ -3924,17 +3922,11 @@ function updateSectorEnabledState(){
           dropZone.style.display = 'none';
         }
         
-        // Only show Spotlight Adjacent Skills when AI-Assisted Search is active
-        const toggleAiAssistedSearch = document.getElementById('toggleAiAssistedSearch');
-        if(highlightWrapper && toggleAiAssistedSearch && toggleAiAssistedSearch.checked) {
-          highlightWrapper.classList.remove('hidden');
-        }
-        if(highlightBtn) highlightBtn.disabled = false;
+        // Skill Adjacency button is always available in the Job Title suggestions box;
+        // no separate show/hide needed now that highlightTalentWrapper is removed.
+        // Trigger Start Autosourcing visibility check (JD is now uploaded)
+        if(typeof window._wizSyncStartBar === 'function') window._wizSyncStartBar();
         
-        // Removed early freeze. We will capture a snapshot AFTER analysis and after fetching fresh suggestions,
-        // so the snapshot contains the updated suggestions derived from the uploaded JD.
-        // (previous code captured snapshot here and set jdSuggestionsLocked = true too early)
-
         const chatFormData = new FormData();
         chatFormData.append('file', file);
 
@@ -4280,38 +4272,42 @@ function updateSectorEnabledState(){
     }
   }
 
-  if(highlightBtn){
-    highlightBtn.addEventListener('click', function(){
-      fetch('/highlight_talent_pools', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'highlight_talent_pools',
-          session_id: 'default',
-          username: window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || ''
-        })
+  function doHighlightTalentPools(){
+    fetch('/highlight_talent_pools', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'highlight_talent_pools',
+        session_id: 'default',
+        username: window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || ''
       })
-      .then(r => r.json())
-      .then(data => {
-        if(data.error){
-          if (data.code === 'no_skills') {
-             alert('No skillset found. Please upload a JD first.');
-          } else {
-             alert('Error: ' + data.error);
-          }
-          return;
+    })
+    .then(r => r.json())
+    .then(data => {
+      if(data.error){
+        if (data.code === 'no_skills') {
+           alert('No skillset found. Please upload a JD first.');
+        } else {
+           alert('Error: ' + data.error);
         }
-        
-        if(data.job && data.company){
-             const jobs = (data.job && data.job.related) ? data.job.related : [];
-             const comps = (data.company && data.company.related) ? data.company.related : [];
-             renderExternalSuggestions(jobs, comps);
-        } else if (data.response) {
-             alert(data.response);
-        }
-      })
-      .catch(e => console.error(e));
-    });
+        return;
+      }
+      
+      if(data.job && data.company){
+           const jobs = (data.job && data.job.related) ? data.job.related : [];
+           const comps = (data.company && data.company.related) ? data.company.related : [];
+           renderExternalSuggestions(jobs, comps);
+      } else if (data.response) {
+           alert(data.response);
+      }
+    })
+    .catch(e => console.error(e));
+  }
+
+  // Skill Adjacency button in Job Title suggestions box — same functionality as old Spotlight Adjacent Skills
+  const skillAdjBtn = document.getElementById('skillAdjacencyBtn');
+  if(skillAdjBtn){
+    skillAdjBtn.addEventListener('click', doHighlightTalentPools);
   }
 })();
 
@@ -4595,6 +4591,29 @@ function renderExternalSuggestions(jobs, comps){
     if(startBar) startBar.classList.remove('wiz-visible');
   }
 
+  // ── Check whether the Start Autosourcing button should be visible ─────────────
+  // Visible only when wizard is done AND (JD uploaded OR Job Title + Company provided)
+  function syncStartBarVisibility(){
+    var startBar = document.getElementById('startSourcingBar');
+    if(!startBar) return;
+    var summaryBar = document.getElementById('wizSummaryBar');
+    var wizardDone = startBar.classList.contains('wiz-visible') ||
+                     !!(summaryBar && !summaryBar.classList.contains('hidden'));
+    if(!wizardDone) return; // Don't show if wizard not complete
+    var hasJd = !!(window.jdUploaded);
+    var hasTitle = !!(window.jobTitles && window.jobTitles.length > 0);
+    var companyChips = document.querySelectorAll('#companyChips .chip');
+    var hasCompany = companyChips.length > 0;
+    var canStart = hasJd || (hasTitle && hasCompany);
+    if(canStart){
+      startBar.classList.add('wiz-visible');
+    } else {
+      startBar.classList.remove('wiz-visible');
+    }
+  }
+  // Expose so outer code can trigger re-check after chip changes
+  window._wizSyncStartBar = syncStartBarVisibility;
+
   // ── Mark step 3 done, show final actions ─────────────────────
   function completeStep3(){
     var inp=document.getElementById('userTargetInput');
@@ -4607,13 +4626,16 @@ function renderExternalSuggestions(jobs, comps){
     }
     // Save to cache
     savePrefs(readCurrentPrefs());
+    // Reveal main grid (JD/AI fields) now that wizard is complete
+    var mainGrid = document.getElementById('mainGrid');
+    if(mainGrid) mainGrid.classList.remove('wiz-locked-grid');
     // Collapse steps into summary bar
     showSummaryBar();
     // Show Reset Choices
     var actions=document.getElementById('flowActions');
     if(actions) actions.classList.add('wiz-visible');
-    // Show Start Autosourcing at bottom
-    showStartBar();
+    // Show Start Autosourcing at bottom only if content is ready
+    syncStartBarVisibility();
   }
 
   // ── Wire "Edit" click on done step headers ────────────────────
@@ -4631,10 +4653,12 @@ function renderExternalSuggestions(jobs, comps){
         var s=getStep(i);
         if(s){ s.classList.remove('wiz-active','wiz-done'); s.classList.add('wiz-locked'); }
       }
-      // Hide Reset/Start buttons while editing
+      // Hide Reset/Start buttons while editing + hide main grid
       var actions=document.getElementById('flowActions');
       if(actions) actions.classList.remove('wiz-visible');
       hideStartBar();
+      var mg = document.getElementById('mainGrid');
+      if(mg) mg.classList.add('wiz-locked-grid');
     });
   }
 
@@ -4682,6 +4706,8 @@ function renderExternalSuggestions(jobs, comps){
       var actions=document.getElementById('flowActions');
       if(actions) actions.classList.remove('wiz-visible');
       hideStartBar();
+      var mg = document.getElementById('mainGrid');
+      if(mg) mg.classList.add('wiz-locked-grid');
     });
   }
 
@@ -4767,7 +4793,7 @@ function renderExternalSuggestions(jobs, comps){
       syncDisplayVal(TARGET_MIN);
       syncStep1NextBtn();
       updateHybridBadge();
-      // Hide summary bar, re-show steps, back to Step 1
+      // Hide summary bar, re-show steps, back to Step 1, hide main grid
       hideSummaryBar();
       for(var i=1;i<=3;i++){
         var s=getStep(i);
@@ -4776,12 +4802,15 @@ function renderExternalSuggestions(jobs, comps){
       var actions=document.getElementById('flowActions');
       if(actions) actions.classList.remove('wiz-visible');
       hideStartBar();
+      var mg = document.getElementById('mainGrid');
+      if(mg) mg.classList.add('wiz-locked-grid');
     });
 
     // Summary bar Edit Settings button — re-show steps in their current state
     var summaryEditBtn=document.getElementById('wizSummaryEditBtn');
     if(summaryEditBtn) summaryEditBtn.addEventListener('click', function(){
       hideSummaryBar();
+      // Main grid stays visible while reviewing done steps (wizard already completed once)
       // Steps remain in their wiz-done state; user can click any ✏ Edit to re-open a step
     });
 
