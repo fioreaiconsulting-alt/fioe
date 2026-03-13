@@ -507,6 +507,253 @@ pre {
 .notif-modal-box .notif-suppress input[type=checkbox] { width: 10px; height: 10px; cursor: pointer; }
 .notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
 
+/* ═══════════════════════════════════════════════════════════════
+   AUTOSOURCING FLOW – 3-STEP WIZARD UI
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Container */
+.autosourcing-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+/* Individual step card */
+.flow-step {
+  background: var(--panel-alt, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+}
+
+/* Step header row */
+.flow-step-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* Numbered badge */
+.flow-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  background: var(--accent, #3a5bd9);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Step title */
+.flow-step-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+
+/* ── Step 1: Sourcing Style Cards ── */
+.sourcing-style-cards {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sourcing-card {
+  flex: 1;
+  min-width: 160px;
+  padding: 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel, #fff);
+  cursor: pointer;
+  transition: border-color .18s, background .18s, box-shadow .18s;
+  user-select: none;
+  position: relative;
+  outline: none;
+}
+.sourcing-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg, #f0f9ff);
+}
+.sourcing-card:focus-visible { box-shadow: 0 0 0 3px var(--accent-glow, rgba(58,91,217,.22)); }
+.sourcing-card.active,
+.sourcing-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-bg, #eef5ff);
+  box-shadow: 0 0 0 3px var(--accent-glow, rgba(58,91,217,.12));
+}
+.sourcing-card__check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--panel, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: transparent;
+  transition: all .15s;
+}
+.sourcing-card.active .sourcing-card__check,
+.sourcing-card.selected .sourcing-card__check {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.sourcing-card__icon { font-size: 22px; margin-bottom: 6px; }
+.sourcing-card__title { font-weight: 700; font-size: 14px; color: var(--text); margin-bottom: 4px; }
+.sourcing-card__desc { font-size: 12px; color: var(--text-soft); line-height: 1.45; }
+
+/* Hybrid Mode badge */
+.hybrid-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #8b5cf6, #3a5bd9);
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  margin-top: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity .2s, transform .2s;
+}
+.hybrid-badge.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* ── Step 2: Search Mode Radio Cards ── */
+.search-mode-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.search-mode-option {
+  flex: 1;
+  min-width: 140px;
+  padding: 12px 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel, #fff);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  user-select: none;
+  outline: none;
+}
+.search-mode-option:hover { border-color: var(--accent); background: var(--accent-bg, #f0f9ff); }
+.search-mode-option:focus-visible { box-shadow: 0 0 0 3px var(--accent-glow, rgba(58,91,217,.22)); }
+.search-mode-option.selected {
+  border-color: var(--accent);
+  background: var(--accent-bg, #eef5ff);
+}
+.search-mode-option__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.search-mode-option__radio {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--panel, #fff);
+  flex-shrink: 0;
+  transition: all .15s;
+}
+.search-mode-option.selected .search-mode-option__radio {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow, rgba(58,91,217,.18));
+}
+.search-mode-option__tooltip { font-size: 12px; color: var(--text-soft); line-height: 1.4; }
+
+/* ── Step 3: Target Limit slider + input ── */
+.target-limit-control { display: flex; flex-direction: column; gap: 8px; }
+.target-limit-row { display: flex; align-items: center; gap: 14px; }
+.target-limit-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--border, #e2e8f0);
+  outline: none;
+  cursor: pointer;
+}
+.target-limit-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--accent, #3a5bd9);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(58,91,217,.28);
+}
+.target-limit-slider::-moz-range-thumb {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--accent, #3a5bd9);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 6px rgba(58,91,217,.28);
+}
+.target-limit-number { width: 78px !important; text-align: center; font-weight: 700; }
+.target-limit-bounds {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+/* ── Final Action Buttons ── */
+.flow-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 4px 0 6px;
+}
+.flow-actions .primary { flex: 1; min-width: 180px; padding: 13px 24px; font-size: 15px; }
+.btn-secondary {
+  background: var(--panel, #fff);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 12px 20px;
+  font-size: 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+  font-family: var(--theme-font);
+  transition: background .13s, border-color .13s, color .13s;
+}
+.btn-secondary:hover {
+  background: #f8fafc;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Projected Token Usage tooltip — glossary card style */
 .projected-token-tooltip {
   position: fixed;
@@ -643,27 +890,108 @@ pre {
       </div>
     </div>
 
-    <!-- Smart Search Builder Configuration Panel -->
-    <div class="smart-search-panel" id="smartSearchPanel">
-      <div class="smart-search-header" role="button" aria-expanded="false" aria-label="Smart Search Builder - Hover to expand or collapse" tabindex="0">
-        <span>Smart Search Builder</span>
-        <span id="smartSearchArrow" aria-hidden="true">▼</span>
-      </div>
-      <div class="smart-search-content" id="smartSearchContent">
-        <div class="smart-search-toggles">
-          <!-- JD to Candidates Toggle -->
-          <div class="toggle-item toggle-bar" id="toggleBarJdToCandidates" role="button" tabindex="0" aria-pressed="false">
-            <input type="checkbox" id="toggleJdToCandidates" style="display:none;">
-            <span>JD to Candidates</span>
+    <!-- ═══ Autosourcing 3-Step Flow ═══ -->
+    <div class="autosourcing-flow" id="autosourcingFlow">
+
+      <!-- Step 1: Choose Your Sourcing Style -->
+      <div class="flow-step">
+        <div class="flow-step-header">
+          <span class="flow-step-badge">1</span>
+          <span class="flow-step-title">Choose Your Sourcing Style</span>
+        </div>
+        <!-- Hidden checkboxes — keep IDs for JS compatibility -->
+        <input type="checkbox" id="toggleJdToCandidates" style="display:none;">
+        <input type="checkbox" id="toggleAiAssistedSearch" style="display:none;">
+        <div class="sourcing-style-cards">
+          <!-- JD to Candidate card -->
+          <div class="sourcing-card" id="toggleBarJdToCandidates" role="button" tabindex="0" aria-pressed="false">
+            <div class="sourcing-card__check">✓</div>
+            <div class="sourcing-card__icon">📄</div>
+            <div class="sourcing-card__title">JD to Candidate</div>
+            <div class="sourcing-card__desc">Match candidates directly against a job description.</div>
           </div>
-          <!-- AI-Assisted Search Toggle -->
-          <div class="toggle-item toggle-bar" id="toggleBarAiAssistedSearch" role="button" tabindex="0" aria-pressed="false">
-            <input type="checkbox" id="toggleAiAssistedSearch" style="display:none;">
-            <span>AI-Assisted Search</span>
+          <!-- AI-Assisted Search card -->
+          <div class="sourcing-card" id="toggleBarAiAssistedSearch" role="button" tabindex="0" aria-pressed="false">
+            <div class="sourcing-card__check">✓</div>
+            <div class="sourcing-card__icon">🤖</div>
+            <div class="sourcing-card__title">AI-Assisted Search</div>
+            <div class="sourcing-card__desc">Explore candidates interactively with AI guidance.</div>
+          </div>
+        </div>
+        <!-- Hybrid Mode badge — visible when both cards are selected -->
+        <div class="hybrid-badge" id="hybridModeBadge">⚡ Hybrid Mode Active</div>
+      </div>
+
+      <!-- Step 2: Decide Your Search Mode -->
+      <div class="flow-step">
+        <div class="flow-step-header">
+          <span class="flow-step-badge">2</span>
+          <span class="flow-step-title">Decide Your Search Mode</span>
+        </div>
+        <!-- Hidden elements kept for JS compatibility (initSearchMode uses these IDs) -->
+        <input id="bestModeChk" type="checkbox" style="display:none;">
+        <button class="primary" id="bestModeToggle" style="display:none;" aria-pressed="false">
+          <span>🚀 Fast Mode</span>
+        </button>
+        <!-- searchModeHint: keep ID — referenced by initSearchMode() applyMode() function -->
+        <span class="hidden" id="searchModeHint">Queries are sent as-is without splitting</span>
+        <!-- Radio-style option cards -->
+        <div class="search-mode-options">
+          <div class="search-mode-option selected" id="fastModeOption" role="radio" tabindex="0" aria-checked="true">
+            <div class="search-mode-option__label">
+              <span class="search-mode-option__radio"></span>
+              🚀 Fast Mode
+            </div>
+            <div class="search-mode-option__tooltip">Quick results from priority companies.</div>
+          </div>
+          <div class="search-mode-option" id="bestModeOption" role="radio" tabindex="0" aria-checked="false">
+            <div class="search-mode-option__label">
+              <span class="search-mode-option__radio"></span>
+              ⚡ Best Mode
+            </div>
+            <div class="search-mode-option__tooltip">Thorough coverage across all companies.</div>
           </div>
         </div>
       </div>
+
+      <!-- Step 3: Set Target Limit -->
+      <div class="flow-step">
+        <div class="flow-step-header">
+          <span class="flow-step-badge">3</span>
+          <span class="flow-step-title">Set Target Limit</span>
+        </div>
+        <div class="target-limit-control">
+          <div class="target-limit-row">
+            <input type="range" class="target-limit-slider" id="targetLimitSlider" min="10" max="500" step="10" value="10">
+            <input type="number" id="userTargetInput" class="target-limit-number" min="10" max="500" step="10" value="10">
+            <span style="font-size:13px; color:var(--text-soft);">profiles</span>
+          </div>
+          <div class="target-limit-bounds">
+            <span>Min: 10</span>
+            <span>Max: 500</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Final Action Buttons -->
+      <div class="flow-actions" id="flowActions">
+        <button class="primary" id="generateBtn" data-state="idle">Start Autosourcing</button>
+        <button class="btn-secondary" id="resetChoicesBtn" type="button">Reset Choices</button>
+      </div>
+
+      <!-- Sourcing progress bar — visible below the action buttons while job runs -->
+      <div id="sourcingProgressWrap" class="hidden" style="padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
+          <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
+        </div>
+        <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
+          <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
+        </div>
+      </div>
+
     </div>
+    <!-- End Autosourcing Flow -->
 
     <!-- Main Grid Layout -->
     <div class="main-grid">
@@ -903,32 +1231,13 @@ pre {
             <div id="sectorCompanyList" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
           </div>
 
-          <!-- Sourcing button - Now full width at bottom -->
-          <div id="previewControls" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:16px;">
-            <button class="primary" id="generateBtn" data-state="idle" style="padding:14px 40px; font-size:16px; width:100%;">Sourcing</button>
-          </div>
-          <!-- Sourcing progress bar — visible below the Sourcing button while job runs -->
-          <div id="sourcingProgressWrap" class="hidden" style="margin-top:12px; padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-              <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
-              <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
-            </div>
-            <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
-              <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
-            </div>
-          </div>
+          <!-- Sourcing button and progress bar moved to autosourcing-flow above -->
         </div>
 
         <div id="advancedSection">
 
-          <!-- Search Mode toggle: Best Mode (auto-split at 32 words) vs Fast Mode (no splitting) -->
-          <div id="searchModeWrapper" style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
-            <input id="bestModeChk" type="checkbox" style="display:none;">
-            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="false" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
-              <span>🚀 Fast Mode</span>
-            </button>
-            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries are sent as-is without splitting</span>
-          </div>
+          <!-- Search Mode wrapper: hidden — controls moved to Step 2 flow above -->
+          <div id="searchModeWrapper" style="display:none;"></div>
 
           <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
             <button type="button" class="mini-btn" id="copyFullQueryBtn" style="position:absolute; top:8px; right:8px;">Copy</button>
@@ -960,11 +1269,6 @@ pre {
               <span class="helper"><strong>Estimated results (pre-search):</strong></span>
               <strong id="estimateValue" style="font-size:14px; color:var(--accent);">Add Job Title and Location</strong>
               <span id="estimateSpinner" class="spinner hidden" style="width:14px; height:14px;"></span>
-              
-              <div style="flex-grow:1;"></div>
-              
-              <span class="helper" style="border-left:1px solid var(--metric-border); padding-left:12px;"><strong>Target Limit:</strong></span>
-              <input type="number" id="userTargetInput" min="10" max="200" step="10" style="width:70px; padding:6px;">
             </div>
             <div id="estimateNote" class="helper" style="margin-top:4px;">Updates as you add Company, Sector, Language, etc.</div>
             <span id="channelEstimateValue" class="hidden"></span>
@@ -3733,6 +4037,138 @@ function renderExternalSuggestions(jobs, comps){
       body: JSON.stringify({ username: username, skills: userSkills })
     }).catch(e => console.warn('Sync skills failed', e));
   };
+})();
+
+// ── NEW: Sourcing Style cards — Hybrid Mode badge ────────────────────────────
+(function initHybridModeBadge(){
+  try {
+    const badge = document.getElementById('hybridModeBadge');
+    if(!badge) return;
+    function updateBadge(){
+      const jdBar = document.getElementById('toggleBarJdToCandidates');
+      const aiBar = document.getElementById('toggleBarAiAssistedSearch');
+      const jdActive = jdBar && jdBar.classList.contains('active');
+      const aiActive = aiBar && aiBar.classList.contains('active');
+      badge.classList.toggle('visible', jdActive && aiActive);
+    }
+    // Watch class attribute on both cards via MutationObserver
+    const obs = new MutationObserver(function(){ updateBadge(); });
+    const jdBar = document.getElementById('toggleBarJdToCandidates');
+    const aiBar = document.getElementById('toggleBarAiAssistedSearch');
+    if(jdBar) obs.observe(jdBar, { attributes: true, attributeFilter: ['class'] });
+    if(aiBar) obs.observe(aiBar, { attributes: true, attributeFilter: ['class'] });
+    updateBadge();
+  } catch(e){ console.warn('Hybrid badge init failed', e); }
+})();
+
+// ── NEW: Search Mode radio option UI sync ─────────────────────────────────────
+(function initSearchModeRadioUI(){
+  try {
+    const chk = document.getElementById('bestModeChk');
+    const btn = document.getElementById('bestModeToggle');  // original hidden toggle
+    const fastOpt = document.getElementById('fastModeOption');
+    const bestOpt = document.getElementById('bestModeOption');
+    if(!chk || !btn || !fastOpt || !bestOpt) return;
+
+    function syncRadioUI(){
+      const best = chk.checked;
+      fastOpt.classList.toggle('selected', !best);
+      fastOpt.setAttribute('aria-checked', String(!best));
+      bestOpt.classList.toggle('selected', !!best);
+      bestOpt.setAttribute('aria-checked', String(!!best));
+    }
+
+    // Fast Mode option clicked — proxy to hidden toggle (click handlers are synchronous)
+    fastOpt.addEventListener('click', function(){
+      if(chk.checked){ btn.click(); syncRadioUI(); }
+    });
+    fastOpt.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fastOpt.click(); }
+    });
+
+    // Best Mode option clicked — proxy to hidden toggle
+    bestOpt.addEventListener('click', function(){
+      if(!chk.checked){ btn.click(); syncRadioUI(); }
+    });
+    bestOpt.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); bestOpt.click(); }
+    });
+
+    // Initial sync (initSearchMode may have already restored saved preference)
+    syncRadioUI();
+  } catch(e){ console.warn('Search mode radio UI init failed', e); }
+})();
+
+// ── NEW: Target Limit slider ↔ number input sync ─────────────────────────────
+(function initTargetLimitSlider(){
+  try {
+    const TARGET_MIN = 10;
+    const TARGET_MAX = 500;
+    const slider = document.getElementById('targetLimitSlider');
+    const numInput = document.getElementById('userTargetInput');
+    if(!slider || !numInput) return;
+
+    function clamp(v){ return Math.min(TARGET_MAX, Math.max(TARGET_MIN, isNaN(v) ? TARGET_MIN : v)); }
+
+    slider.addEventListener('input', function(){
+      numInput.value = this.value;
+      // Trigger existing listeners attached to userTargetInput (token projection etc.)
+      numInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    numInput.addEventListener('input', function(){
+      const v = clamp(parseInt(this.value, 10));
+      slider.value = v;
+    });
+
+    numInput.addEventListener('change', function(){
+      const v = clamp(parseInt(this.value, 10));
+      this.value = v;
+      slider.value = v;
+    });
+
+    // Initial sync with default value
+    slider.value = clamp(parseInt(numInput.value, 10) || TARGET_MIN);
+  } catch(e){ console.warn('Target limit slider init failed', e); }
+})();
+
+// ── NEW: Reset Choices button ─────────────────────────────────────────────────
+(function initResetChoices(){
+  try {
+    const resetBtn = document.getElementById('resetChoicesBtn');
+    if(!resetBtn) return;
+
+    resetBtn.addEventListener('click', function(){
+      // Reset sourcing style: deactivate both cards
+      const jdChk = document.getElementById('toggleJdToCandidates');
+      const aiChk = document.getElementById('toggleAiAssistedSearch');
+      const jdBar = document.getElementById('toggleBarJdToCandidates');
+      const aiBar = document.getElementById('toggleBarAiAssistedSearch');
+
+      if(jdChk && jdChk.checked){
+        jdChk.checked = false;
+        if(jdBar){ jdBar.classList.remove('active'); jdBar.setAttribute('aria-pressed', 'false'); }
+        jdChk.dispatchEvent(new Event('change'));
+      }
+      if(aiChk && aiChk.checked){
+        aiChk.checked = false;
+        if(aiBar){ aiBar.classList.remove('active'); aiBar.setAttribute('aria-pressed', 'false'); }
+        aiChk.dispatchEvent(new Event('change'));
+      }
+
+      // Reset search mode to Fast Mode
+      const modeChk = document.getElementById('bestModeChk');
+      const modeBtn = document.getElementById('bestModeToggle');
+      if(modeChk && modeChk.checked && modeBtn){ modeBtn.click(); }
+
+      // Reset target limit to default (10)
+      const TARGET_MIN = 10;
+      const slider = document.getElementById('targetLimitSlider');
+      const numInp = document.getElementById('userTargetInput');
+      if(numInp){ numInp.value = TARGET_MIN; numInp.dispatchEvent(new Event('input', { bubbles: true })); }
+      if(slider){ slider.value = TARGET_MIN; }
+    });
+  } catch(e){ console.warn('Reset choices init failed', e); }
 })();
 
 (function initBanner(){
