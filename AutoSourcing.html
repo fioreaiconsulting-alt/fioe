@@ -623,6 +623,7 @@ pre {
   overflow: hidden;
   transition: border-color .25s, box-shadow .25s, opacity .25s;
   box-shadow: 0 1px 4px rgba(7,54,121,.05);
+  position: relative;
 }
 .flow-step.wiz-active {
   border-color: var(--wiz-blue);
@@ -809,23 +810,26 @@ pre {
 .sourcing-card.active .sourcing-card__title { color: var(--wiz-navy); }
 .sourcing-card__desc { font-size: 12px; color: var(--wiz-argent); line-height: 1.45; }
 
-/* Hybrid Mode badge */
+/* Hybrid Mode badge — positioned top-right of Step 1 panel */
 .hybrid-badge {
+  position: absolute;
+  top: 10px;
+  right: 14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: linear-gradient(135deg, var(--wiz-blue), var(--wiz-navy));
   color: #fff;
-  padding: 5px 14px;
+  padding: 4px 12px;
   border-radius: 20px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: .3px;
-  margin-top: 12px;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(4px);
+  transform: translateY(-4px);
   transition: opacity .2s, transform .2s;
+  z-index: 2;
 }
 .hybrid-badge.visible {
   opacity: 1;
@@ -982,6 +986,25 @@ pre {
   margin-bottom: 8px;
 }
 .wiz-summary-bar.hidden { display: none; }
+.wiz-sb-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.wiz-sb-reset-btn {
+  background: none;
+  border: 1.5px solid var(--wiz-dawn);
+  color: var(--wiz-argent);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  transition: border-color .13s, color .13s;
+}
+.wiz-sb-reset-btn:hover { border-color: var(--wiz-blue); color: var(--wiz-navy); }
 .wiz-sb-items {
   display: flex;
   align-items: center;
@@ -1223,6 +1246,8 @@ pre {
 
         <!-- ───── Step 1: Choose Your Sourcing Style ───── -->
         <div class="flow-step wiz-active" id="flowStep1">
+          <!-- Hybrid Mode badge — absolute top-right, visible when both cards are selected -->
+          <div class="hybrid-badge" id="hybridModeBadge">⚡ Hybrid Mode Active</div>
           <div class="flow-step-header" id="flowStep1Header">
             <span class="flow-step-badge">1</span>
             <span class="flow-step-title">Choose Your Sourcing Style</span>
@@ -1246,8 +1271,6 @@ pre {
                 <div class="sourcing-card__desc">Explore candidates interactively with AI guidance.</div>
               </div>
             </div>
-            <!-- Hybrid Mode badge — visible when both cards are selected -->
-            <div class="hybrid-badge" id="hybridModeBadge">⚡ Hybrid Mode Active</div>
             <!-- Next button -->
             <button class="wiz-next-btn" id="wizStep1Next" disabled>
               Next: Search Mode
@@ -1338,13 +1361,14 @@ pre {
           <span class="wiz-sb-sep">·</span>
           <span class="wiz-sb-chip" id="wizSumLimit"></span>
         </div>
-        <button class="wiz-sb-edit-btn" id="wizSummaryEditBtn" type="button">✏ Edit Settings</button>
+        <div class="wiz-sb-actions">
+          <button class="wiz-sb-edit-btn" id="wizSummaryEditBtn" type="button">✏ Edit Settings</button>
+          <button class="wiz-sb-reset-btn" id="resetChoicesBtn" type="button">↺ Reset</button>
+        </div>
       </div>
 
-      <!-- Final Action Buttons (appear after all 3 steps completed) -->
-      <div class="flow-actions" id="flowActions">
-        <button class="btn-secondary" id="resetChoicesBtn" type="button">Reset Choices</button>
-      </div>
+      <!-- Final Action Buttons placeholder (kept for JS compat — wiz-visible toggling) -->
+      <div class="flow-actions" id="flowActions" style="display:none;"></div>
 
       <!-- Sourcing progress bar — shown while job runs (moved below Start Autosourcing in right col) -->
 
@@ -1948,6 +1972,7 @@ function renderJobTitleChips(){
   });
   box.appendChild(jobChipFrag);
   document.getElementById('compiledJobTitleExpr').textContent=buildJobTitleExpression();
+  if(typeof window._wizSyncStartBar==='function') window._wizSyncStartBar();
 }
 function buildJobTitleExpressionAugmented(){
   if(!jobTitles.length) return '';
@@ -2020,6 +2045,7 @@ function renderCompanyChips(){
   });
   box.appendChild(compChipFrag);
   document.getElementById('compiledCompanyExpr').textContent=buildCompanyExpression();
+  if(typeof window._wizSyncStartBar==='function') window._wizSyncStartBar();
 }
 function buildCompanyExpression(){
   if(!companies.length) return '';
@@ -4597,13 +4623,12 @@ function renderExternalSuggestions(jobs, comps){
     var startBar = document.getElementById('startSourcingBar');
     if(!startBar) return;
     var summaryBar = document.getElementById('wizSummaryBar');
-    var wizardDone = startBar.classList.contains('wiz-visible') ||
-                     !!(summaryBar && !summaryBar.classList.contains('hidden'));
+    var wizardDone = !!(summaryBar && !summaryBar.classList.contains('hidden'));
     if(!wizardDone) return; // Don't show if wizard not complete
-    var hasJd = !!(window.jdUploaded);
-    var hasTitle = !!(window.jobTitles && window.jobTitles.length > 0);
-    var companyChips = document.querySelectorAll('#companyChips .chip');
-    var hasCompany = companyChips.length > 0;
+    var hasJd = !!jdUploaded;
+    var hasTitle = !!(jobTitles && jobTitles.length > 0);
+    var companyTagChips = document.querySelectorAll('#companyChips .tag-chip');
+    var hasCompany = companyTagChips.length > 0;
     var canStart = hasJd || (hasTitle && hasCompany);
     if(canStart){
       startBar.classList.add('wiz-visible');
@@ -4689,9 +4714,13 @@ function renderExternalSuggestions(jobs, comps){
       ', with a target of '+targetLabel+'. Would you like to continue with these settings, or make changes?';
 
     banner.classList.remove('hidden');
+    // On returning-user load, hide the step tiles so only the recap banner shows
+    var stepsWrap = document.getElementById('wizStepsWrap');
+    if(stepsWrap) stepsWrap.style.display = 'none';
 
     continueBtn.addEventListener('click', function(){
       banner.classList.add('hidden');
+      if(stepsWrap) stepsWrap.style.display = '';
       applyPrefs(prefs);
       completeStep1();
       completeStep2();
@@ -4701,6 +4730,7 @@ function renderExternalSuggestions(jobs, comps){
     changeBtn.addEventListener('click', function(){
       banner.classList.add('hidden');
       clearPrefs();
+      if(stepsWrap) stepsWrap.style.display = '';
       hideSummaryBar();
       setStepActive(1);
       var actions=document.getElementById('flowActions');
