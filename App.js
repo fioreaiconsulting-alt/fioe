@@ -2180,15 +2180,19 @@ function CandidatesTable({
     const ST_VALS_FALLBACK = ['Reviewing','Contacted','Unresponsive','Declined','Unavailable','Screened','Not Proceeding','Prospected'];
     const ST_VALS   = (statusOptions || []).length ? statusOptions : ST_VALS_FALLBACK;
 
-    // Build each DataValidation block using the workbook-level x: namespace prefix.
-    // <Value> contains plain comma-separated items — no sheet refs, no named ranges.
-    // x: namespace is declared at workbook root: xmlns:x="urn:schemas-microsoft-com:office:excel"
+    // Build each DataValidation block using a per-element namespace declaration.
+    // <Value> contains Excel formula syntax: "Item1","Item2","Item3"
+    // Double quotes are LITERAL in XML text content (valid, no encoding needed).
+    // Embedded double quotes in item text are doubled per Excel formula convention: "".
+    // This is the format Excel itself uses when saving as XML Spreadsheet 2003.
+    const xmlSafe = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const makeValidation = (col1, vals) => {
       if (!col1 || !vals || !vals.length) return '';
-      return `<x:DataValidation>\n` +
-             ` <x:Range>R2C${col1}:R${maxVRows}C${col1}</x:Range>\n` +
-             ` <x:Type>List</x:Type>\n` +
-             ` <x:Value>${vals.map(v => ex(v)).join(',')}</x:Value>\n</x:DataValidation>`;
+      const valueStr = vals.map(v => `"${xmlSafe(v).replace(/"/g, '""')}"`).join(',');
+      return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
+             ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
+             ` <Type>List</Type>\n` +
+             ` <Value>${valueStr}</Value>\n</DataValidation>`;
     };
     const validationXml = [
       makeValidation(geoCol, GEO_VALS),
