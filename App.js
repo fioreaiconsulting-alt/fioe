@@ -2179,18 +2179,20 @@ function CandidatesTable({
     const ST_VALS   = statusOptions || [];
     const makeValidation = (col1, values) => {
       if (!col1 || !values.length) return '';
-      // SpreadsheetML uses semicolons (;) to separate list items in inline validation formulas.
+      // SpreadsheetML uses semicolons (;) to separate list items in inline List validation.
+      // Note: <ShowDropDown/> is NOT a valid SpreadsheetML element — omitting it shows the
+      // dropdown arrow by default, which is the correct behaviour for a List constraint.
       const valStr = values.map(v => `"${ex(v)}"`).join(';');
       return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
              ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
-             ` <Type>List</Type>\n <ShowDropDown/>\n` +
+             ` <Type>List</Type>\n` +
              ` <Value>${valStr}</Value>\n</DataValidation>`;
     };
     const validationXml = [
       makeValidation(geoCol,  GEO_VALS),
       makeValidation(senCol,  SEN_VALS),
       makeValidation(stCol,   ST_VALS),
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     // Sheet 2: full candidate JSON rows — one JSON object per row in column A.
     // The sheet is hidden so it doesn't clutter the workbook view.
@@ -2211,6 +2213,13 @@ function CandidatesTable({
 ` <Styles><Style ss:ID="hdr"><Font ss:Bold="1"/></Style></Styles>\n` +
 ` <Worksheet ss:Name="Candidate Data">\n` +
 `  <Table ss:DefaultColumnWidth="110">${colDefs}${headerRow}${dataRows}</Table>\n` +
+`  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">\n` +
+`   <FreezePanes/>\n` +
+`   <FrozenNoSplit/>\n` +
+`   <SplitHorizontal>1</SplitHorizontal>\n` +
+`   <TopRowBottomPane>1</TopRowBottomPane>\n` +
+`   <ActivePane>2</ActivePane>\n` +
+`  </WorksheetOptions>\n` +
 `  ${validationXml}\n` +
 ` </Worksheet>\n` +
 ` <Worksheet ss:Name="DB Copy" ss:Visibility="Hidden">\n` +
