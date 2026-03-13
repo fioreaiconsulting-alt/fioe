@@ -1286,3 +1286,18 @@ table input[type="text"], table select {
   flex-shrink: 0;
   letter-spacing: 0.5px;
 }
+/* ── App.js main nav tabs ── */
+.tab-active {
+  background: var(--azure-dragon);
+  color: #fff;
+  border: 1px solid var(--azure-dragon);
+  box-shadow: 0 4px 12px rgba(7,54,121,0.25);
+}
+.tab-active:hover { background: var(--cool-blue); border-color: var(--cool-blue); }
+
+.tab-inactive {
+  background: #fff;
+  color: var(--cool-blue);
+  border: 1px solid var(--desired-dawn);
+}
+.tab-inactive:hover { background: #eef4ff; border-color: var(--cool-blue); color: var(--azure-dragon); }
