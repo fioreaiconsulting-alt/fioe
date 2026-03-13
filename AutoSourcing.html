@@ -969,6 +969,94 @@ pre {
 }
 .btn-secondary:hover { border-color: var(--wiz-blue); color: var(--wiz-navy); }
 
+/* ── Wizard summary bar (collapsed view after all steps complete) ── */
+.wiz-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #f0f5fb;
+  border: 1.5px solid var(--wiz-blue);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+.wiz-summary-bar.hidden { display: none; }
+.wiz-sb-items {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wiz-sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff;
+  border: 1px solid var(--wiz-dawn);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wiz-navy);
+}
+.wiz-sb-chip .wiz-sb-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--wiz-argent);
+  margin-right: 4px;
+}
+.wiz-sb-sep { color: var(--wiz-dawn); font-size: 16px; line-height: 1; }
+.wiz-sb-edit-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1.5px solid var(--wiz-blue);
+  color: var(--wiz-blue);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  transition: background .13s, color .13s;
+}
+.wiz-sb-edit-btn:hover { background: var(--wiz-blue); color: #fff; }
+
+/* Start Autosourcing bar at the bottom of the search form */
+#startSourcingBar { margin-top: 20px; }
+#startSourcingBar.flow-actions .primary {
+  width: 100%;
+  text-align: center;
+  font-size: 15px;
+  padding: 14px 24px;
+}
+
+/* Skill Adjacency button tooltip */
+#skillAdjacencyBtn {
+  position: relative;
+}
+#skillAdjacencyBtn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: #1b2636;
+  color: #e8edf2;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 7px 10px;
+  border-radius: 6px;
+  white-space: normal;
+  max-width: 240px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 100;
+}
+#skillAdjacencyBtn:hover::after { opacity: 1; }
+
 /* Projected Token Usage tooltip — glossary card style */
 .projected-token-tooltip {
   position: fixed;
@@ -1234,22 +1322,24 @@ pre {
 
       </div><!-- /.wiz-steps-wrap -->
 
+      <!-- Single collapsed summary bar (replaces the 3 step headers after wizard is done) -->
+      <div class="wiz-summary-bar hidden" id="wizSummaryBar">
+        <div class="wiz-sb-items">
+          <span class="wiz-sb-chip" id="wizSumStyle"></span>
+          <span class="wiz-sb-sep">·</span>
+          <span class="wiz-sb-chip" id="wizSumMode"></span>
+          <span class="wiz-sb-sep">·</span>
+          <span class="wiz-sb-chip" id="wizSumLimit"></span>
+        </div>
+        <button class="wiz-sb-edit-btn" id="wizSummaryEditBtn" type="button">✏ Edit Settings</button>
+      </div>
+
       <!-- Final Action Buttons (appear after all 3 steps completed) -->
       <div class="flow-actions" id="flowActions">
-        <button class="primary" id="generateBtn" data-state="idle">Start Autosourcing</button>
         <button class="btn-secondary" id="resetChoicesBtn" type="button">Reset Choices</button>
       </div>
 
-      <!-- Sourcing progress bar — visible below the action buttons while job runs -->
-      <div id="sourcingProgressWrap" class="hidden" style="padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-          <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
-          <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
-        </div>
-        <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
-          <div id="sourcingProgressFill" style="height:100%; background:#073679; border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
-        </div>
-      </div>
+      <!-- Sourcing progress bar — shown while job runs (moved below Start Autosourcing in right col) -->
 
     </div>
     <!-- End Autosourcing Flow -->
@@ -1278,7 +1368,10 @@ pre {
           <div id="jobTitleSuggestionBox" class="suggestions-mini hidden" aria-live="polite" style="margin-top:8px; border:1px solid var(--border); padding:8px; border-radius:var(--radius-sm);">
             <div class="suggestions-mini-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px; font-weight:700; color:var(--text-soft);">
               <span>Job Title Suggestions</span>
-              <button type="button" id="jobTitleRefreshBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;">Refresh</button>
+              <div style="display:flex; gap:4px;">
+                <button type="button" id="jobTitleRefreshBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;">Refresh</button>
+                <button type="button" id="skillAdjacencyBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;" title="Suggest job titles and companies based on transferable skills from the uploaded JD." data-tooltip="Suggest job titles and companies based on transferable skills from the uploaded JD." aria-label="Skill Adjacency: Suggest job titles and companies based on transferable skills from the uploaded JD.">Skill Adjacency</button>
+              </div>
             </div>
             <div id="jobTitleSuggestionsGrid" class="suggestions-grid-mini" role="list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
           </div>
@@ -1551,6 +1644,22 @@ pre {
 
         </div>
         <!-- End Advanced Section -->
+
+        <!-- ═══ Start Autosourcing — original bottom position, beneath "We'll search for" section ═══ -->
+        <div class="flow-actions" id="startSourcingBar" style="margin-top:16px;">
+          <button class="primary" id="generateBtn" data-state="idle">Start Autosourcing</button>
+        </div>
+
+        <!-- Sourcing progress bar — visible below Start Autosourcing while job runs -->
+        <div id="sourcingProgressWrap" class="hidden" style="padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px; margin-top:8px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+            <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
+            <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
+          </div>
+          <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
+            <div id="sourcingProgressFill" style="height:100%; background:#073679; border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
+          </div>
+        </div>
 
       </div>
       <!-- End Right Column -->
@@ -4444,6 +4553,48 @@ function renderExternalSuggestions(jobs, comps){
     setStepActive(3);
   }
 
+  // ── helpers for summary bar ───────────────────────────────────
+  function showSummaryBar(){
+    var prefs = readCurrentPrefs();
+    var styleLabel = prefs.style && prefs.style.length ? prefs.style.join(' + ') : '—';
+    var modeLabel  = prefs.mode || 'Fast Mode';
+    var limitLabel = (prefs.target || 10) + ' profiles';
+
+    function setChip(id, label, val){
+      var el = document.getElementById(id);
+      if(!el) return;
+      el.textContent = '';
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'wiz-sb-label';
+      labelSpan.textContent = label;
+      var valText = document.createTextNode(val);
+      el.appendChild(labelSpan);
+      el.appendChild(valText);
+    }
+    setChip('wizSumStyle', 'Style', styleLabel);
+    setChip('wizSumMode',  'Mode',  modeLabel);
+    setChip('wizSumLimit', 'Target', limitLabel);
+
+    var bar = document.getElementById('wizSummaryBar');
+    var stepsWrap = document.getElementById('wizStepsWrap');
+    if(bar) bar.classList.remove('hidden');
+    if(stepsWrap) stepsWrap.classList.add('hidden');
+  }
+  function hideSummaryBar(){
+    var bar = document.getElementById('wizSummaryBar');
+    var stepsWrap = document.getElementById('wizStepsWrap');
+    if(bar) bar.classList.add('hidden');
+    if(stepsWrap) stepsWrap.classList.remove('hidden');
+  }
+  function showStartBar(){
+    var startBar = document.getElementById('startSourcingBar');
+    if(startBar) startBar.classList.add('wiz-visible');
+  }
+  function hideStartBar(){
+    var startBar = document.getElementById('startSourcingBar');
+    if(startBar) startBar.classList.remove('wiz-visible');
+  }
+
   // ── Mark step 3 done, show final actions ─────────────────────
   function completeStep3(){
     var inp=document.getElementById('userTargetInput');
@@ -4456,9 +4607,13 @@ function renderExternalSuggestions(jobs, comps){
     }
     // Save to cache
     savePrefs(readCurrentPrefs());
-    // Show action buttons
+    // Collapse steps into summary bar
+    showSummaryBar();
+    // Show Reset Choices
     var actions=document.getElementById('flowActions');
     if(actions) actions.classList.add('wiz-visible');
+    // Show Start Autosourcing at bottom
+    showStartBar();
   }
 
   // ── Wire "Edit" click on done step headers ────────────────────
@@ -4468,15 +4623,18 @@ function renderExternalSuggestions(jobs, comps){
     header.addEventListener('click', function(){
       var step=getStep(n);
       if(!step || !step.classList.contains('wiz-done')) return;
+      // Re-show steps wrap (hidden when summary bar is active)
+      hideSummaryBar();
       setStepActive(n);
       // Lock all subsequent steps
       for(var i=n+1;i<=3;i++){
         var s=getStep(i);
         if(s){ s.classList.remove('wiz-active','wiz-done'); s.classList.add('wiz-locked'); }
       }
-      // Hide action buttons when going back to edit
+      // Hide Reset/Start buttons while editing
       var actions=document.getElementById('flowActions');
       if(actions) actions.classList.remove('wiz-visible');
+      hideStartBar();
     });
   }
 
@@ -4519,9 +4677,11 @@ function renderExternalSuggestions(jobs, comps){
     changeBtn.addEventListener('click', function(){
       banner.classList.add('hidden');
       clearPrefs();
+      hideSummaryBar();
       setStepActive(1);
       var actions=document.getElementById('flowActions');
       if(actions) actions.classList.remove('wiz-visible');
+      hideStartBar();
     });
   }
 
@@ -4607,13 +4767,22 @@ function renderExternalSuggestions(jobs, comps){
       syncDisplayVal(TARGET_MIN);
       syncStep1NextBtn();
       updateHybridBadge();
-      // Back to Step 1
+      // Hide summary bar, re-show steps, back to Step 1
+      hideSummaryBar();
       for(var i=1;i<=3;i++){
         var s=getStep(i);
         if(s){ s.classList.remove('wiz-active','wiz-done','wiz-locked'); if(i===1) s.classList.add('wiz-active'); else s.classList.add('wiz-locked'); }
       }
       var actions=document.getElementById('flowActions');
       if(actions) actions.classList.remove('wiz-visible');
+      hideStartBar();
+    });
+
+    // Summary bar Edit Settings button — re-show steps in their current state
+    var summaryEditBtn=document.getElementById('wizSummaryEditBtn');
+    if(summaryEditBtn) summaryEditBtn.addEventListener('click', function(){
+      hideSummaryBar();
+      // Steps remain in their wiz-done state; user can click any ✏ Edit to re-open a step
     });
 
     // Returning user — check for saved prefs
