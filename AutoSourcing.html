@@ -1070,6 +1070,44 @@ pre {
   padding: 14px 24px;
   background: linear-gradient(135deg, #073679, #052a5e);
   color: #fff;
+  background-size: 200% 100%;
+  transition: background-position .4s, box-shadow .15s, transform .12s;
+}
+#startSourcingBar.flow-actions .primary:hover:not(:disabled) {
+  background-position: 100% 0;
+  box-shadow: 0 10px 28px -8px rgba(7,54,121,.4);
+}
+/* Loading state — keep gradient + slide shimmer */
+#startSourcingBar.flow-actions .primary.btn-loading {
+  background: linear-gradient(135deg, #073679 0%, #4c82b8 50%, #073679 100%);
+  background-size: 200% 100%;
+  animation: btnGradientSlide 2s linear infinite;
+  opacity: 1;
+}
+/* Ready to Download state — Cool Blue accent */
+#startSourcingBar.flow-actions .primary.ready-download {
+  background: linear-gradient(135deg, #4c82b8, #073679);
+  animation: none;
+  box-shadow: 0 8px 24px -6px rgba(76,130,184,.45);
+}
+
+/* Progress bar animated gradient fill */
+@keyframes btnGradientSlide {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+@keyframes progShimmer {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+#sourcingProgressFill.prog-running {
+  background: linear-gradient(90deg, #073679 0%, #4c82b8 40%, #6deaf9 60%, #4c82b8 80%, #073679 100%);
+  background-size: 200% 100%;
+  animation: progShimmer 2s linear infinite;
+}
+#sourcingProgressFill.prog-done {
+  background: linear-gradient(90deg, #073679, #4c82b8);
+  animation: none;
 }
 
 /* Skill Adjacency button tooltip */
@@ -3374,7 +3412,7 @@ function injectSpinnerStylesOnce(){
   document.head.appendChild(st);
 }
 // Cycling status phrases shown while autosourcing is in progress
-var _btnStatusPhrases=['Searching Data','Analyzing Profiles','Compiling Results','Mapping Talent'];
+var _btnStatusPhrases=['Searching Profiles','Analyzing Profiles','Compiling Results','Mapping Talent'];
 var _btnStatusInterval=null;
 function applySearchingSpinner(btn){
   if(!btn) return;
@@ -3706,7 +3744,7 @@ async function generateAndStart(){
     const _pFill=document.getElementById('sourcingProgressFill');
     const _pCount=document.getElementById('sourcingProfileCount');
     const _pWrap=document.getElementById('sourcingProgressWrap');
-    if(_pFill) _pFill.style.width='0%';
+    if(_pFill){ _pFill.style.width='0%'; _pFill.classList.remove('prog-running','prog-done'); }
     if(_pCount) _pCount.textContent='0';
     if(_pWrap) hide(_pWrap); // will be shown by pollJob when first data arrives
     // Persist the target limit so SourcingVerify can apply the correct token deduction rate
@@ -3730,6 +3768,7 @@ async function pollJob(jobId){
   let interval=1500;
   // Show progress bar when polling starts
   if(progressWrap) show(progressWrap);
+  if(progressFill){ progressFill.classList.remove('prog-done'); progressFill.classList.add('prog-running'); }
   function extractFinalRowCount(html){ if(!html) return null; const m=/Wrote\s+(\d+)\s+rows/i.exec(html); return m?parseInt(m[1],10):null; }
   function updateProgressBar(found, target){
     if(!progressFill || !profileCount) return;
@@ -3780,7 +3819,7 @@ async function pollJob(jobId){
           btn.textContent='Ready to Download';
         }
         // Set progress bar to 100% when done
-        if(progressFill) progressFill.style.width='100%';
+        if(progressFill){ progressFill.classList.remove('prog-running'); progressFill.classList.add('prog-done'); progressFill.style.width='100%'; }
         // Deduct tokens based on actual final row count
         try{
           const finalRows = extractFinalRowCount(data.status_html||'');
