@@ -604,6 +604,15 @@ pre {
   transition: border-color .15s, color .15s;
 }
 .wiz-recap__btn-change:hover { border-color: var(--wiz-blue); color: var(--wiz-navy); }
+.wiz-recap__donot-label {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 12px;
+  font-size: 12px; color: #87888a; cursor: pointer;
+  user-select: none;
+}
+.wiz-recap__donot-label input[type="checkbox"] {
+  accent-color: #073679; width: 14px; height: 14px; cursor: pointer;
+}
 
 /* ── Step connector line ── */
 .wiz-steps-wrap {
@@ -1061,6 +1070,44 @@ pre {
   padding: 14px 24px;
   background: linear-gradient(135deg, #073679, #052a5e);
   color: #fff;
+  background-size: 200% 100%;
+  transition: background-position .4s, box-shadow .15s, transform .12s;
+}
+#startSourcingBar.flow-actions .primary:hover:not(:disabled) {
+  background-position: 100% 0;
+  box-shadow: 0 10px 28px -8px rgba(7,54,121,.4);
+}
+/* Loading state — keep gradient + slide shimmer */
+#startSourcingBar.flow-actions .primary.btn-loading {
+  background: linear-gradient(135deg, #073679 0%, #4c82b8 50%, #073679 100%);
+  background-size: 200% 100%;
+  animation: btnGradientSlide 2s linear infinite;
+  opacity: 1;
+}
+/* Ready to Download state — Cool Blue accent */
+#startSourcingBar.flow-actions .primary.ready-download {
+  background: linear-gradient(135deg, #4c82b8, #073679);
+  animation: none;
+  box-shadow: 0 8px 24px -6px rgba(76,130,184,.45);
+}
+
+/* Progress bar animated gradient fill */
+@keyframes btnGradientSlide {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+@keyframes progShimmer {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+#sourcingProgressFill.prog-running {
+  background: linear-gradient(90deg, #073679 0%, #4c82b8 40%, #6deaf9 60%, #4c82b8 80%, #073679 100%);
+  background-size: 200% 100%;
+  animation: progShimmer 2s linear infinite;
+}
+#sourcingProgressFill.prog-done {
+  background: linear-gradient(90deg, #073679, #4c82b8);
+  animation: none;
 }
 
 /* Skill Adjacency button tooltip */
@@ -1235,6 +1282,10 @@ pre {
           <button class="wiz-recap__btn-continue" id="wizRecapContinueBtn">Continue with these settings</button>
           <button class="wiz-recap__btn-change" id="wizRecapChangeBtn">Make changes</button>
         </div>
+        <label class="wiz-recap__donot-label" id="wizRecapDoNotLabel">
+          <input type="checkbox" id="wizRecapDoNotShow">
+          Do not show this again in the future
+        </label>
       </div>
 
       <!-- Steps wrapper -->
@@ -1595,9 +1646,9 @@ pre {
           <strong id="dynamicCompanyHeader"></strong>
           <div class="section-divider" style="height:1px; background:var(--border); margin:12px 0;"></div>
           
-          <!-- Hide Advanced Toggle - Now small button at top -->
+          <!-- Hide Advanced Toggle - Now small button at top (admin only) -->
           <input id="hideAdvancedChk" type="checkbox" checked style="display:none;">
-          <div style="margin-bottom:16px;">
+          <div id="hideAdvancedWrap" style="margin-bottom:16px; display:none;">
             <button class="primary" id="hideAdvancedToggle" style="padding:8px 16px; font-size:13px;" aria-pressed="true">
               <span>Hide advanced fields</span>
             </button>
@@ -3340,7 +3391,7 @@ function primaryButtonHandler(e){
     const btn = e && e.currentTarget ? e.currentTarget : document.getElementById('generateBtn');
     const state = (btn && btn.dataset && btn.dataset.state) ? btn.dataset.state : 'idle';
     if(state === 'idle'){
-      try { generateAndStart(); } catch(err){ if(btn){ btn.dataset.state='idle'; btn.textContent='Sourcing'; btn.disabled=false; removeSearchingSpinner(btn); } }
+      try { generateAndStart(); } catch(err){ if(btn){ btn.dataset.state='idle'; btn.disabled=false; removeSearchingSpinner(btn); } }
     } else if(state === 'ready'){
       (async () => {
         try {
@@ -3360,15 +3411,39 @@ function injectSpinnerStylesOnce(){
   st.textContent='.btn-loading{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;} .btn-spinner{width:20px;height:20px;border:3px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:btnSpin .8s linear infinite;}@keyframes btnSpin{to{transform:rotate(360deg)}} .btn-label{display:inline-block;}';
   document.head.appendChild(st);
 }
+// Cycling status phrases shown while autosourcing is in progress
+var _btnStatusInterval=null;
+// Map pct progress to phase label
+function _btnPhrase(found, target){
+  if(target > 0){
+    var pct = found / target;
+    if(pct < 1/3) return 'Searching Profiles';
+    if(pct < 2/3) return 'Analyzing Profiles';
+    return 'Compiling Results';
+  }
+  // No target known — use count thresholds
+  if(found < 10) return 'Searching Profiles';
+  if(found < 30) return 'Analyzing Profiles';
+  return 'Compiling Results';
+}
 function applySearchingSpinner(btn){
   if(!btn) return;
   injectSpinnerStylesOnce();
   if(!btn.dataset.originalLabel) btn.dataset.originalLabel=btn.textContent;
   btn.classList.add('btn-loading');
-  btn.innerHTML='<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">Searching…</span>';
+  btn.innerHTML='<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">Searching Profiles: 0</span>';
+}
+// Update the button label with current count (called from pollJob on each poll)
+function updateBtnStatus(btn, found, target){
+  if(!btn || btn.dataset.state !== 'searching') return;
+  var phrase = _btnPhrase(found, target);
+  var label = btn.querySelector('.btn-label');
+  if(label){ label.textContent = `${phrase}: ${found}`; }
+  else { btn.innerHTML=`<span class="btn-spinner" aria-hidden="true"></span><span class="btn-label">${phrase}: ${found}</span>`; }
 }
 function removeSearchingSpinner(btn){
   if(!btn) return;
+  if(_btnStatusInterval){ clearInterval(_btnStatusInterval); _btnStatusInterval=null; }
   if(btn.dataset.originalLabel){
     btn.textContent=btn.dataset.originalLabel;
   }
@@ -3452,6 +3527,11 @@ function applyAdminVisibility(){
     } else {
       queriesSection.style.removeProperty('display');
     }
+  }
+  // Advanced Feature button: only visible for admins
+  const hideAdvancedWrap = document.getElementById('hideAdvancedWrap');
+  if(hideAdvancedWrap){
+    hideAdvancedWrap.style.display = isAdmin ? 'block' : 'none';
   }
 }
 
@@ -3682,7 +3762,7 @@ async function generateAndStart(){
     const _pFill=document.getElementById('sourcingProgressFill');
     const _pCount=document.getElementById('sourcingProfileCount');
     const _pWrap=document.getElementById('sourcingProgressWrap');
-    if(_pFill) _pFill.style.width='0%';
+    if(_pFill){ _pFill.style.width='0%'; _pFill.classList.remove('prog-running','prog-done'); }
     if(_pCount) _pCount.textContent='0';
     if(_pWrap) hide(_pWrap); // will be shown by pollJob when first data arrives
     // Persist the target limit so SourcingVerify can apply the correct token deduction rate
@@ -3690,7 +3770,7 @@ async function generateAndStart(){
     pollJob(data.job_id);
   }catch(e){
     console.warn('Failed to start job',e);
-    if(btn){ btn.dataset.state='idle'; btn.disabled=false; removeSearchingSpinner(btn); btn.textContent='Sourcing'; }
+    if(btn){ btn.dataset.state='idle'; btn.disabled=false; removeSearchingSpinner(btn); }
   }
 }
 async function pollJob(jobId){
@@ -3704,14 +3784,14 @@ async function pollJob(jobId){
   const progressFill=document.getElementById('sourcingProgressFill');
   const profileCount=document.getElementById('sourcingProfileCount');
   let interval=1500;
-  // Show progress bar when polling starts
-  if(progressWrap) show(progressWrap);
+  // Keep progress bar hidden — count is shown in button text instead
+  if(progressFill){ progressFill.classList.remove('prog-done'); progressFill.classList.add('prog-running'); }
   function extractFinalRowCount(html){ if(!html) return null; const m=/Wrote\s+(\d+)\s+rows/i.exec(html); return m?parseInt(m[1],10):null; }
   function updateProgressBar(found, target){
-    if(!progressFill || !profileCount) return;
-    profileCount.textContent=found;
-    // When target is unknown (0), show an indeterminate 50% stripe rather than misleading 100%.
-    // When target is known, fill proportionally (capped at 100%).
+    if(profileCount) profileCount.textContent=found;
+    // Drive button status text with live count
+    updateBtnStatus(btn, found, target);
+    if(!progressFill) return;
     const pct = target > 0 ? Math.min(100, Math.round((found / target) * 100)) : (found > 0 ? 50 : 0);
     progressFill.style.width=pct+'%';
   }
@@ -3753,10 +3833,10 @@ async function pollJob(jobId){
           btn.classList.add('ready-download');
           btn.dataset.state='ready';
           removeSearchingSpinner(btn);
-          btn.textContent='Ready for Download';
+          btn.textContent='Ready to Download';
         }
         // Set progress bar to 100% when done
-        if(progressFill) progressFill.style.width='100%';
+        if(progressFill){ progressFill.classList.remove('prog-running'); progressFill.classList.add('prog-done'); progressFill.style.width='100%'; }
         // Deduct tokens based on actual final row count
         try{
           const finalRows = extractFinalRowCount(data.status_html||'');
@@ -4689,12 +4769,14 @@ function renderExternalSuggestions(jobs, comps){
   }
 
   // ── Returning-user banner ─────────────────────────────────────
+  var DO_NOT_SHOW_KEY = 'autosourcing_wizard_skip_banner';
   function initRecapBanner(prefs){
     var banner=document.getElementById('wizRecapBanner');
     var itemsEl=document.getElementById('wizRecapItems');
     var promptEl=document.getElementById('wizRecapPrompt');
     var continueBtn=document.getElementById('wizRecapContinueBtn');
     var changeBtn=document.getElementById('wizRecapChangeBtn');
+    var doNotChk=document.getElementById('wizRecapDoNotShow');
     if(!banner||!itemsEl||!promptEl||!continueBtn||!changeBtn) return;
 
     var styleLabel=prefs.style && prefs.style.length
@@ -4719,18 +4801,28 @@ function renderExternalSuggestions(jobs, comps){
     var stepsWrap = document.getElementById('wizStepsWrap');
     if(stepsWrap) stepsWrap.style.display = 'none';
 
-    continueBtn.addEventListener('click', function(){
+    function applyAndContinue(){
       banner.classList.add('hidden');
       if(stepsWrap) stepsWrap.style.display = '';
       applyPrefs(prefs);
       completeStep1();
       completeStep2();
       completeStep3();
+    }
+
+    continueBtn.addEventListener('click', function(){
+      // If "do not show" is checked, persist the flag so banner is skipped next time
+      if(doNotChk && doNotChk.checked){
+        try{ localStorage.setItem(DO_NOT_SHOW_KEY, '1'); }catch(e){}
+      }
+      applyAndContinue();
     });
 
     changeBtn.addEventListener('click', function(){
       banner.classList.add('hidden');
       clearPrefs();
+      // Also clear the do-not-show flag when user resets
+      try{ localStorage.removeItem(DO_NOT_SHOW_KEY); }catch(e){}
       if(stepsWrap) stepsWrap.style.display = '';
       hideSummaryBar();
       setStepActive(1);
@@ -4813,6 +4905,8 @@ function renderExternalSuggestions(jobs, comps){
     var resetBtn=document.getElementById('resetChoicesBtn');
     if(resetBtn) resetBtn.addEventListener('click',function(){
       clearPrefs();
+      // Also clear the do-not-show flag so the banner returns on next visit
+      try{ localStorage.removeItem(DO_NOT_SHOW_KEY); }catch(e){}
       // Deactivate sourcing style — click each active card to toggle it off via initSmartSearchToggles handler
       if(jdBar && jdChk && jdChk.checked){ jdBar.click(); }
       if(aiBar && aiChk && aiChk.checked){ aiBar.click(); }
@@ -4848,7 +4942,17 @@ function renderExternalSuggestions(jobs, comps){
     // Returning user — check for saved prefs
     var saved=loadPrefs();
     if(saved && saved.style && saved.style.length){
-      initRecapBanner(saved);
+      // If user previously opted "do not show", auto-apply silently without banner
+      var skipBanner = false;
+      try{ skipBanner = localStorage.getItem(DO_NOT_SHOW_KEY) === '1'; }catch(e){}
+      if(skipBanner){
+        applyPrefs(saved);
+        completeStep1();
+        completeStep2();
+        completeStep3();
+      } else {
+        initRecapBanner(saved);
+      }
     }
 
     // Initial sync
