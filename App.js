@@ -2168,8 +2168,9 @@ function CandidatesTable({
       `<Column ss:Width="${['linkedinurl','skillset'].includes(col.header) ? 200 : 110}"/>`
     ).join('');
 
-    // Data validation — use a hidden "DropdownValues" sheet and reference its ranges.
-    // Inline <Value> lists are unreliable across Excel versions; range references are robust.
+    // Data validation — use workbook-level named ranges pointing to a hidden DropdownValues sheet.
+    // SpreadsheetML 2003 DataValidation <Value> cannot resolve cross-sheet references directly;
+    // it CAN resolve named ranges defined in the workbook <Names> section.
     const maxVRows = Math.max((allCandidates || []).length + 2, 1001);
     const geoCol    = S1_COLS.findIndex(c => c.header === 'geographic')     + 1;
     const senCol    = S1_COLS.findIndex(c => c.header === 'seniority')      + 1;
@@ -2189,20 +2190,26 @@ function CandidatesTable({
       `</Row>`
     ).join('');
 
-    // Range references for each dropdown column — these are Excel formula references,
-    // not string content, so they must NOT be XML-escaped.
-    const makeValidation = (col1, dvCol, count) => {
-      if (!col1 || !count) return '';
-      const rangeRef = `DropdownValues!$${dvCol}$1:$${dvCol}$${count}`;
+    // Workbook-level named ranges — <Value> in a List DataValidation can reference these by name.
+    const namesXml =
+      `<Names>\n` +
+      ` <NamedRange ss:Name="GeographicList" ss:RefersTo="=DropdownValues!$A$1:$A$${GEO_VALS.length}"/>\n` +
+      ` <NamedRange ss:Name="SeniorityList"  ss:RefersTo="=DropdownValues!$B$1:$B$${SEN_VALS.length}"/>\n` +
+      ` <NamedRange ss:Name="StatusList"     ss:RefersTo="=DropdownValues!$C$1:$C$${ST_VALS.length}"/>\n` +
+      `</Names>`;
+
+    // DataValidation — <Value> contains just the named-range name (no sheet reference, no formula prefix).
+    const makeValidation = (col1, namedRange) => {
+      if (!col1 || !namedRange) return '';
       return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
              ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
              ` <Type>List</Type>\n` +
-             ` <Value>${rangeRef}</Value>\n</DataValidation>`;
+             ` <Value>${namedRange}</Value>\n</DataValidation>`;
     };
     const validationXml = [
-      makeValidation(geoCol, 'A', GEO_VALS.length),
-      makeValidation(senCol, 'B', SEN_VALS.length),
-      makeValidation(stCol,  'C', ST_VALS.length),
+      makeValidation(geoCol, 'GeographicList'),
+      makeValidation(senCol, 'SeniorityList'),
+      makeValidation(stCol,  'StatusList'),
     ].filter(Boolean).join('\n');
 
     // Sheet 2: full candidate JSON rows — one JSON object per row in column A.
@@ -2222,6 +2229,7 @@ function CandidatesTable({
 ` xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n` +
 ` xmlns:html="http://www.w3.org/TR/REC-html40">\n` +
 ` <Styles><Style ss:ID="hdr"><Font ss:Bold="1"/></Style></Styles>\n` +
+` ${namesXml}\n` +
 ` <Worksheet ss:Name="Candidate Data">\n` +
 `  <Table ss:DefaultColumnWidth="110">${colDefs}${headerRow}${dataRows}</Table>\n` +
 `  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">\n` +
