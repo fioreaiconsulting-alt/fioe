@@ -171,7 +171,7 @@ function EmailVerificationModal({ data, onClose, email }) {
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999
+      background: 'rgba(34,37,41,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999
     }} onClick={onClose}>
       <div className="app-card" style={{ padding: 24, width: 600, maxWidth: '90vw', position: 'relative' }} onClick={e => e.stopPropagation()}>
         <button onClick={onClose} style={{
@@ -714,7 +714,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(7,54,121,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000
+      background: 'rgba(216,216,216,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000
     }}>
       <div className="app-card" style={{
         width: 700, maxWidth: '95vw',
@@ -822,8 +822,9 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                   onMouseLeave={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
                   onFocus={() => setShowTagGlossary(true)}
                   onBlur={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
+                  onClick={() => { setGlossaryLocked(l => !l); setShowTagGlossary(true); }}
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--black-beauty)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
                   <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Tag Glossary</span>
                   {showTagGlossary && (() => {
                     const TAG_GROUPS = [
@@ -858,7 +859,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                     };
                     return (
                       <div
-                        style={{ position: 'absolute', top: '110%', right: 0, zIndex: 9999, background: 'var(--azure-dragon)', color: '#f1f5f9', borderRadius: 10, padding: '12px 14px', minWidth: 320, boxShadow: '0 6px 24px rgba(7,54,121,0.3)', fontSize: 12, lineHeight: 1.7 }}
+                        style={{ position: 'absolute', top: '110%', right: 0, zIndex: 9999, background: 'var(--black-beauty)', color: '#f1f5f9', borderRadius: 10, padding: '12px 14px', minWidth: 320, boxShadow: '0 6px 24px rgba(34,37,41,0.4)', fontSize: 12, lineHeight: 1.7 }}
                         onMouseEnter={() => setShowTagGlossary(true)}
                         onMouseLeave={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
                       >
@@ -1236,7 +1237,7 @@ function SmtpConfigModal({ isOpen, onClose, onSave, currentConfig }) {
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
+      background: 'rgba(34,37,41,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
     }} onClick={onClose}>
       <div className="app-card" style={{ width: 400, padding: 24 }} onClick={e => e.stopPropagation()}>
         <h3 style={{ marginTop: 0, marginBottom: 16, color: 'var(--azure-dragon)' }}>SMTP Configuration</h3>
@@ -1287,7 +1288,7 @@ function StatusManagerModal({ isOpen, onClose, statuses, onAddStatus, onRemoveSt
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
+      background: 'rgba(34,37,41,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
     }} onClick={onClose}>
       <div className="app-card" style={{ width: 400, padding: 24 }} onClick={e => e.stopPropagation()}>
         <h3 style={{ marginTop: 0, marginBottom: 16, color: 'var(--azure-dragon)' }}>Manage Status Labels</h3>
@@ -1381,7 +1382,7 @@ function CompensationCalculatorModal({ isOpen, onClose, onSave, initialValue }) 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
+      background: 'rgba(34,37,41,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10001
     }} onClick={onClose}>
       <div className="app-card" style={{ width: 420, padding: 24 }} onClick={e => e.stopPropagation()}>
         <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: 'var(--argent)' }}>×</button>
@@ -2156,7 +2157,6 @@ function CandidatesTable({
       { header: 'email',          get: c => c.email || '' },
       { header: 'mobile',         get: c => c.mobile || '' },
       { header: 'office',         get: c => c.office || '' },
-      { header: 'rating',         get: c => c.rating || '' },
       { header: 'comment',        get: c => c.comment || '' },
       { header: 'compensation',   get: c => c.compensation || '' },
     ];
@@ -5333,7 +5333,7 @@ export default function App() {
       />
 
       {tokenConfirmOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10002 }}
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(34,37,41,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10002 }}
              onClick={() => setTokenConfirmOpen(false)}>
           <div className="app-card" style={{ width: 420, padding: 28 }} onClick={e => e.stopPropagation()}>
             <h3 style={{ marginTop: 0, marginBottom: 12, color: 'var(--azure-dragon)', fontSize: 16 }}>Confirm Verified Selection</h3>
