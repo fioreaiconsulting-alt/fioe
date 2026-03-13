@@ -2179,10 +2179,10 @@ function CandidatesTable({
     const ST_VALS   = statusOptions || [];
     const makeValidation = (col1, values) => {
       if (!col1 || !values.length) return '';
-      // SpreadsheetML uses semicolons (;) to separate list items in inline List validation.
-      // Note: <ShowDropDown/> is NOT a valid SpreadsheetML element — omitting it shows the
-      // dropdown arrow by default, which is the correct behaviour for a List constraint.
-      const valStr = values.map(v => `"${ex(v)}"`).join(';');
+      // SpreadsheetML 2003 <Value> for a List type takes plain semicolon-separated values
+      // WITHOUT surrounding quotes on each item (double-quoted format is OOXML/xlsx syntax
+      // and causes a "Bad Value" XML error in Excel when used here).
+      const valStr = values.map(v => ex(v)).join(';');
       return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
              ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
              ` <Type>List</Type>\n` +
