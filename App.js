@@ -2168,30 +2168,41 @@ function CandidatesTable({
       `<Column ss:Width="${['linkedinurl','skillset'].includes(col.header) ? 200 : 110}"/>`
     ).join('');
 
-    // Data validation — SpreadsheetML <DataValidation> (natively supported, no Pro required).
-    // Column indices are 1-based in R1C1 notation.
+    // Data validation — use a hidden "DropdownValues" sheet and reference its ranges.
+    // Inline <Value> lists are unreliable across Excel versions; range references are robust.
     const maxVRows = Math.max((allCandidates || []).length + 2, 1001);
     const geoCol    = S1_COLS.findIndex(c => c.header === 'geographic')     + 1;
     const senCol    = S1_COLS.findIndex(c => c.header === 'seniority')      + 1;
     const stCol     = S1_COLS.findIndex(c => c.header === 'sourcingstatus') + 1;
     const GEO_VALS  = ['North America','South America','Western Europe','Eastern Europe','Middle East','Asia','Australia/Oceania','Africa'];
     const SEN_VALS  = ['Junior','Mid','Senior','Lead','Manager','Director','Executive'];
-    const ST_VALS   = statusOptions || [];
-    const makeValidation = (col1, values) => {
-      if (!col1 || !values.length) return '';
-      // SpreadsheetML 2003 <Value> for a List type takes plain semicolon-separated values
-      // WITHOUT surrounding quotes on each item (double-quoted format is OOXML/xlsx syntax
-      // and causes a "Bad Value" XML error in Excel when used here).
-      const valStr = values.map(v => ex(v)).join(';');
+    const ST_VALS_FALLBACK = ['Reviewing','Contacted','Unresponsive','Declined','Unavailable','Screened','Not Proceeding','Prospected'];
+    const ST_VALS   = (statusOptions || []).length ? statusOptions : ST_VALS_FALLBACK;
+
+    // Build the hidden DropdownValues sheet (col A=Geographic, B=Seniority, C=SourcingStatus).
+    const dvMaxRows = Math.max(GEO_VALS.length, SEN_VALS.length, ST_VALS.length);
+    const dvRows = Array.from({ length: dvMaxRows }, (_, i) =>
+      `<Row>` +
+      `<Cell><Data ss:Type="String">${ex(GEO_VALS[i] || '')}</Data></Cell>` +
+      `<Cell><Data ss:Type="String">${ex(SEN_VALS[i] || '')}</Data></Cell>` +
+      `<Cell><Data ss:Type="String">${ex(ST_VALS[i]  || '')}</Data></Cell>` +
+      `</Row>`
+    ).join('');
+
+    // Range references for each dropdown column — these are Excel formula references,
+    // not string content, so they must NOT be XML-escaped.
+    const makeValidation = (col1, dvCol, count) => {
+      if (!col1 || !count) return '';
+      const rangeRef = `DropdownValues!$${dvCol}$1:$${dvCol}$${count}`;
       return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
              ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
              ` <Type>List</Type>\n` +
-             ` <Value>${valStr}</Value>\n</DataValidation>`;
+             ` <Value>${rangeRef}</Value>\n</DataValidation>`;
     };
     const validationXml = [
-      makeValidation(geoCol,  GEO_VALS),
-      makeValidation(senCol,  SEN_VALS),
-      makeValidation(stCol,   ST_VALS),
+      makeValidation(geoCol, 'A', GEO_VALS.length),
+      makeValidation(senCol, 'B', SEN_VALS.length),
+      makeValidation(stCol,  'C', ST_VALS.length),
     ].filter(Boolean).join('\n');
 
     // Sheet 2: full candidate JSON rows — one JSON object per row in column A.
@@ -2224,6 +2235,12 @@ function CandidatesTable({
 ` </Worksheet>\n` +
 ` <Worksheet ss:Name="DB Copy" ss:Visibility="Hidden">\n` +
 `  <Table>${jsonHeaderRow}${jsonRows}</Table>\n` +
+` </Worksheet>\n` +
+` <Worksheet ss:Name="DropdownValues" ss:Visibility="Hidden">\n` +
+`  <Table>\n` +
+`   <Column ss:Width="150"/><Column ss:Width="100"/><Column ss:Width="130"/>\n` +
+`   ${dvRows}\n` +
+`  </Table>\n` +
 ` </Worksheet>\n` +
 `</Workbook>`;
 
