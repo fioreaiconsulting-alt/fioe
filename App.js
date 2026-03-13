@@ -262,6 +262,8 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   const [interviewDuration, setInterviewDuration] = useState(30);
   const [glossaryCopied, setGlossaryCopied] = useState(false);
   const [copiedTag, setCopiedTag] = useState('');
+  const [glossaryLocked, setGlossaryLocked] = useState(false);
+  const glossaryRef = useRef(null);
 
   // Template & AI State
   const [templates, setTemplates] = useState([]);
@@ -273,6 +275,20 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
 
   const [to, setTo] = useState(toAddresses);
   
+  // Dismiss locked glossary when clicking outside it; also clear the tag highlight
+  useEffect(() => {
+    if (!glossaryLocked) return;
+    const handler = e => {
+      if (glossaryRef.current && !glossaryRef.current.contains(e.target)) {
+        setGlossaryLocked(false);
+        setShowTagGlossary(false);
+        setCopiedTag('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [glossaryLocked]);
+
   // Sync prop to state when prop changes (e.g. opening modal with new selection)
   useEffect(() => {
     setTo(toAddresses);
@@ -799,12 +815,13 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <label style={{...labelStyle, marginBottom: 0}}>Email Template & AI Tools</label>
                 <span
+                  ref={glossaryRef}
                   tabIndex={0}
                   style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', cursor: 'pointer', fontSize: 13, outline: 'none' }}
-                  onMouseEnter={() => setShowTagGlossary(true)}
-                  onMouseLeave={() => { setShowTagGlossary(false); }}
+                  onMouseEnter={() => { if (!glossaryLocked) setShowTagGlossary(true); }}
+                  onMouseLeave={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
                   onFocus={() => setShowTagGlossary(true)}
-                  onBlur={() => setShowTagGlossary(false)}
+                  onBlur={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
                   <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Tag Glossary</span>
@@ -837,13 +854,13 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                       e.stopPropagation();
                       navigator.clipboard.writeText(tag).catch(() => {});
                       setCopiedTag(tag);
-                      setTimeout(() => setCopiedTag(''), 1500);
+                      setGlossaryLocked(true);
                     };
                     return (
                       <div
                         style={{ position: 'absolute', top: '110%', right: 0, zIndex: 9999, background: 'var(--azure-dragon)', color: '#f1f5f9', borderRadius: 10, padding: '12px 14px', minWidth: 320, boxShadow: '0 6px 24px rgba(7,54,121,0.3)', fontSize: 12, lineHeight: 1.7 }}
                         onMouseEnter={() => setShowTagGlossary(true)}
-                        onMouseLeave={() => setShowTagGlossary(false)}
+                        onMouseLeave={() => { if (!glossaryLocked) setShowTagGlossary(false); }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: 6 }}>
                           <span style={{ fontWeight: 700, fontSize: 12, letterSpacing: '0.4px' }}>Available Template Tags</span>
@@ -863,7 +880,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                               <div key={tag} style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
                                 <b
                                   onClick={e => copyTag(e, tag)}
-                                  title={`Click to copy ${tag}`}
+                                  title="Click to copy this tag"
                                   style={{ color: copiedTag === tag ? '#6deaf9' : g.color, cursor: 'pointer', borderRadius: 4, padding: '0 3px', transition: 'background 0.15s', background: copiedTag === tag ? 'rgba(109,234,249,0.1)' : 'transparent', userSelect: 'none' }}
                                 >{tag}</b>
                                 <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>– {desc}</span>
@@ -871,7 +888,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                             ))}
                           </div>
                         ))}
-                        <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.4)', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 5 }}>Click any tag to copy it · "⎘ Copy All" copies all tags</div>
+                        <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.4)', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 5 }}>Click any tag to copy it · "⎘ Copy All" copies all tags{glossaryLocked ? ' · Click outside to close' : ''}</div>
                       </div>
                     );
                   })()}
@@ -1465,6 +1482,10 @@ function CandidatesTable({
   const [savingAll, setSavingAll] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
+
+  // Track newly-added candidate IDs for the "New" badge
+  const [newCandidateIds, setNewCandidateIds] = useState(new Set());
+  const prevCandidateIdsRef = useRef(null);
   
   // Sync Entries State
   const [syncLoading, setSyncLoading] = useState(false);
@@ -1581,6 +1602,24 @@ function CandidatesTable({
   }, [candidates, type, setEditRows]);
 
   useEffect(() => { setSelectedIds([]); }, [page]);
+
+  // Helper: remove a set of IDs from the newCandidateIds Set
+  const dismissNewBadges = ids => setNewCandidateIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
+
+  // Detect newly added candidates and show "New" badge for 8 seconds
+  useEffect(() => {
+    const currentIds = new Set(candidates.map(c => String(c.id)));
+    if (prevCandidateIdsRef.current !== null) {
+      const added = [];
+      currentIds.forEach(id => { if (!prevCandidateIdsRef.current.has(id)) added.push(id); });
+      if (added.length) {
+        setNewCandidateIds(prev => { const n = new Set(prev); added.forEach(id => n.add(id)); return n; });
+        setTimeout(() => dismissNewBadges(added), 8000);
+      }
+    }
+    prevCandidateIdsRef.current = currentIds;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidates]);
 
   // Helper to reset rename workflow state
   const resetRenameState = () => {
@@ -2021,7 +2060,7 @@ function CandidatesTable({
     const displayValue = getDisplayValue(c, f);
     const cellBg = idx % 2 ? '#ffffff' : '#f9fafb';
 
-    // Name cell: avatar circle + editable input
+    // Name cell: avatar circle + editable input + optional "New" badge
     if (f.key === 'name') {
       const rawName = displayValue || '';
       const initials = rawName.split(/\s+/).slice(0, 2).map(s => s[0]?.toUpperCase()).filter(Boolean).join('') || '?';
@@ -2029,11 +2068,19 @@ function CandidatesTable({
       const avatarBg = avatarPalette[(rawName.charCodeAt(0) || 0) % 3];
       const avatarText = avatarBg === '#6deaf9' ? '#222529' : '#fff';
       const picSrc = c.pic && typeof c.pic === 'string' ? c.pic : null;
+      const isNewCandidate = newCandidateIds.has(String(c.id));
       return (
         <td key={f.key} data-field={f.key} style={{ overflow: 'hidden', width: colWidths[f.key] || DEFAULT_WIDTH, maxWidth: maxForField, minWidth: MIN_WIDTH, padding: '4px 6px', verticalAlign: 'middle', fontSize: 13, color: 'var(--muted)', borderBottom: '1px solid #eef2f5', height: HEADER_ROW_HEIGHT, background: cellBg, ...extraStyle }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <CandidateAvatar picSrc={picSrc} initials={initials} avatarBg={avatarBg} avatarText={avatarText} />
             <input type="text" value={displayValue} onChange={e => handleEditChange(c.id, 'name', e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '4px 8px', font: 'inherit', fontSize: 12, background: '#ffffff' }} />
+            {isNewCandidate && (
+              <span
+                title="Newly added profile"
+                onMouseEnter={() => dismissNewBadges([String(c.id)])}
+                style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: '0.5px', padding: '1px 5px', borderRadius: 6, background: 'var(--robins-egg, #6deaf9)', color: '#073679', textTransform: 'uppercase', cursor: 'default', userSelect: 'none', lineHeight: '14px' }}
+              >New</span>
+            )}
           </div>
         </td>
       );
@@ -2081,6 +2128,15 @@ function CandidatesTable({
 
   // ── DB Port: Excel export with two sheets ─────────────────────────────
   const handleDbPortExport = () => {
+    // Excel cells cannot exceed 32767 characters (OOXML spec).
+    // Values longer than this (e.g. base64 pics, large JSON blobs) are silently
+    // truncated to prevent the "Text length must not exceed 32767" error.
+    const XLSX_MAX_CELL_LEN = 32767;
+    const xlsxStr = v => {
+      const s = v == null ? '' : String(v);
+      return s.length > XLSX_MAX_CELL_LEN ? s.slice(0, XLSX_MAX_CELL_LEN) : s;
+    };
+
     const wb = XLSX.utils.book_new();
 
     // Sheet 1 column definitions (user-facing)
@@ -2107,7 +2163,7 @@ function CandidatesTable({
 
     const s1Rows = (allCandidates || []).map(c => {
       const row = {};
-      S1_COLS.forEach(col => { row[col.header] = col.get(c); });
+      S1_COLS.forEach(col => { row[col.header] = xlsxStr(col.get(c)); });
       return row;
     });
 
@@ -2154,7 +2210,7 @@ function CandidatesTable({
         if (f === 'jobfamily'      && (v == null || v === '')) v = c.job_family;
         if (f === 'sourcingstatus' && (v == null || v === '')) v = c.sourcing_status;
         if (typeof v === 'object' && v !== null) { try { v = JSON.stringify(v); } catch { v = ''; } }
-        row[f] = v ?? '';
+        row[f] = xlsxStr(v);
       });
       return row;
     });
@@ -3096,9 +3152,9 @@ function OrgChartDisplay({
               } else { setEditingLayout(true); }
             }}
             style={{
-              background: editingLayout ? '#334155' : '#2563eb',
+              background: editingLayout ? 'var(--argent,#87888a)' : 'var(--azure-dragon,#073679)',
               color:'#fff', border:'none', padding:'6px 14px',
-              borderRadius:4, cursor:'pointer', fontWeight:700
+              borderRadius:6, cursor:'pointer', fontWeight:700, fontSize:13
             }}
           >
             {editingLayout ? 'Finish Editing' : 'Edit Layout'}
@@ -3107,38 +3163,43 @@ function OrgChartDisplay({
             onClick={handleSaveLayout}
             disabled={!unsavedChanges}
             style={{
-              background: !unsavedChanges ? '#94a3b8':'#059669',
-              color:'#fff', border:'none', padding:'6px 14px',
-              borderRadius:4, cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700
+              background: !unsavedChanges ? 'var(--desired-dawn,#d8d8d8)' : 'var(--cool-blue,#4c82b8)',
+              color: !unsavedChanges ? '#87888a' : '#fff',
+              border: `1px solid ${!unsavedChanges ? '#c8c8c8' : 'var(--azure-dragon,#073679)'}`,
+              padding:'6px 14px', borderRadius:6,
+              cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700, fontSize:13
             }}
           >Save Layout</button>
           <button
             onClick={handleCancelLayout}
             disabled={!unsavedChanges}
             style={{
-              background: !unsavedChanges ? '#fde0c2':'#f97316',
-              color: !unsavedChanges ? '#9a9a9a':'#fff',
-              border:'none', padding:'6px 14px', borderRadius:4,
-              cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700
+              background: !unsavedChanges ? 'var(--desired-dawn,#d8d8d8)' : '#fff',
+              color: !unsavedChanges ? '#87888a' : 'var(--azure-dragon,#073679)',
+              border: `1px solid ${!unsavedChanges ? '#c8c8c8' : 'var(--cool-blue,#4c82b8)'}`,
+              padding:'6px 14px', borderRadius:6,
+              cursor: !unsavedChanges ? 'not-allowed':'pointer', fontWeight:700, fontSize:13
             }}
           >Cancel</button>
           <button
             onClick={handleResetManual}
             disabled={!Object.keys(manualParentOverrides||{}).length}
             style={{
-              background: !Object.keys(manualParentOverrides||{}).length ? '#f8d7da':'#b91c1c',
-              color: !Object.keys(manualParentOverrides||{}).length ? '#9a9a9a':'#fff',
-              border:'none', padding:'6px 14px', borderRadius:4,
-              cursor: !Object.keys(manualParentOverrides||{}).length ? 'not-allowed':'pointer', fontWeight:700
+              background: !Object.keys(manualParentOverrides||{}).length ? 'var(--desired-dawn,#d8d8d8)' : '#fff',
+              color: !Object.keys(manualParentOverrides||{}).length ? '#87888a' : '#c0392b',
+              border: `1px solid ${!Object.keys(manualParentOverrides||{}).length ? '#c8c8c8' : '#c0392b'}`,
+              padding:'6px 14px', borderRadius:6,
+              cursor: !Object.keys(manualParentOverrides||{}).length ? 'not-allowed':'pointer', fontWeight:700, fontSize:13
             }}
           >Reset Manual</button>
           <button
             onClick={handleGenerateChart}
             disabled={loading}
             style={{
-              background:'#4f46e5',
-              color:'#fff', border:'none',
-              padding:'6px 14px', borderRadius:4, cursor:loading?'not-allowed':'pointer', fontWeight:700
+              background: loading ? 'var(--desired-dawn,#d8d8d8)' : 'var(--azure-dragon,#073679)',
+              color: loading ? '#87888a' : '#fff',
+              border:'none',
+              padding:'6px 14px', borderRadius:6, cursor:loading?'not-allowed':'pointer', fontWeight:700, fontSize:13
             }}
           >{loading ? 'Regenerating...' : 'Regenerate'}</button>
           {orgChart.length>0 && (
@@ -3146,15 +3207,17 @@ function OrgChartDisplay({
               <button
                 onClick={handleDownload}
                 style={{
-                  background:'#0d9488', color:'#fff', border:'none',
-                  padding:'6px 14px', borderRadius:4, cursor:'pointer', fontWeight:700
+                  background:'var(--cool-blue,#4c82b8)', color:'#fff',
+                  border:'1px solid var(--azure-dragon,#073679)',
+                  padding:'6px 14px', borderRadius:6, cursor:'pointer', fontWeight:700, fontSize:13
                 }}
               >Export PNG</button>
               <button
                 onClick={handlePrint}
                 style={{
-                  background:'#eab308', color:'#1e293b', border:'none',
-                  padding:'6px 14px', borderRadius:4, cursor:'pointer', fontWeight:700
+                  background:'#fff', color:'var(--azure-dragon,#073679)',
+                  border:'1px solid var(--cool-blue,#4c82b8)',
+                  padding:'6px 14px', borderRadius:6, cursor:'pointer', fontWeight:700, fontSize:13
                 }}
               >Print / PDF</button>
             </>
@@ -3170,10 +3233,10 @@ function OrgChartDisplay({
             onChange={e=>onChangeJobFamily(e.target.value)}
             style={{
               padding:'6px 10px',
-              borderRadius:4,
-              border:'1px solid var(--neutral-border)',
+              borderRadius:6,
+              border:'1px solid var(--cool-blue,#4c82b8)',
               background:'#fff',
-              cursor:'pointer'
+              cursor:'pointer', fontSize:13
             }}
         >
           {jobFamilyOptions.map(jf=> <option key={jf} value={jf}>{jf}</option>)}
@@ -3186,10 +3249,10 @@ function OrgChartDisplay({
           onChange={e=>onChangeOrganisation(e.target.value)}
           style={{
             padding:'6px 10px',
-            borderRadius:4,
-            border:'1px solid var(--neutral-border)',
+            borderRadius:6,
+            border:'1px solid var(--cool-blue,#4c82b8)',
             background:'#fff',
-            cursor:'pointer'
+            cursor:'pointer', fontSize:13
           }}
         >
           {organisationOptions.map(opt=> <option key={opt} value={opt}>{opt}</option>)}
@@ -3202,10 +3265,10 @@ function OrgChartDisplay({
           onChange={e=>onChangeCountry(e.target.value)}
           style={{
             padding:'6px 10px',
-            borderRadius:4,
-            border:'1px solid var(--neutral-border)',
+            borderRadius:6,
+            border:'1px solid var(--cool-blue,#4c82b8)',
             background:'#fff',
-            cursor:'pointer'
+            cursor:'pointer', fontSize:13
           }}
         >
           {countryOptions.map(opt=> <option key={opt} value={opt}>{opt}</option>)}
