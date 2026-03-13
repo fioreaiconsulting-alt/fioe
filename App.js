@@ -259,6 +259,9 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
   const [calendarError, setCalendarError] = useState('');
   const [slotStartDate, setSlotStartDate] = useState('');
   const [slotEndDate, setSlotEndDate] = useState('');
+  const [interviewDuration, setInterviewDuration] = useState(30);
+  const [glossaryCopied, setGlossaryCopied] = useState(false);
+  const [copiedTag, setCopiedTag] = useState('');
 
   // Template & AI State
   const [templates, setTemplates] = useState([]);
@@ -296,6 +299,9 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
       setCalendarError('');
       setSlotStartDate('');
       setSlotEndDate('');
+      setInterviewDuration(30);
+      setGlossaryCopied(false);
+      setCopiedTag('');
     }
   }, [isOpen]);
 
@@ -474,7 +480,7 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
       const res = await fetch('http://localhost:4000/calendar/freebusy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ startISO, endISO, durationMinutes: 30 }),
+        body: JSON.stringify({ startISO, endISO, durationMinutes: interviewDuration }),
         credentials: 'include'
       });
       if (!res.ok) {
@@ -686,23 +692,24 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
     }
   };
 
-  const labelStyle = { display: 'block', marginBottom: 6, fontWeight: 700, fontSize: 13, color: 'var(--muted)' };
-  const inputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
+  const labelStyle = { display: 'block', marginBottom: 6, fontWeight: 700, fontSize: 13, color: 'var(--azure-dragon)' };
+  const inputStyle = { width: '100%', padding: '8px 10px', boxSizing: 'border-box', border: '1px solid var(--desired-dawn)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', outline: 'none', transition: 'border-color 0.15s' };
 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000
+      background: 'rgba(7,54,121,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000
     }}>
       <div className="app-card" style={{
         width: 700, maxWidth: '95vw',
-        display: 'flex', flexDirection: 'column', maxHeight: '90vh'
+        display: 'flex', flexDirection: 'column', maxHeight: '90vh',
+        borderRadius: 12, boxShadow: '0 8px 32px rgba(7,54,121,0.22)', overflow: 'hidden'
       }} onClick={e => e.stopPropagation()}>
         
         {/* Header */}
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--neutral-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0, fontSize: 18, color: 'var(--azure-dragon)', fontWeight: 700 }}>New Message</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, color: 'var(--argent)', cursor: 'pointer' }} title="Close">×</button>
+        <div style={{ padding: '16px 24px', background: 'linear-gradient(135deg,var(--azure-dragon),var(--cool-blue))', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0, fontSize: 18, color: '#fff', fontWeight: 700, letterSpacing: '0.3px' }}>✉ New Message</h3>
+          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', fontSize: 18, color: '#fff', cursor: 'pointer', borderRadius: '50%', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: 0 }} title="Close">×</button>
         </div>
 
         {/* Body */}
@@ -795,31 +802,79 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
                   tabIndex={0}
                   style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', cursor: 'pointer', fontSize: 13, outline: 'none' }}
                   onMouseEnter={() => setShowTagGlossary(true)}
-                  onMouseLeave={() => setShowTagGlossary(false)}
+                  onMouseLeave={() => { setShowTagGlossary(false); }}
                   onFocus={() => setShowTagGlossary(true)}
                   onBlur={() => setShowTagGlossary(false)}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 11, lineHeight: 1 }}>?</span>
                   <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Tag Glossary</span>
-                  {showTagGlossary && (
-                    <div style={{
-                      position: 'absolute', top: '110%', right: 0, zIndex: 9999,
-                      background: '#1e293b', color: '#f1f5f9', borderRadius: 8, padding: '10px 14px',
-                      minWidth: 300, boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: 12, lineHeight: 1.7
-                    }}>
-                      <div style={{ fontWeight: 700, marginBottom: 6, borderBottom: '1px solid #334155', paddingBottom: 4 }}>Available Template Tags</div>
-                      <div><b style={{color:'#93c5fd'}}>[Candidate Name]</b> – Candidate's full name</div>
-                      <div><b style={{color:'#93c5fd'}}>[Job Title]</b> – Candidate's professional role</div>
-                      <div><b style={{color:'#93c5fd'}}>[Company Name]</b> – Candidate's current employer</div>
-                      <div><b style={{color:'#93c5fd'}}>[Country]</b> – Candidate's geographic location</div>
-                      <div><b style={{color:'#86efac'}}>[Your Name]</b> – Your account's full name</div>
-                      <div><b style={{color:'#86efac'}}>[Your Company Name]</b> – Your registered company name</div>
-                      <div style={{ borderTop: '1px solid #334155', marginTop: 6, paddingTop: 6, fontWeight: 700, fontSize: 11, color: '#94a3b8' }}>Calendar / Interview</div>
-                      <div><b style={{color:'#fde68a'}}>[Date of Interview]</b> – Selected interview date (from calendar slot)</div>
-                      <div><b style={{color:'#fde68a'}}>[Time of Interview]</b> – Selected interview time (from calendar slot)</div>
-                      <div><b style={{color:'#fde68a'}}>[Video Conference Link]</b> – Google Meet link (after creating event)</div>
-                    </div>
-                  )}
+                  {showTagGlossary && (() => {
+                    const TAG_GROUPS = [
+                      { label: 'Candidate', color: '#6deaf9', tags: [
+                        { tag: '[Candidate Name]', desc: "Candidate's full name" },
+                        { tag: '[Job Title]', desc: "Candidate's professional role" },
+                        { tag: '[Company Name]', desc: "Candidate's current employer" },
+                        { tag: '[Country]', desc: "Candidate's geographic location" },
+                      ]},
+                      { label: 'Sender', color: '#86efac', tags: [
+                        { tag: '[Your Name]', desc: "Your account's full name" },
+                        { tag: '[Your Company Name]', desc: "Your registered company name" },
+                      ]},
+                      { label: 'Calendar / Interview', color: '#fde68a', tags: [
+                        { tag: '[Date of Interview]', desc: 'Selected interview date (from calendar slot)' },
+                        { tag: '[Time of Interview]', desc: 'Selected interview time (from calendar slot)' },
+                        { tag: '[Video Conference Link]', desc: 'Google Meet link (after creating event)' },
+                      ]},
+                    ];
+                    const allTagsText = TAG_GROUPS.flatMap(g => g.tags.map(t => t.tag)).join(', ');
+                    const copyAll = (e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(allTagsText).catch(() => {});
+                      setGlossaryCopied(true);
+                      setTimeout(() => setGlossaryCopied(false), 1500);
+                    };
+                    const copyTag = (e, tag) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(tag).catch(() => {});
+                      setCopiedTag(tag);
+                      setTimeout(() => setCopiedTag(''), 1500);
+                    };
+                    return (
+                      <div
+                        style={{ position: 'absolute', top: '110%', right: 0, zIndex: 9999, background: 'var(--azure-dragon)', color: '#f1f5f9', borderRadius: 10, padding: '12px 14px', minWidth: 320, boxShadow: '0 6px 24px rgba(7,54,121,0.3)', fontSize: 12, lineHeight: 1.7 }}
+                        onMouseEnter={() => setShowTagGlossary(true)}
+                        onMouseLeave={() => setShowTagGlossary(false)}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: 6 }}>
+                          <span style={{ fontWeight: 700, fontSize: 12, letterSpacing: '0.4px' }}>Available Template Tags</span>
+                          <button
+                            type="button"
+                            onClick={copyAll}
+                            title="Copy all tags"
+                            style={{ background: glossaryCopied ? '#6deaf9' : 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 5, color: glossaryCopied ? '#073679' : '#fff', cursor: 'pointer', fontSize: 11, padding: '3px 8px', fontWeight: 700, transition: 'all 0.15s' }}
+                          >
+                            {glossaryCopied ? '✓ Copied!' : '⎘ Copy All'}
+                          </button>
+                        </div>
+                        {TAG_GROUPS.map(g => (
+                          <div key={g.label} style={{ marginBottom: 6 }}>
+                            <div style={{ fontWeight: 700, fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 3 }}>{g.label}</div>
+                            {g.tags.map(({ tag, desc }) => (
+                              <div key={tag} style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
+                                <b
+                                  onClick={e => copyTag(e, tag)}
+                                  title={`Click to copy ${tag}`}
+                                  style={{ color: copiedTag === tag ? '#6deaf9' : g.color, cursor: 'pointer', borderRadius: 4, padding: '0 3px', transition: 'background 0.15s', background: copiedTag === tag ? 'rgba(109,234,249,0.1)' : 'transparent', userSelect: 'none' }}
+                                >{tag}</b>
+                                <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>– {desc}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                        <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.4)', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 5 }}>Click any tag to copy it · "⎘ Copy All" copies all tags</div>
+                      </div>
+                    );
+                  })()}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -897,110 +952,149 @@ function EmailComposeModal({ isOpen, onClose, toAddresses, candidateName, candid
             </div>
 
             {/* Calendar / Google Meet Section */}
-            <div style={{ marginBottom: 16, padding: '12px', background: '#fffef6', borderRadius: 8, border: '1px solid #fde68a' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <div style={{ fontWeight: 700, color: '#92400e' }}>Calendar & Google Meet</div>
-                <div style={{ fontSize: 12, color: '#92400e' }}>
-                  <button
-                    type="button"
-                    onClick={handleConnectCalendar}
-                    className="btn-secondary"
-                    style={{ padding: '6px 10px' }}
-                  >
-                    Connect Calendar
-                  </button>
+            <div style={{ marginBottom: 16, padding: '14px 16px', background: 'linear-gradient(135deg,#f0f4ff,#e8f0fb)', borderRadius: 10, border: '1px solid var(--cool-blue)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>📅</span>
+                  <span style={{ fontWeight: 700, color: 'var(--azure-dragon)', fontSize: 14 }}>Calendar & Google Meet</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleConnectCalendar}
+                  className="btn-secondary"
+                  style={{ padding: '5px 10px', fontSize: 12 }}
+                >
+                  Connect Calendar
+                </button>
               </div>
 
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              {/* Row 1: checkbox + duration */}
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input type="checkbox" checked={addMeet} onChange={e => setAddMeet(e.target.checked)} />
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>Add Google Meet</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--azure-dragon)' }}>Add Google Meet</span>
                 </label>
+                {addMeet && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                    <span style={{ fontWeight: 600, color: 'var(--cool-blue)' }}>Duration:</span>
+                    <select
+                      value={interviewDuration}
+                      onChange={e => setInterviewDuration(Number(e.target.value))}
+                      style={{ padding: '4px 8px', border: '1px solid var(--cool-blue)', borderRadius: 6, fontSize: 13, background: '#fff', color: 'var(--azure-dragon)', fontWeight: 600 }}
+                    >
+                      <option value={15}>15 min</option>
+                      <option value={30}>30 min</option>
+                      <option value={45}>45 min</option>
+                      <option value={60}>60 min</option>
+                    </select>
+                  </label>
+                )}
               </div>
 
+              {/* Row 2: date range + find slots */}
               {addMeet && (
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-                  <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: '#92400e', fontWeight: 600 }}>From:</span>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', background: '#fff', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--desired-dawn)' }}>
+                  <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <span style={{ color: 'var(--cool-blue)', fontWeight: 600 }}>From:</span>
                     <input
                       type="date"
                       value={slotStartDate}
                       min={new Date().toISOString().slice(0, 10)}
                       onChange={e => setSlotStartDate(e.target.value)}
-                      style={{ padding: '4px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 13 }}
+                      style={{ padding: '4px 8px', border: '1px solid var(--desired-dawn)', borderRadius: 6, fontSize: 13 }}
                     />
                   </label>
-                  <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: '#92400e', fontWeight: 600 }}>To:</span>
+                  <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <span style={{ color: 'var(--cool-blue)', fontWeight: 600 }}>To:</span>
                     <input
                       type="date"
                       value={slotEndDate}
                       min={slotStartDate || new Date().toISOString().slice(0, 10)}
                       onChange={e => setSlotEndDate(e.target.value)}
-                      style={{ padding: '4px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 13 }}
+                      style={{ padding: '4px 8px', border: '1px solid var(--desired-dawn)', borderRadius: 6, fontSize: 13 }}
                     />
                   </label>
                   <button
                     type="button"
                     onClick={handleFindSlots}
                     disabled={slotsLoading}
-                    className="btn-secondary"
-                    style={{ padding: '6px 10px' }}
+                    style={{ padding: '5px 12px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: slotsLoading ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: slotsLoading ? 0.7 : 1 }}
                   >
-                    {slotsLoading ? 'Finding slots...' : 'Find Available Slots'}
+                    {slotsLoading ? '⏳ Finding…' : '🔍 Find Slots'}
                   </button>
                 </div>
               )}
 
-              {calendarError && <div style={{ color: '#b91c1c', fontSize: 13, marginBottom: 8 }}>{calendarError}</div>}
+              {calendarError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8, padding: '6px 8px', background: '#fff1f0', borderRadius: 6, border: '1px solid #fca5a5' }}>{calendarError}</div>}
 
-              {calendarSlots && calendarSlots.length > 0 && addMeet && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 13, marginBottom: 8 }}>Select a slot to create a Meet:</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {calendarSlots.map((s, i) => (
-                      <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', padding: 8, borderRadius: 6, border: selectedSlotIndex === i ? '1px solid #2563eb' : '1px solid #e5e7eb' }}>
-                        <input type="radio" name="slot" checked={selectedSlotIndex === i} onChange={() => setSelectedSlotIndex(i)} />
-                        <div style={{ fontSize: 13 }}>
-                          <div style={{ fontWeight: 700 }}>{new Date(s.start).toLocaleString()} — {new Date(s.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                          <div style={{ fontSize: 12, color: '#64748b' }}>{new Date(s.start).toLocaleDateString()}</div>
+              {/* Slots grouped by day */}
+              {calendarSlots && calendarSlots.length > 0 && addMeet && (() => {
+                // Group slots by date string
+                const groups = {};
+                calendarSlots.forEach((s, i) => {
+                  const day = new Date(s.start).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                  if (!groups[day]) groups[day] = [];
+                  groups[day].push({ slot: s, idx: i });
+                });
+                return (
+                  <div style={{ marginTop: 4 }}>
+                    <div style={{ fontSize: 12, color: 'var(--argent)', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Select a slot ({interviewDuration} min) · {calendarSlots.length} available
+                    </div>
+                    {Object.entries(groups).map(([day, entries]) => (
+                      <div key={day} style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--cool-blue)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 4, paddingBottom: 3, borderBottom: '1px solid var(--desired-dawn)' }}>{day}</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {entries.map(({ slot: s, idx: i }) => {
+                            const isSelected = selectedSlotIndex === i;
+                            const timeLabel = new Date(s.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' – ' + new Date(s.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => setSelectedSlotIndex(i)}
+                                style={{
+                                  padding: '5px 10px', borderRadius: 20, fontSize: 12, fontWeight: isSelected ? 700 : 500, cursor: 'pointer', transition: 'all 0.15s',
+                                  background: isSelected ? 'var(--azure-dragon)' : '#fff',
+                                  color: isSelected ? '#fff' : 'var(--cool-blue)',
+                                  border: isSelected ? '1.5px solid var(--azure-dragon)' : '1.5px solid var(--cool-blue)'
+                                }}
+                              >{timeLabel}</button>
+                            );
+                          })}
                         </div>
-                      </label>
-                    ))}
-                  </div>
-
-                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                    <button type="button" onClick={handleCreateEvent} disabled={creatingEvent || selectedSlotIndex == null} className="btn-primary" style={{ padding: '6px 12px' }}>
-                      {creatingEvent ? 'Creating...' : 'Create Event & Attach'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Insert meet link preview into body if available
-                        if (meetLink) {
-                          if (!body.includes(meetLink)) setBody(prev => prev + '\n\nJoin meeting: ' + meetLink);
-                        } else {
-                          alert('No meet link present. Create event first.');
-                        }
-                      }}
-                      disabled={!meetLink}
-                      className="btn-secondary"
-                      style={{ padding: '6px 12px' }}
-                    >
-                      Insert Meet Link into Message
-                    </button>
-
-                    {meetLink && (
-                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <a href={meetLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: '#065f46', textDecoration: 'underline' }}>Open Meet</a>
-                        <span style={{ fontSize: 12, color: '#047857' }}>Meet created</span>
                       </div>
-                    )}
+                    ))}
+
+                    <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button type="button" onClick={handleCreateEvent} disabled={creatingEvent || selectedSlotIndex == null} style={{ padding: '6px 14px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: selectedSlotIndex == null || creatingEvent ? 'not-allowed' : 'pointer', opacity: selectedSlotIndex == null ? 0.5 : 1 }}>
+                        {creatingEvent ? 'Creating…' : '📌 Create Event & Add Link'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (meetLink) {
+                            if (!body.includes(meetLink)) setBody(prev => prev + '\n\nJoin meeting: ' + meetLink);
+                          } else {
+                            alert('No meet link present. Create event first.');
+                          }
+                        }}
+                        disabled={!meetLink}
+                        style={{ padding: '6px 12px', background: meetLink ? 'var(--cool-blue)' : 'var(--desired-dawn)', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: meetLink ? 'pointer' : 'not-allowed', opacity: meetLink ? 1 : 0.6 }}
+                      >
+                        Insert Meet Link into Message
+                      </button>
+
+                      {meetLink && (
+                        <a href={meetLink} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: 'var(--cool-blue)', textDecoration: 'none', fontWeight: 600 }}>
+                          <span>🔗</span> Open Meet
+                        </a>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             <div style={{ marginBottom: 16 }}>
