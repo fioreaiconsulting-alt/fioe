@@ -507,6 +507,586 @@ pre {
 .notif-modal-box .notif-suppress input[type=checkbox] { width: 10px; height: 10px; cursor: pointer; }
 .notif-modal-box .notif-actions { display: flex; justify-content: flex-end; }
 
+/* ═══════════════════════════════════════════════════════════════
+   AUTOSOURCING FLOW – SEQUENTIAL 3-STEP WIZARD
+   Color palette: Azure Dragon #073679 · Cool Blue #4c82b8
+                  Robin's Egg #6deaf9 · Argent #87888a
+                  Desired Dawn #d8d8d8 · Black Beauty #222529
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Scoped CSS variables for the wizard */
+.autosourcing-flow {
+  --wiz-navy:    #073679;
+  --wiz-blue:    #4c82b8;
+  --wiz-cyan:    #6deaf9;
+  --wiz-argent:  #87888a;
+  --wiz-dawn:    #d8d8d8;
+  --wiz-dark:    #222529;
+  --wiz-radius:  10px;
+}
+
+/* Container */
+.autosourcing-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 24px;
+}
+
+/* ── Returning-user recap banner ── */
+.wiz-recap {
+  background: #fff;
+  border: 1.5px solid var(--wiz-dawn);
+  border-left: 4px solid var(--wiz-cyan);
+  border-radius: var(--wiz-radius);
+  padding: 18px 22px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(7,54,121,.07);
+}
+.wiz-recap__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--wiz-navy);
+  text-transform: uppercase;
+  letter-spacing: .45px;
+  margin-bottom: 10px;
+}
+.wiz-recap__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.wiz-recap__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0f6ff;
+  border: 1px solid #c8d9ef;
+  color: var(--wiz-navy);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.wiz-recap__chip-label { color: var(--wiz-argent); font-weight: 500; margin-right: 2px; }
+.wiz-recap__prompt {
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.55;
+  margin-bottom: 14px;
+}
+.wiz-recap__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.wiz-recap__btn-continue {
+  background: linear-gradient(135deg, var(--wiz-blue), var(--wiz-navy));
+  color: #fff;
+  border: none;
+  padding: 9px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  transition: opacity .15s;
+  letter-spacing: .2px;
+}
+.wiz-recap__btn-continue:hover { opacity: .88; }
+.wiz-recap__btn-change {
+  background: #fff;
+  border: 1.5px solid var(--wiz-dawn);
+  color: var(--wiz-argent);
+  padding: 9px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  transition: border-color .15s, color .15s;
+}
+.wiz-recap__btn-change:hover { border-color: var(--wiz-blue); color: var(--wiz-navy); }
+
+/* ── Step connector line ── */
+.wiz-steps-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+/* Individual step card */
+.flow-step {
+  background: #fff;
+  border: 1.5px solid var(--wiz-dawn);
+  border-radius: var(--wiz-radius);
+  padding: 0;
+  margin-bottom: 10px;
+  overflow: hidden;
+  transition: border-color .25s, box-shadow .25s, opacity .25s;
+  box-shadow: 0 1px 4px rgba(7,54,121,.05);
+  position: relative;
+}
+.flow-step.wiz-active {
+  border-color: var(--wiz-blue);
+  box-shadow: 0 3px 14px rgba(7,54,121,.10);
+}
+.flow-step.wiz-done {
+  border-color: var(--wiz-cyan);
+  background: #f7fdff;
+}
+.flow-step.wiz-locked {
+  opacity: .45;
+  pointer-events: none;
+}
+
+/* Step header (clickable when done, to edit) */
+.flow-step-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  cursor: default;
+  background: transparent;
+  user-select: none;
+}
+.flow-step.wiz-done .flow-step-header { cursor: pointer; }
+.flow-step.wiz-done .flow-step-header:hover { background: rgba(110,234,249,.08); }
+
+/* Numbered badge */
+.flow-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  background: var(--wiz-dawn);
+  color: var(--wiz-argent);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+  transition: background .2s, color .2s;
+}
+.flow-step.wiz-active .flow-step-badge {
+  background: var(--wiz-navy);
+  color: #fff;
+}
+.flow-step.wiz-done .flow-step-badge {
+  background: var(--wiz-cyan);
+  color: var(--wiz-dark);
+  font-size: 13px;
+}
+/* Check icon in done badge */
+.flow-step.wiz-done .flow-step-badge::after { content: "✓"; }
+.flow-step.wiz-done .flow-step-badge { font-size: 0; }
+.flow-step.wiz-done .flow-step-badge::after { font-size: 14px; }
+
+/* Step title */
+.flow-step-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--wiz-argent);
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  flex: 1;
+}
+.flow-step.wiz-active .flow-step-title { color: var(--wiz-navy); }
+.flow-step.wiz-done .flow-step-title { color: var(--wiz-blue); }
+
+/* Done summary tag (shows selected value in header when collapsed) */
+.flow-step-summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wiz-argent);
+  background: #edf4fb;
+  border: 1px solid #c8d9ef;
+  padding: 3px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s;
+}
+.flow-step.wiz-done .flow-step-summary { opacity: 1; }
+
+/* Edit hint */
+.flow-step-edit-hint {
+  font-size: 11px;
+  color: var(--wiz-blue);
+  opacity: 0;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.flow-step.wiz-done .flow-step-header:hover .flow-step-edit-hint { opacity: 1; }
+
+/* Step body — animated open/close */
+.flow-step-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .35s cubic-bezier(.4,0,.2,1), padding .25s;
+  padding: 0 20px;
+}
+.flow-step.wiz-active .flow-step-body {
+  max-height: 900px;
+  padding: 4px 20px 20px;
+}
+
+/* Step Next button */
+.wiz-next-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, var(--wiz-blue), var(--wiz-navy));
+  color: #fff;
+  border: none;
+  padding: 10px 28px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  margin-top: 16px;
+  letter-spacing: .2px;
+  transition: opacity .15s, transform .12s;
+}
+.wiz-next-btn:hover { opacity: .9; transform: translateY(-1px); }
+.wiz-next-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.wiz-next-btn svg { width: 14px; height: 14px; }
+
+/* ── Step 1: Sourcing Style Cards ── */
+.sourcing-style-cards {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sourcing-card {
+  flex: 1;
+  min-width: 160px;
+  padding: 16px;
+  border: 2px solid var(--wiz-dawn);
+  border-radius: var(--wiz-radius);
+  background: #fafcff;
+  cursor: pointer;
+  transition: border-color .18s, background .18s, box-shadow .18s;
+  user-select: none;
+  position: relative;
+  outline: none;
+}
+.sourcing-card:hover {
+  border-color: var(--wiz-blue);
+  background: #f0f8ff;
+}
+.sourcing-card:focus-visible { box-shadow: 0 0 0 3px rgba(76,130,184,.22); }
+.sourcing-card.active {
+  border-color: var(--wiz-navy);
+  background: #e8f2fc;
+  box-shadow: 0 0 0 3px rgba(7,54,121,.10);
+}
+.sourcing-card__check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--wiz-dawn);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: transparent;
+  transition: all .15s;
+}
+.sourcing-card.active .sourcing-card__check {
+  background: var(--wiz-navy);
+  border-color: var(--wiz-navy);
+  color: #fff;
+}
+.sourcing-card__icon { font-size: 22px; margin-bottom: 6px; }
+.sourcing-card__title { font-weight: 700; font-size: 14px; color: #1e2a3a; margin-bottom: 4px; }
+.sourcing-card.active .sourcing-card__title { color: var(--wiz-navy); }
+.sourcing-card__desc { font-size: 12px; color: var(--wiz-argent); line-height: 1.45; }
+
+/* Hybrid Mode badge — positioned top-right of Step 1 panel */
+.hybrid-badge {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, var(--wiz-blue), var(--wiz-navy));
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity .2s, transform .2s;
+  z-index: 2;
+}
+.hybrid-badge.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* ── Step 2: Search Mode Radio Cards ── */
+.search-mode-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.search-mode-option {
+  flex: 1;
+  min-width: 140px;
+  padding: 14px 16px;
+  border: 2px solid var(--wiz-dawn);
+  border-radius: var(--wiz-radius);
+  background: #fafcff;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  user-select: none;
+  outline: none;
+}
+.search-mode-option:hover { border-color: var(--wiz-blue); background: #f0f8ff; }
+.search-mode-option:focus-visible { box-shadow: 0 0 0 3px rgba(76,130,184,.22); }
+.search-mode-option.selected {
+  border-color: var(--wiz-navy);
+  background: #e8f2fc;
+}
+.search-mode-option__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  color: #1e2a3a;
+  margin-bottom: 5px;
+}
+.search-mode-option.selected .search-mode-option__label { color: var(--wiz-navy); }
+.search-mode-option__radio {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--wiz-dawn);
+  background: #fff;
+  flex-shrink: 0;
+  transition: all .15s;
+}
+.search-mode-option.selected .search-mode-option__radio {
+  background: var(--wiz-cyan);
+  border-color: var(--wiz-navy);
+  box-shadow: 0 0 0 3px rgba(110,234,249,.30);
+}
+.search-mode-option__tooltip { font-size: 12px; color: var(--wiz-argent); line-height: 1.4; }
+
+/* ── Step 3: Target Limit slider + input ── */
+.target-limit-control { display: flex; flex-direction: column; gap: 8px; }
+.target-limit-row { display: flex; align-items: center; gap: 14px; }
+.target-limit-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--wiz-dawn);
+  outline: none;
+  cursor: pointer;
+}
+.target-limit-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--wiz-navy);
+  border: 3px solid var(--wiz-cyan);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(7,54,121,.25);
+}
+.target-limit-slider::-moz-range-thumb {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--wiz-navy);
+  border: 3px solid var(--wiz-cyan);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(7,54,121,.25);
+}
+.target-limit-number { width: 78px !important; text-align: center; font-weight: 700; border-color: var(--wiz-dawn) !important; }
+.target-limit-number:focus { border-color: var(--wiz-blue) !important; }
+.target-limit-bounds {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--wiz-argent);
+}
+.target-limit-value-display {
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--wiz-navy);
+  margin-bottom: 4px;
+}
+.target-limit-value-display span { color: var(--wiz-blue); }
+
+/* ── Final Action Buttons ── */
+.flow-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 0 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity .3s, transform .3s;
+}
+.flow-actions.wiz-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.flow-actions .primary {
+  flex: 1; min-width: 180px; padding: 13px 24px; font-size: 15px;
+  background: linear-gradient(135deg, var(--wiz-blue), var(--wiz-navy));
+  border: none;
+}
+.flow-actions .primary:hover { opacity: .9; }
+.btn-secondary {
+  background: #fff;
+  border: 1.5px solid var(--wiz-dawn);
+  color: var(--wiz-argent);
+  padding: 12px 20px;
+  font-size: 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+  font-family: var(--theme-font);
+  transition: border-color .13s, color .13s;
+}
+.btn-secondary:hover { border-color: var(--wiz-blue); color: var(--wiz-navy); }
+
+/* ── Wizard summary bar (collapsed view after all steps complete) ── */
+.wiz-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #f0f5fb;
+  border: 1.5px solid var(--wiz-blue);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+.wiz-summary-bar.hidden { display: none; }
+.wiz-sb-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.wiz-sb-reset-btn {
+  background: none;
+  border: 1.5px solid var(--wiz-dawn);
+  color: var(--wiz-argent);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  transition: border-color .13s, color .13s;
+}
+.wiz-sb-reset-btn:hover { border-color: var(--wiz-blue); color: var(--wiz-navy); }
+.wiz-sb-items {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wiz-sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff;
+  border: 1px solid var(--wiz-dawn);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wiz-navy);
+}
+.wiz-sb-chip .wiz-sb-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--wiz-argent);
+  margin-right: 4px;
+}
+.wiz-sb-sep { color: var(--wiz-dawn); font-size: 16px; line-height: 1; }
+.wiz-sb-edit-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1.5px solid var(--wiz-blue);
+  color: var(--wiz-blue);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--theme-font);
+  transition: background .13s, color .13s;
+}
+.wiz-sb-edit-btn:hover { background: var(--wiz-blue); color: #fff; }
+
+/* Start Autosourcing bar at the bottom of the search form */
+/* Main grid hidden until wizard is complete */
+.main-grid.wiz-locked-grid {
+  display: none;
+}
+
+#startSourcingBar { margin-top: 20px; }
+#startSourcingBar.flow-actions .primary {
+  width: 100%;
+  text-align: center;
+  font-size: 15px;
+  padding: 14px 24px;
+  background: linear-gradient(135deg, #073679, #052a5e);
+  color: #fff;
+}
+
+/* Skill Adjacency button tooltip */
+#skillAdjacencyBtn {
+  position: relative;
+}
+#skillAdjacencyBtn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: #1b2636;
+  color: #e8edf2;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 7px 10px;
+  border-radius: 6px;
+  white-space: normal;
+  max-width: 240px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 100;
+}
+#skillAdjacencyBtn:hover::after { opacity: 1; }
+
 /* Projected Token Usage tooltip — glossary card style */
 .projected-token-tooltip {
   position: fixed;
@@ -643,30 +1223,160 @@ pre {
       </div>
     </div>
 
-    <!-- Smart Search Builder Configuration Panel -->
-    <div class="smart-search-panel" id="smartSearchPanel">
-      <div class="smart-search-header" role="button" aria-expanded="false" aria-label="Smart Search Builder - Hover to expand or collapse" tabindex="0">
-        <span>Smart Search Builder</span>
-        <span id="smartSearchArrow" aria-hidden="true">▼</span>
-      </div>
-      <div class="smart-search-content" id="smartSearchContent">
-        <div class="smart-search-toggles">
-          <!-- JD to Candidates Toggle -->
-          <div class="toggle-item toggle-bar" id="toggleBarJdToCandidates" role="button" tabindex="0" aria-pressed="false">
-            <input type="checkbox" id="toggleJdToCandidates" style="display:none;">
-            <span>JD to Candidates</span>
-          </div>
-          <!-- AI-Assisted Search Toggle -->
-          <div class="toggle-item toggle-bar" id="toggleBarAiAssistedSearch" role="button" tabindex="0" aria-pressed="false">
-            <input type="checkbox" id="toggleAiAssistedSearch" style="display:none;">
-            <span>AI-Assisted Search</span>
-          </div>
+    <!-- ═══ Autosourcing 3-Step Sequential Wizard ═══ -->
+    <div class="autosourcing-flow" id="autosourcingFlow">
+
+      <!-- Returning-user recap banner (hidden by default, shown by JS if saved settings exist) -->
+      <div class="wiz-recap hidden" id="wizRecapBanner">
+        <div class="wiz-recap__title">⚙ Your Previous Settings</div>
+        <div class="wiz-recap__items" id="wizRecapItems"><!-- chips injected by JS --></div>
+        <div class="wiz-recap__prompt" id="wizRecapPrompt"></div>
+        <div class="wiz-recap__actions">
+          <button class="wiz-recap__btn-continue" id="wizRecapContinueBtn">Continue with these settings</button>
+          <button class="wiz-recap__btn-change" id="wizRecapChangeBtn">Make changes</button>
         </div>
       </div>
+
+      <!-- Steps wrapper -->
+      <div class="wiz-steps-wrap" id="wizStepsWrap">
+
+        <!-- Hidden checkboxes — keep IDs for JS compatibility -->
+        <input type="checkbox" id="toggleJdToCandidates" style="display:none;">
+        <input type="checkbox" id="toggleAiAssistedSearch" style="display:none;">
+
+        <!-- ───── Step 1: Choose Your Sourcing Style ───── -->
+        <div class="flow-step wiz-active" id="flowStep1">
+          <!-- Hybrid Mode badge — absolute top-right, visible when both cards are selected -->
+          <div class="hybrid-badge" id="hybridModeBadge">⚡ Hybrid Mode Active</div>
+          <div class="flow-step-header" id="flowStep1Header">
+            <span class="flow-step-badge">1</span>
+            <span class="flow-step-title">Choose Your Sourcing Style</span>
+            <span class="flow-step-summary" id="flowStep1Summary"></span>
+            <span class="flow-step-edit-hint">✏ Edit</span>
+          </div>
+          <div class="flow-step-body">
+            <div class="sourcing-style-cards">
+              <!-- JD to Candidate card -->
+              <div class="sourcing-card" id="toggleBarJdToCandidates" role="button" tabindex="0" aria-pressed="false">
+                <div class="sourcing-card__check">✓</div>
+                <div class="sourcing-card__icon">📄</div>
+                <div class="sourcing-card__title">JD to Candidate</div>
+                <div class="sourcing-card__desc">Match candidates directly against a job description.</div>
+              </div>
+              <!-- AI-Assisted Search card -->
+              <div class="sourcing-card" id="toggleBarAiAssistedSearch" role="button" tabindex="0" aria-pressed="false">
+                <div class="sourcing-card__check">✓</div>
+                <div class="sourcing-card__icon">🤖</div>
+                <div class="sourcing-card__title">AI-Assisted Search</div>
+                <div class="sourcing-card__desc">Explore candidates interactively with AI guidance.</div>
+              </div>
+            </div>
+            <!-- Next button -->
+            <button class="wiz-next-btn" id="wizStep1Next" disabled>
+              Next: Search Mode
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ───── Step 2: Decide Your Search Mode ───── -->
+        <div class="flow-step wiz-locked" id="flowStep2">
+          <div class="flow-step-header" id="flowStep2Header">
+            <span class="flow-step-badge">2</span>
+            <span class="flow-step-title">Decide Your Search Mode</span>
+            <span class="flow-step-summary" id="flowStep2Summary"></span>
+            <span class="flow-step-edit-hint">✏ Edit</span>
+          </div>
+          <div class="flow-step-body">
+            <!-- Hidden elements kept for JS compatibility (initSearchMode uses these IDs) -->
+            <input id="bestModeChk" type="checkbox" style="display:none;">
+            <button class="primary" id="bestModeToggle" style="display:none;" aria-pressed="false">
+              <span>🚀 Fast Mode</span>
+            </button>
+            <!-- searchModeHint: keep ID — referenced by initSearchMode() applyMode() function -->
+            <span class="hidden" id="searchModeHint">Queries are sent as-is without splitting</span>
+            <!-- Radio-style option cards -->
+            <div class="search-mode-options">
+              <div class="search-mode-option selected" id="fastModeOption" role="radio" tabindex="0" aria-checked="true">
+                <div class="search-mode-option__label">
+                  <span class="search-mode-option__radio"></span>
+                  🚀 Fast Mode
+                </div>
+                <div class="search-mode-option__tooltip">Quick results from priority companies.</div>
+              </div>
+              <div class="search-mode-option" id="bestModeOption" role="radio" tabindex="0" aria-checked="false">
+                <div class="search-mode-option__label">
+                  <span class="search-mode-option__radio"></span>
+                  ⚡ Best Mode
+                </div>
+                <div class="search-mode-option__tooltip">Thorough coverage across all companies.</div>
+              </div>
+            </div>
+            <!-- Next button -->
+            <button class="wiz-next-btn" id="wizStep2Next">
+              Next: Target Limit
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ───── Step 3: Set Target Limit ───── -->
+        <div class="flow-step wiz-locked" id="flowStep3">
+          <div class="flow-step-header" id="flowStep3Header">
+            <span class="flow-step-badge">3</span>
+            <span class="flow-step-title">Set Target Limit</span>
+            <span class="flow-step-summary" id="flowStep3Summary"></span>
+            <span class="flow-step-edit-hint">✏ Edit</span>
+          </div>
+          <div class="flow-step-body">
+            <div class="target-limit-value-display" id="targetLimitDisplay">
+              <span id="targetLimitDisplayVal">10</span> profiles
+            </div>
+            <div class="target-limit-control">
+              <div class="target-limit-row">
+                <input type="range" class="target-limit-slider" id="targetLimitSlider" min="10" max="500" step="10" value="10">
+                <input type="number" id="userTargetInput" class="target-limit-number" min="10" max="500" step="10" value="10">
+              </div>
+              <div class="target-limit-bounds">
+                <span>Min: 10</span>
+                <span>Max: 500</span>
+              </div>
+            </div>
+            <!-- Confirm button (saves settings) -->
+            <button class="wiz-next-btn" id="wizStep3Confirm">
+              Confirm &amp; Continue
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /.wiz-steps-wrap -->
+
+      <!-- Single collapsed summary bar (replaces the 3 step headers after wizard is done) -->
+      <div class="wiz-summary-bar hidden" id="wizSummaryBar">
+        <div class="wiz-sb-items">
+          <span class="wiz-sb-chip" id="wizSumStyle"></span>
+          <span class="wiz-sb-sep">·</span>
+          <span class="wiz-sb-chip" id="wizSumMode"></span>
+          <span class="wiz-sb-sep">·</span>
+          <span class="wiz-sb-chip" id="wizSumLimit"></span>
+        </div>
+        <div class="wiz-sb-actions">
+          <button class="wiz-sb-edit-btn" id="wizSummaryEditBtn" type="button">✏ Edit Settings</button>
+          <button class="wiz-sb-reset-btn" id="resetChoicesBtn" type="button">↺ Reset</button>
+        </div>
+      </div>
+
+      <!-- Final Action Buttons placeholder (kept for JS compat — wiz-visible toggling) -->
+      <div class="flow-actions" id="flowActions" style="display:none;"></div>
+
+      <!-- Sourcing progress bar — shown while job runs (moved below Start Autosourcing in right col) -->
+
     </div>
+    <!-- End Autosourcing Flow -->
 
     <!-- Main Grid Layout -->
-    <div class="main-grid">
+    <div class="main-grid wiz-locked-grid" id="mainGrid">
       
       <!-- Left Column: Inputs -->
       <div style="display: flex; flex-direction: column; gap: 16px;">
@@ -689,7 +1399,10 @@ pre {
           <div id="jobTitleSuggestionBox" class="suggestions-mini hidden" aria-live="polite" style="margin-top:8px; border:1px solid var(--border); padding:8px; border-radius:var(--radius-sm);">
             <div class="suggestions-mini-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px; font-weight:700; color:var(--text-soft);">
               <span>Job Title Suggestions</span>
-              <button type="button" id="jobTitleRefreshBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;">Refresh</button>
+              <div style="display:flex; gap:4px;">
+                <button type="button" id="jobTitleRefreshBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;">Refresh</button>
+                <button type="button" id="skillAdjacencyBtn" class="mini-btn" style="padding:2px 6px; font-size:11px;" title="Suggest job titles and companies based on transferable skills from the uploaded JD." data-tooltip="Suggest job titles and companies based on transferable skills from the uploaded JD." aria-label="Skill Adjacency: Suggest job titles and companies based on transferable skills from the uploaded JD.">Skill Adjacency</button>
+              </div>
             </div>
             <div id="jobTitleSuggestionsGrid" class="suggestions-grid-mini" role="list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
           </div>
@@ -716,11 +1429,7 @@ pre {
           </div>
         </div>
 
-        <!-- Spotlight Adjacent Skills -->
-        <div id="highlightTalentWrapper" class="hidden" data-field-section="aiAssistedSearch">
-          <button class="primary highlight-btn" id="highlightTalentBtn" aria-describedby="highlightHelper" style="width:100%;" title="Suggest roles and companies for your transferable skills.">Spotlight Adjacent Skills</button>
-          <div class="helper" id="highlightHelper" style="text-align:center;">Based on uploaded JD skills</div>
-        </div>
+        <!-- Spotlight Adjacent Skills button replaced by Skill Adjacency in Job Title suggestions box -->
 
         <!-- Location -->
         <div data-field-section="aiAssistedSearch" data-ai-field="locationSector">
@@ -903,32 +1612,13 @@ pre {
             <div id="sectorCompanyList" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
           </div>
 
-          <!-- Sourcing button - Now full width at bottom -->
-          <div id="previewControls" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:16px;">
-            <button class="primary" id="generateBtn" data-state="idle" style="padding:14px 40px; font-size:16px; width:100%;">Sourcing</button>
-          </div>
-          <!-- Sourcing progress bar — visible below the Sourcing button while job runs -->
-          <div id="sourcingProgressWrap" class="hidden" style="margin-top:12px; padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-              <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
-              <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
-            </div>
-            <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
-              <div id="sourcingProgressFill" style="height:100%; background:var(--primary,#3a5bd9); border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
-            </div>
-          </div>
+          <!-- Sourcing button and progress bar moved to autosourcing-flow above -->
         </div>
 
         <div id="advancedSection">
 
-          <!-- Search Mode toggle: Best Mode (auto-split at 32 words) vs Fast Mode (no splitting) -->
-          <div id="searchModeWrapper" style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
-            <input id="bestModeChk" type="checkbox" style="display:none;">
-            <button class="primary" id="bestModeToggle" style="padding:6px 14px; font-size:12px;" aria-pressed="false" title="Best Mode: auto-splits queries exceeding 32 words for better coverage. Fast Mode: sends queries as-is.">
-              <span>🚀 Fast Mode</span>
-            </button>
-            <span class="helper" id="searchModeHint" style="font-size:11px;">Queries are sent as-is without splitting</span>
-          </div>
+          <!-- Search Mode wrapper: hidden — controls moved to Step 2 flow above -->
+          <div id="searchModeWrapper" style="display:none;"></div>
 
           <div class="full-query-box" id="fullQueryWrapper" style="display:none; position:relative; margin-bottom:20px;">
             <button type="button" class="mini-btn" id="copyFullQueryBtn" style="position:absolute; top:8px; right:8px;">Copy</button>
@@ -960,11 +1650,6 @@ pre {
               <span class="helper"><strong>Estimated results (pre-search):</strong></span>
               <strong id="estimateValue" style="font-size:14px; color:var(--accent);">Add Job Title and Location</strong>
               <span id="estimateSpinner" class="spinner hidden" style="width:14px; height:14px;"></span>
-              
-              <div style="flex-grow:1;"></div>
-              
-              <span class="helper" style="border-left:1px solid var(--metric-border); padding-left:12px;"><strong>Target Limit:</strong></span>
-              <input type="number" id="userTargetInput" min="10" max="200" step="10" style="width:70px; padding:6px;">
             </div>
             <div id="estimateNote" class="helper" style="margin-top:4px;">Updates as you add Company, Sector, Language, etc.</div>
             <span id="channelEstimateValue" class="hidden"></span>
@@ -986,6 +1671,22 @@ pre {
 
         </div>
         <!-- End Advanced Section -->
+
+        <!-- ═══ Start Autosourcing — original bottom position, beneath "We'll search for" section ═══ -->
+        <div class="flow-actions" id="startSourcingBar" style="margin-top:16px;">
+          <button class="primary" id="generateBtn" data-state="idle">Start Autosourcing</button>
+        </div>
+
+        <!-- Sourcing progress bar — visible below Start Autosourcing while job runs -->
+        <div id="sourcingProgressWrap" class="hidden" style="padding:10px 12px; background:var(--chip-bg); border:1px solid var(--accent-border); border-radius:8px; margin-top:8px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+            <span style="font-size:12px; font-weight:600; color:var(--text);">Profiles found</span>
+            <span id="sourcingProfileCount" style="font-size:13px; font-weight:700; color:var(--accent);">0</span>
+          </div>
+          <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden; width:100%;">
+            <div id="sourcingProgressFill" style="height:100%; background:#073679; border-radius:4px; width:0%; transition:width 0.4s ease;"></div>
+          </div>
+        </div>
 
       </div>
       <!-- End Right Column -->
@@ -1271,6 +1972,7 @@ function renderJobTitleChips(){
   });
   box.appendChild(jobChipFrag);
   document.getElementById('compiledJobTitleExpr').textContent=buildJobTitleExpression();
+  if(typeof window._wizSyncStartBar==='function') window._wizSyncStartBar();
 }
 function buildJobTitleExpressionAugmented(){
   if(!jobTitles.length) return '';
@@ -1343,6 +2045,7 @@ function renderCompanyChips(){
   });
   box.appendChild(compChipFrag);
   document.getElementById('compiledCompanyExpr').textContent=buildCompanyExpression();
+  if(typeof window._wizSyncStartBar==='function') window._wizSyncStartBar();
 }
 function buildCompanyExpression(){
   if(!companies.length) return '';
@@ -2114,6 +2817,8 @@ function updateSourcingSection() {
       }
     }
   }
+  // Re-evaluate Start Autosourcing button visibility whenever sourcing state changes
+  if(typeof window._wizSyncStartBar === 'function') window._wizSyncStartBar();
 }
 
 (function initSmartSearchToggles(){
@@ -2253,13 +2958,8 @@ function updateSourcingSection() {
           }
         }
         
-        // Spotlight Adjacent Skills should only show when AI-Assisted Search is active
-        // The visibility is controlled by data-field-section="aiAssistedSearch"
-        // Force hide when AI-Assisted Search is turned off
-        const highlightWrapper = document.getElementById('highlightTalentWrapper');
-        if (highlightWrapper && !this.checked) {
-          highlightWrapper.classList.add('hidden');
-        }
+        // Spotlight Adjacent Skills was removed; Skill Adjacency replaces it in the Job Title box
+        // No separate visibility update needed here
         
         // Show/hide Skill Section when AI-Assisted Search is toggled
         const skillAggregator = document.getElementById('skillAggregator');
@@ -3158,8 +3858,6 @@ function updateSectorEnabledState(){
   const browseBtn = document.getElementById('browseJdBtn');
   const nameSpan = document.getElementById('jdFileName');
   const spinner = document.getElementById('jdUploadSpinner');
-  const highlightWrapper = document.getElementById('highlightTalentWrapper');
-  const highlightBtn = document.getElementById('highlightTalentBtn');
 
   // Drag and drop functionality
   if (dropZone) {
@@ -3250,17 +3948,12 @@ function updateSectorEnabledState(){
           dropZone.style.display = 'none';
         }
         
-        // Only show Spotlight Adjacent Skills when AI-Assisted Search is active
-        const toggleAiAssistedSearch = document.getElementById('toggleAiAssistedSearch');
-        if(highlightWrapper && toggleAiAssistedSearch && toggleAiAssistedSearch.checked) {
-          highlightWrapper.classList.remove('hidden');
-        }
-        if(highlightBtn) highlightBtn.disabled = false;
+        // Skill Adjacency button is always available in the Job Title suggestions box;
+        // no separate show/hide needed now that highlightTalentWrapper is removed.
+        // Mark JD as uploaded and trigger Start Autosourcing visibility check
+        jdUploaded = true;
+        if(typeof window._wizSyncStartBar === 'function') window._wizSyncStartBar();
         
-        // Removed early freeze. We will capture a snapshot AFTER analysis and after fetching fresh suggestions,
-        // so the snapshot contains the updated suggestions derived from the uploaded JD.
-        // (previous code captured snapshot here and set jdSuggestionsLocked = true too early)
-
         const chatFormData = new FormData();
         chatFormData.append('file', file);
 
@@ -3606,38 +4299,42 @@ function updateSectorEnabledState(){
     }
   }
 
-  if(highlightBtn){
-    highlightBtn.addEventListener('click', function(){
-      fetch('/highlight_talent_pools', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'highlight_talent_pools',
-          session_id: 'default',
-          username: window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || ''
-        })
+  function doHighlightTalentPools(){
+    fetch('/highlight_talent_pools', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'highlight_talent_pools',
+        session_id: 'default',
+        username: window.__ACTIVE_USERNAME || sessionStorage.getItem('username') || ''
       })
-      .then(r => r.json())
-      .then(data => {
-        if(data.error){
-          if (data.code === 'no_skills') {
-             alert('No skillset found. Please upload a JD first.');
-          } else {
-             alert('Error: ' + data.error);
-          }
-          return;
+    })
+    .then(r => r.json())
+    .then(data => {
+      if(data.error){
+        if (data.code === 'no_skills') {
+           alert('No skillset found. Please upload a JD first.');
+        } else {
+           alert('Error: ' + data.error);
         }
-        
-        if(data.job && data.company){
-             const jobs = (data.job && data.job.related) ? data.job.related : [];
-             const comps = (data.company && data.company.related) ? data.company.related : [];
-             renderExternalSuggestions(jobs, comps);
-        } else if (data.response) {
-             alert(data.response);
-        }
-      })
-      .catch(e => console.error(e));
-    });
+        return;
+      }
+      
+      if(data.job && data.company){
+           const jobs = (data.job && data.job.related) ? data.job.related : [];
+           const comps = (data.company && data.company.related) ? data.company.related : [];
+           renderExternalSuggestions(jobs, comps);
+      } else if (data.response) {
+           alert(data.response);
+      }
+    })
+    .catch(e => console.error(e));
+  }
+
+  // Skill Adjacency button in Job Title suggestions box — same functionality as old Spotlight Adjacent Skills
+  const skillAdjBtn = document.getElementById('skillAdjacencyBtn');
+  if(skillAdjBtn){
+    skillAdjBtn.addEventListener('click', doHighlightTalentPools);
   }
 })();
 
@@ -3733,6 +4430,433 @@ function renderExternalSuggestions(jobs, comps){
       body: JSON.stringify({ username: username, skills: userSkills })
     }).catch(e => console.warn('Sync skills failed', e));
   };
+})();
+
+// ════════════════════════════════════════════════════════════════
+// AUTOSOURCING SEQUENTIAL WIZARD CONTROLLER
+// Manages: sequential step reveal · localStorage cache · returning-user banner
+// ════════════════════════════════════════════════════════════════
+(function initWizardFlow(){
+  'use strict';
+  const STORAGE_KEY = 'autosourcing_wizard_prefs';
+
+  // ── helpers ──────────────────────────────────────────────────
+  function getStep(n){ return document.getElementById('flowStep'+n); }
+  function setStepActive(n){
+    for(var i=1;i<=3;i++){
+      var s=getStep(i);
+      if(!s) continue;
+      s.classList.remove('wiz-active','wiz-locked');
+      if(i < n) s.classList.add('wiz-done');
+      else if(i === n) s.classList.add('wiz-active');
+      else s.classList.add('wiz-locked');
+    }
+  }
+  function setSummary(n, text){
+    var el=document.getElementById('flowStep'+n+'Summary');
+    if(el) el.textContent=text||'';
+  }
+
+  // ── localStorage helpers ─────────────────────────────────────
+  function loadPrefs(){
+    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)||'null'); }catch(e){ console.warn('Failed to load wizard prefs:',e); return null; }
+  }
+  function savePrefs(prefs){
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); }catch(e){ console.warn('Failed to save wizard prefs:',e); }
+  }
+  function clearPrefs(){
+    try{ localStorage.removeItem(STORAGE_KEY); }catch(e){ console.warn('Failed to clear wizard prefs:',e); }
+  }
+
+  // ── read current wizard state ─────────────────────────────────
+  function readCurrentPrefs(){
+    var jdChk=document.getElementById('toggleJdToCandidates');
+    var aiChk=document.getElementById('toggleAiAssistedSearch');
+    var modeChk=document.getElementById('bestModeChk');
+    var inp=document.getElementById('userTargetInput');
+    var styleVal=[];
+    if(jdChk && jdChk.checked) styleVal.push('JD to Candidate');
+    if(aiChk && aiChk.checked) styleVal.push('AI-Assisted Search');
+    return {
+      style: styleVal,
+      mode: (modeChk && modeChk.checked) ? 'Best Mode' : 'Fast Mode',
+      target: inp ? parseInt(inp.value,10)||10 : 10
+    };
+  }
+
+  // ── apply saved prefs to the UI ───────────────────────────────
+  function applyPrefs(prefs){
+    if(!prefs) return;
+    // Style — use click() so initSmartSearchToggles handles the state correctly
+    var jdChk=document.getElementById('toggleJdToCandidates');
+    var aiChk=document.getElementById('toggleAiAssistedSearch');
+    var jdBar=document.getElementById('toggleBarJdToCandidates');
+    var aiBar=document.getElementById('toggleBarAiAssistedSearch');
+    if(prefs.style && prefs.style.indexOf('JD to Candidate')!==-1){
+      if(jdBar && jdChk && !jdChk.checked){ jdBar.click(); }
+    }
+    if(prefs.style && prefs.style.indexOf('AI-Assisted Search')!==-1){
+      if(aiBar && aiChk && !aiChk.checked){ aiBar.click(); }
+    }
+    // Mode
+    var modeChk=document.getElementById('bestModeChk');
+    var modeBtn=document.getElementById('bestModeToggle');
+    var wantBest = prefs.mode === 'Best Mode';
+    if(modeChk && modeBtn && modeChk.checked !== wantBest){
+      modeBtn.click();
+    }
+    // Target limit
+    var inp=document.getElementById('userTargetInput');
+    var slider=document.getElementById('targetLimitSlider');
+    if(inp && prefs.target){ inp.value=prefs.target; inp.dispatchEvent(new Event('input',{bubbles:true})); }
+    if(slider && prefs.target){ slider.value=prefs.target; }
+    syncDisplayVal(prefs.target||10);
+    // Sync radio UI
+    syncRadioUI();
+    syncStep1NextBtn();
+    updateHybridBadge();
+  }
+
+  // ── display value label (Step 3) ─────────────────────────────
+  function syncDisplayVal(v){
+    var el=document.getElementById('targetLimitDisplayVal');
+    if(el) el.textContent=v;
+  }
+
+  // ── Step 1 next button state ──────────────────────────────────
+  function syncStep1NextBtn(){
+    var jdBar=document.getElementById('toggleBarJdToCandidates');
+    var aiBar=document.getElementById('toggleBarAiAssistedSearch');
+    var anyActive=(jdBar && jdBar.classList.contains('active')) ||
+                  (aiBar && aiBar.classList.contains('active'));
+    var btn=document.getElementById('wizStep1Next');
+    if(btn){ btn.disabled=!anyActive; }
+  }
+
+  // ── Hybrid badge ──────────────────────────────────────────────
+  function updateHybridBadge(){
+    var badge=document.getElementById('hybridModeBadge');
+    if(!badge) return;
+    var jdBar=document.getElementById('toggleBarJdToCandidates');
+    var aiBar=document.getElementById('toggleBarAiAssistedSearch');
+    badge.classList.toggle('visible',
+      !!(jdBar && jdBar.classList.contains('active') &&
+         aiBar && aiBar.classList.contains('active'))
+    );
+  }
+
+  // ── search mode radio sync ────────────────────────────────────
+  function syncRadioUI(){
+    var chk=document.getElementById('bestModeChk');
+    var fastOpt=document.getElementById('fastModeOption');
+    var bestOpt=document.getElementById('bestModeOption');
+    if(!chk||!fastOpt||!bestOpt) return;
+    var best=chk.checked;
+    fastOpt.classList.toggle('selected',!best);
+    fastOpt.setAttribute('aria-checked',String(!best));
+    bestOpt.classList.toggle('selected',!!best);
+    bestOpt.setAttribute('aria-checked',String(!!best));
+  }
+
+  // ── Mark step 1 done ─────────────────────────────────────────
+  function completeStep1(){
+    var jdBar=document.getElementById('toggleBarJdToCandidates');
+    var aiBar=document.getElementById('toggleBarAiAssistedSearch');
+    var parts=[];
+    if(jdBar && jdBar.classList.contains('active')) parts.push('JD to Candidate');
+    if(aiBar && aiBar.classList.contains('active')) parts.push('AI-Assisted Search');
+    setSummary(1, parts.length===2 ? 'Hybrid Mode' : (parts[0]||''));
+    setStepActive(2);
+  }
+
+  // ── Mark step 2 done ─────────────────────────────────────────
+  function completeStep2(){
+    var chk=document.getElementById('bestModeChk');
+    setSummary(2, chk && chk.checked ? '⚡ Best Mode' : '🚀 Fast Mode');
+    setStepActive(3);
+  }
+
+  // ── helpers for summary bar ───────────────────────────────────
+  function showSummaryBar(){
+    var prefs = readCurrentPrefs();
+    var styleLabel = prefs.style && prefs.style.length ? prefs.style.join(' + ') : '—';
+    var modeLabel  = prefs.mode || 'Fast Mode';
+    var limitLabel = (prefs.target || 10) + ' profiles';
+
+    function setChip(id, label, val){
+      var el = document.getElementById(id);
+      if(!el) return;
+      el.textContent = '';
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'wiz-sb-label';
+      labelSpan.textContent = label;
+      var valText = document.createTextNode(val);
+      el.appendChild(labelSpan);
+      el.appendChild(valText);
+    }
+    setChip('wizSumStyle', 'Style', styleLabel);
+    setChip('wizSumMode',  'Mode',  modeLabel);
+    setChip('wizSumLimit', 'Target', limitLabel);
+
+    var bar = document.getElementById('wizSummaryBar');
+    var stepsWrap = document.getElementById('wizStepsWrap');
+    if(bar) bar.classList.remove('hidden');
+    if(stepsWrap) stepsWrap.classList.add('hidden');
+  }
+  function hideSummaryBar(){
+    var bar = document.getElementById('wizSummaryBar');
+    var stepsWrap = document.getElementById('wizStepsWrap');
+    if(bar) bar.classList.add('hidden');
+    if(stepsWrap) stepsWrap.classList.remove('hidden');
+  }
+  function showStartBar(){
+    var startBar = document.getElementById('startSourcingBar');
+    if(startBar) startBar.classList.add('wiz-visible');
+  }
+  function hideStartBar(){
+    var startBar = document.getElementById('startSourcingBar');
+    if(startBar) startBar.classList.remove('wiz-visible');
+  }
+
+  // ── Check whether the Start Autosourcing button should be visible ─────────────
+  // Visible only when wizard is done AND (JD uploaded OR Job Title + Company provided)
+  function syncStartBarVisibility(){
+    var startBar = document.getElementById('startSourcingBar');
+    if(!startBar) return;
+    var summaryBar = document.getElementById('wizSummaryBar');
+    var wizardDone = !!(summaryBar && !summaryBar.classList.contains('hidden'));
+    if(!wizardDone) return; // Don't show if wizard not complete
+    var hasJd = !!jdUploaded;
+    var hasTitle = !!(jobTitles && jobTitles.length > 0);
+    var companyTagChips = document.querySelectorAll('#companyChips .tag-chip');
+    var hasCompany = companyTagChips.length > 0;
+    var canStart = hasJd || (hasTitle && hasCompany);
+    if(canStart){
+      startBar.classList.add('wiz-visible');
+    } else {
+      startBar.classList.remove('wiz-visible');
+    }
+  }
+  // Expose so outer code can trigger re-check after chip changes
+  window._wizSyncStartBar = syncStartBarVisibility;
+
+  // ── Mark step 3 done, show final actions ─────────────────────
+  function completeStep3(){
+    var inp=document.getElementById('userTargetInput');
+    var v=inp ? parseInt(inp.value,10)||10 : 10;
+    setSummary(3, v+' profiles');
+    // All steps done
+    for(var i=1;i<=3;i++){
+      var s=getStep(i);
+      if(s){ s.classList.remove('wiz-active','wiz-locked'); s.classList.add('wiz-done'); }
+    }
+    // Save to cache
+    savePrefs(readCurrentPrefs());
+    // Reveal main grid (JD/AI fields) now that wizard is complete
+    var mainGrid = document.getElementById('mainGrid');
+    if(mainGrid) mainGrid.classList.remove('wiz-locked-grid');
+    // Collapse steps into summary bar
+    showSummaryBar();
+    // Show Reset Choices
+    var actions=document.getElementById('flowActions');
+    if(actions) actions.classList.add('wiz-visible');
+    // Show Start Autosourcing at bottom only if content is ready
+    syncStartBarVisibility();
+  }
+
+  // ── Wire "Edit" click on done step headers ────────────────────
+  function wireEditOnHeader(n, activeFn){
+    var header=document.getElementById('flowStep'+n+'Header');
+    if(!header) return;
+    header.addEventListener('click', function(){
+      var step=getStep(n);
+      if(!step || !step.classList.contains('wiz-done')) return;
+      // Re-show steps wrap (hidden when summary bar is active)
+      hideSummaryBar();
+      setStepActive(n);
+      // Lock all subsequent steps
+      for(var i=n+1;i<=3;i++){
+        var s=getStep(i);
+        if(s){ s.classList.remove('wiz-active','wiz-done'); s.classList.add('wiz-locked'); }
+      }
+      // Hide Reset/Start buttons while editing + hide main grid
+      var actions=document.getElementById('flowActions');
+      if(actions) actions.classList.remove('wiz-visible');
+      hideStartBar();
+      var mg = document.getElementById('mainGrid');
+      if(mg) mg.classList.add('wiz-locked-grid');
+    });
+  }
+
+  // ── Returning-user banner ─────────────────────────────────────
+  function initRecapBanner(prefs){
+    var banner=document.getElementById('wizRecapBanner');
+    var itemsEl=document.getElementById('wizRecapItems');
+    var promptEl=document.getElementById('wizRecapPrompt');
+    var continueBtn=document.getElementById('wizRecapContinueBtn');
+    var changeBtn=document.getElementById('wizRecapChangeBtn');
+    if(!banner||!itemsEl||!promptEl||!continueBtn||!changeBtn) return;
+
+    var styleLabel=prefs.style && prefs.style.length
+      ? prefs.style.join(' + ')
+      : 'None';
+    var modeLabel=prefs.mode||'Fast Mode';
+    var targetLabel=(prefs.target||10)+' profiles';
+
+    itemsEl.innerHTML=[
+      {label:'Sourcing Style', val:styleLabel},
+      {label:'Search Mode', val:modeLabel},
+      {label:'Target Limit', val:targetLabel}
+    ].map(function(c){
+      return '<span class="wiz-recap__chip"><span class="wiz-recap__chip-label">'+c.label+':</span>'+c.val+'</span>';
+    }).join('');
+
+    promptEl.textContent='You previously selected '+styleLabel+', '+modeLabel+
+      ', with a target of '+targetLabel+'. Would you like to continue with these settings, or make changes?';
+
+    banner.classList.remove('hidden');
+    // On returning-user load, hide the step tiles so only the recap banner shows
+    var stepsWrap = document.getElementById('wizStepsWrap');
+    if(stepsWrap) stepsWrap.style.display = 'none';
+
+    continueBtn.addEventListener('click', function(){
+      banner.classList.add('hidden');
+      if(stepsWrap) stepsWrap.style.display = '';
+      applyPrefs(prefs);
+      completeStep1();
+      completeStep2();
+      completeStep3();
+    });
+
+    changeBtn.addEventListener('click', function(){
+      banner.classList.add('hidden');
+      clearPrefs();
+      if(stepsWrap) stepsWrap.style.display = '';
+      hideSummaryBar();
+      setStepActive(1);
+      var actions=document.getElementById('flowActions');
+      if(actions) actions.classList.remove('wiz-visible');
+      hideStartBar();
+      var mg = document.getElementById('mainGrid');
+      if(mg) mg.classList.add('wiz-locked-grid');
+    });
+  }
+
+  // ── Init on DOM ready ─────────────────────────────────────────
+  try {
+    var jdBar=document.getElementById('toggleBarJdToCandidates');
+    var aiBar=document.getElementById('toggleBarAiAssistedSearch');
+    var jdChk=document.getElementById('toggleJdToCandidates');
+    var aiChk=document.getElementById('toggleAiAssistedSearch');
+
+    // Watch for class changes on the card bars (set by initSmartSearchToggles) to update wizard UI.
+    // Also listen to checkbox change events as a secondary signal.
+    function onStyleChange(){ syncStep1NextBtn(); updateHybridBadge(); }
+    if(jdChk) jdChk.addEventListener('change', onStyleChange);
+    if(aiChk) aiChk.addEventListener('change', onStyleChange);
+
+    // MutationObserver watches `active` class on card bars — works regardless of which
+    // code sets/removes it (initSmartSearchToggles or applyPrefs).
+    if(jdBar || aiBar){
+      var cardObserver = new MutationObserver(function(){ onStyleChange(); });
+      if(jdBar) cardObserver.observe(jdBar, { attributes: true, attributeFilter: ['class'] });
+      if(aiBar) cardObserver.observe(aiBar, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // Step 1 Next
+    var s1Next=document.getElementById('wizStep1Next');
+    if(s1Next) s1Next.addEventListener('click', completeStep1);
+
+    // Step 2 radio cards
+    var chk=document.getElementById('bestModeChk');
+    var modeBtn=document.getElementById('bestModeToggle');
+    var fastOpt=document.getElementById('fastModeOption');
+    var bestOpt=document.getElementById('bestModeOption');
+    if(fastOpt) fastOpt.addEventListener('click',function(){ if(chk && chk.checked && modeBtn){ modeBtn.click(); syncRadioUI(); } });
+    if(fastOpt) fastOpt.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); fastOpt.click(); } });
+    if(bestOpt) bestOpt.addEventListener('click',function(){ if(chk && !chk.checked && modeBtn){ modeBtn.click(); syncRadioUI(); } });
+    if(bestOpt) bestOpt.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); bestOpt.click(); } });
+
+    // Step 2 Next
+    var s2Next=document.getElementById('wizStep2Next');
+    if(s2Next) s2Next.addEventListener('click', completeStep2);
+
+    // Step 3 slider ↔ number
+    var TARGET_MIN=10, TARGET_MAX=500;
+    var slider=document.getElementById('targetLimitSlider');
+    var numInp=document.getElementById('userTargetInput');
+    function clamp(v){ return Math.min(TARGET_MAX, Math.max(TARGET_MIN, isNaN(v)?TARGET_MIN:v)); }
+    if(slider) slider.addEventListener('input',function(){
+      numInp.value=this.value;
+      syncDisplayVal(this.value);
+      numInp.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    if(numInp) numInp.addEventListener('input',function(){
+      var v=clamp(parseInt(this.value,10));
+      slider.value=v;
+      syncDisplayVal(v);
+    });
+    if(numInp) numInp.addEventListener('change',function(){
+      var v=clamp(parseInt(this.value,10));
+      this.value=v; slider.value=v; syncDisplayVal(v);
+    });
+    if(slider && numInp) slider.value=clamp(parseInt(numInp.value,10)||TARGET_MIN);
+
+    // Step 3 Confirm
+    var s3Confirm=document.getElementById('wizStep3Confirm');
+    if(s3Confirm) s3Confirm.addEventListener('click', completeStep3);
+
+    // Edit headers (click done step to re-open)
+    wireEditOnHeader(1); wireEditOnHeader(2); wireEditOnHeader(3);
+
+    // Reset Choices button
+    var resetBtn=document.getElementById('resetChoicesBtn');
+    if(resetBtn) resetBtn.addEventListener('click',function(){
+      clearPrefs();
+      // Deactivate sourcing style — click each active card to toggle it off via initSmartSearchToggles handler
+      if(jdBar && jdChk && jdChk.checked){ jdBar.click(); }
+      if(aiBar && aiChk && aiChk.checked){ aiBar.click(); }
+      // Reset mode to Fast
+      if(chk && chk.checked && modeBtn){ modeBtn.click(); syncRadioUI(); }
+      // Reset target
+      if(numInp){ numInp.value=TARGET_MIN; numInp.dispatchEvent(new Event('input',{bubbles:true})); }
+      if(slider){ slider.value=TARGET_MIN; }
+      syncDisplayVal(TARGET_MIN);
+      syncStep1NextBtn();
+      updateHybridBadge();
+      // Hide summary bar, re-show steps, back to Step 1, hide main grid
+      hideSummaryBar();
+      for(var i=1;i<=3;i++){
+        var s=getStep(i);
+        if(s){ s.classList.remove('wiz-active','wiz-done','wiz-locked'); if(i===1) s.classList.add('wiz-active'); else s.classList.add('wiz-locked'); }
+      }
+      var actions=document.getElementById('flowActions');
+      if(actions) actions.classList.remove('wiz-visible');
+      hideStartBar();
+      var mg = document.getElementById('mainGrid');
+      if(mg) mg.classList.add('wiz-locked-grid');
+    });
+
+    // Summary bar Edit Settings button — re-show steps in their current state
+    var summaryEditBtn=document.getElementById('wizSummaryEditBtn');
+    if(summaryEditBtn) summaryEditBtn.addEventListener('click', function(){
+      hideSummaryBar();
+      // Main grid stays visible while reviewing done steps (wizard already completed once)
+      // Steps remain in their wiz-done state; user can click any ✏ Edit to re-open a step
+    });
+
+    // Returning user — check for saved prefs
+    var saved=loadPrefs();
+    if(saved && saved.style && saved.style.length){
+      initRecapBanner(saved);
+    }
+
+    // Initial sync
+    syncStep1NextBtn();
+    syncRadioUI();
+    updateHybridBadge();
+
+  } catch(e){ console.warn('Wizard flow init failed', e); }
 })();
 
 (function initBanner(){
