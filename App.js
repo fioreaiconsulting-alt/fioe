@@ -2168,9 +2168,9 @@ function CandidatesTable({
       `<Column ss:Width="${['linkedinurl','skillset'].includes(col.header) ? 200 : 110}"/>`
     ).join('');
 
-    // Data validation — use workbook-level named ranges pointing to a hidden DropdownValues sheet.
-    // SpreadsheetML 2003 DataValidation <Value> cannot resolve cross-sheet references directly;
-    // it CAN resolve named ranges defined in the workbook <Names> section.
+    // Data validation — inline comma-separated list values using the x: namespace prefix.
+    // This is the format Excel itself generates when saving as XML Spreadsheet 2003,
+    // and avoids all cross-sheet reference / named-range resolution issues.
     const maxVRows = Math.max((allCandidates || []).length + 2, 1001);
     const geoCol    = S1_COLS.findIndex(c => c.header === 'geographic')     + 1;
     const senCol    = S1_COLS.findIndex(c => c.header === 'seniority')      + 1;
@@ -2180,36 +2180,20 @@ function CandidatesTable({
     const ST_VALS_FALLBACK = ['Reviewing','Contacted','Unresponsive','Declined','Unavailable','Screened','Not Proceeding','Prospected'];
     const ST_VALS   = (statusOptions || []).length ? statusOptions : ST_VALS_FALLBACK;
 
-    // Build the hidden DropdownValues sheet (col A=Geographic, B=Seniority, C=SourcingStatus).
-    const dvMaxRows = Math.max(GEO_VALS.length, SEN_VALS.length, ST_VALS.length);
-    const dvRows = Array.from({ length: dvMaxRows }, (_, i) =>
-      `<Row>` +
-      `<Cell><Data ss:Type="String">${ex(GEO_VALS[i] || '')}</Data></Cell>` +
-      `<Cell><Data ss:Type="String">${ex(SEN_VALS[i] || '')}</Data></Cell>` +
-      `<Cell><Data ss:Type="String">${ex(ST_VALS[i]  || '')}</Data></Cell>` +
-      `</Row>`
-    ).join('');
-
-    // Workbook-level named ranges — <Value> in a List DataValidation can reference these by name.
-    const namesXml =
-      `<Names>\n` +
-      ` <NamedRange ss:Name="GeographicList" ss:RefersTo="=DropdownValues!$A$1:$A$${GEO_VALS.length}"/>\n` +
-      ` <NamedRange ss:Name="SeniorityList"  ss:RefersTo="=DropdownValues!$B$1:$B$${SEN_VALS.length}"/>\n` +
-      ` <NamedRange ss:Name="StatusList"     ss:RefersTo="=DropdownValues!$C$1:$C$${ST_VALS.length}"/>\n` +
-      `</Names>`;
-
-    // DataValidation — <Value> contains just the named-range name (no sheet reference, no formula prefix).
-    const makeValidation = (col1, namedRange) => {
-      if (!col1 || !namedRange) return '';
-      return `<DataValidation xmlns="urn:schemas-microsoft-com:office:excel">\n` +
-             ` <Range>R2C${col1}:R${maxVRows}C${col1}</Range>\n` +
-             ` <Type>List</Type>\n` +
-             ` <Value>${namedRange}</Value>\n</DataValidation>`;
+    // Build each DataValidation block using the workbook-level x: namespace prefix.
+    // <Value> contains plain comma-separated items — no sheet refs, no named ranges.
+    // x: namespace is declared at workbook root: xmlns:x="urn:schemas-microsoft-com:office:excel"
+    const makeValidation = (col1, vals) => {
+      if (!col1 || !vals || !vals.length) return '';
+      return `<x:DataValidation>\n` +
+             ` <x:Range>R2C${col1}:R${maxVRows}C${col1}</x:Range>\n` +
+             ` <x:Type>List</x:Type>\n` +
+             ` <x:Value>${vals.map(v => ex(v)).join(',')}</x:Value>\n</x:DataValidation>`;
     };
     const validationXml = [
-      makeValidation(geoCol, 'GeographicList'),
-      makeValidation(senCol, 'SeniorityList'),
-      makeValidation(stCol,  'StatusList'),
+      makeValidation(geoCol, GEO_VALS),
+      makeValidation(senCol, SEN_VALS),
+      makeValidation(stCol,  ST_VALS),
     ].filter(Boolean).join('\n');
 
     // Sheet 2: full candidate JSON rows — one JSON object per row in column A.
@@ -2229,7 +2213,6 @@ function CandidatesTable({
 ` xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n` +
 ` xmlns:html="http://www.w3.org/TR/REC-html40">\n` +
 ` <Styles><Style ss:ID="hdr"><Font ss:Bold="1"/></Style></Styles>\n` +
-` ${namesXml}\n` +
 ` <Worksheet ss:Name="Candidate Data">\n` +
 `  <Table ss:DefaultColumnWidth="110">${colDefs}${headerRow}${dataRows}</Table>\n` +
 `  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">\n` +
@@ -2243,12 +2226,6 @@ function CandidatesTable({
 ` </Worksheet>\n` +
 ` <Worksheet ss:Name="DB Copy" ss:Visibility="Hidden">\n` +
 `  <Table>${jsonHeaderRow}${jsonRows}</Table>\n` +
-` </Worksheet>\n` +
-` <Worksheet ss:Name="DropdownValues" ss:Visibility="Hidden">\n` +
-`  <Table>\n` +
-`   <Column ss:Width="150"/><Column ss:Width="100"/><Column ss:Width="130"/>\n` +
-`   ${dvRows}\n` +
-`  </Table>\n` +
 ` </Worksheet>\n` +
 `</Workbook>`;
 
