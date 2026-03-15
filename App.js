@@ -1510,6 +1510,7 @@ function CandidatesTable({
   const DEFAULT_WIDTH = 140;
   const MIN_WIDTH = 90;
   const GLOBAL_MAX_WIDTH = 500;
+  const COLUMN_WIDTHS_KEY = 'candidatesTableColWidths';
   const FIELD_MAX_WIDTHS = { skillset: 900 };
 
   const [selectedIds, setSelectedIds] = useState([]);
