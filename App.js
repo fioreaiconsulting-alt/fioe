@@ -1549,6 +1549,7 @@ function CandidatesTable({
   const dockInResumeMatchesRef = useRef([]); // ref copy to avoid stale-closure in handleDockIn
   const dockInResumeInlineRef = useRef(null); // hidden resume input – inline wizard
   const dockInResumeModalRef = useRef(null);  // hidden resume input – modal wizard
+  const [dockInResumeDragOver, setDockInResumeDragOver] = useState(false); // drag-over state for Step 4 drop zone
   // Step 3 (analytic mode) — Role & Skillset Confirmation
   const [dockInRoleTagPairs, setDockInRoleTagPairs] = useState([]); // [{roleTag, jskillset}] unique pairs from DB Copy
   const [dockInSelectedPair, setDockInSelectedPair] = useState(null); // {roleTag, jskillset} confirmed by user
@@ -2305,6 +2306,10 @@ function CandidatesTable({
       // DB Copy JSON is supplemental: it fills any field absent from Sheet 1.
       // DB Copy cannot introduce records not present in Sheet 1.
       const MANDATORY_DOCK_FIELDS = ['name', 'company', 'jobtitle', 'country'];
+      // Compute max existing ID from DB Copy rows so new records receive sequential IDs.
+      // Example: if the largest DB Copy ID is 17225, new records get 17226, 17227, …
+      const dbMaxId = getMaxDbId(dbRows);
+      let newRecordSeq = 0;
       const merged = s1Rows.map((s1Row, i) => {
         const dbRow = dbRows[i] || {};
         const out   = { ...dbRow }; // start with DB Copy metadata as base (userid, supplemental fields, etc.)
@@ -2312,11 +2317,11 @@ function CandidatesTable({
           const v = s1Row[s1Col];
           if (v !== undefined && String(v).trim() !== '') out[dbKey] = v; // Sheet 1 overrides
         }
-        // For new records (no userid), remove any client-side generated id to let the server
-        // auto-assign via PostgreSQL sequence. This avoids integer overflow errors when a
-        // timestamp-based id (e.g. 1773586616519) exceeds the 32-bit integer column range.
+        // For new records (no userid), assign a sequential ID derived from the DB Copy's
+        // maximum existing ID to keep values within PostgreSQL INT range.
         if (!out.userid) {
-          delete out.id;
+          newRecordSeq++;
+          out.id = dbMaxId + newRecordSeq;
         }
         return out;
       });
@@ -2434,16 +2439,49 @@ function CandidatesTable({
             try {
               setDockInAnalyticProgress('Running extended inference (rating, seniority, sector, job family…)');
               setDockInAnalyticPct(72);
-              await fetch('http://localhost:8091/process/bulk_assess', {
+              // Use async mode so the progress bar stays alive until the assessment
+              // is genuinely complete rather than finishing as soon as the HTTP request
+              // returns (which happened almost immediately when CV was not yet ready).
+              const bulkRes = await fetch('http://localhost:8091/process/bulk_assess', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({
                   linkedinurls: eligibleLinkedinUrls,
                   assessment_level: 'L2',
-                  async: false,
+                  async: true,
                 }),
               });
+              if (bulkRes.ok) {
+                const bulkData = await bulkRes.json();
+                const jobId = bulkData && bulkData.job_id;
+                if (jobId) {
+                  // Poll until the server-side job finishes
+                  let pollDone = false;
+                  while (!pollDone) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    try {
+                      const statusRes = await fetch(`http://localhost:8091/process/bulk_assess_status/${jobId}`, {
+                        credentials: 'include',
+                      });
+                      if (statusRes.ok) {
+                        const statusData = await statusRes.json();
+                        // Map job progress (0–100) into the 72–95 bar segment
+                        const jobPct = statusData.progress || 0;
+                        setDockInAnalyticPct(72 + Math.round(jobPct * 23 / 100));
+                        if (statusData.status === 'done' || statusData.status === 'error') {
+                          pollDone = true;
+                        }
+                      } else {
+                        pollDone = true; // non-2xx status — stop polling
+                      }
+                    } catch (pollErr) {
+                      console.warn('[Analytic DB] Polling bulk_assess status failed:', pollErr && pollErr.message);
+                      pollDone = true;
+                    }
+                  }
+                }
+              }
               setDockInAnalyticPct(95);
             } catch (bulkErr) {
               console.warn('[Analytic DB] Bulk extended inference failed:', bulkErr && bulkErr.message);
@@ -2472,6 +2510,13 @@ function CandidatesTable({
       if (analyticMode) setDockInAnalyticProgress('');
     });
   };
+
+  // ── Resume name matching helper ──
+  // Returns the largest numeric id found in an array of row objects.
+  const getMaxDbId = rows => rows.reduce((max, row) => {
+    const v = parseInt(row.id || 0, 10);
+    return !isNaN(v) && v > max ? v : max;
+  }, 0);
 
   // ── Resume name matching helper ──
   // Strips extension and normalises punctuation/case before comparing.
@@ -2554,17 +2599,19 @@ function CandidatesTable({
             try { return JSON.parse(jsonStr); } catch (_) { return null; }
           })
           .filter(Boolean);
+        // Find the maximum existing ID from DB Copy rows so new records get
+        // sequential IDs starting at max+1 (safe for PostgreSQL INT range).
+        const dbCopyMaxId = getMaxDbId(dbCopyObjects);
         // Iterate over Sheet 1 rows — the authoritative source of new records
-        const peekIdBase = Date.now() + Math.floor(Math.random() * 10000); // unique base per peek session
         s1Rows.forEach((s1Row, i) => {
           const dbObj = dbCopyObjects[i] || {};
           // Existing record: userid is present in the corresponding DB Copy JSON entry
           if (dbObj.userid) return;
           newCount++;
           const displayName = String(s1Row['name'] || dbObj.name || `Row ${i + 2}`).trim();
-          // Generate a unique numeric ID for this new record (used for tracking through the wizard
-          // and passed to the server as an explicit id so it is stored in the process table).
-          const tempId = peekIdBase + i;
+          // Assign sequential ID: max(id in DB Copy) + position among new records.
+          // Example: if largest DB Copy ID is 17225, first new record gets 17226, second 17227, etc.
+          const tempId = dbCopyMaxId + newCount;
           newRecordsList.push({ tempId, name: displayName, row: i + 2 });
           // Validate mandatory fields: Sheet 1 is authoritative; DB Copy JSON as fallback
           const missing = MANDATORY.filter(f => String(s1Row[f] || dbObj[f] || '').trim() === '');
@@ -3015,10 +3062,25 @@ sigSheet +
                 role="button" tabIndex={0}
                 onClick={() => dockInResumeInlineRef.current && dockInResumeInlineRef.current.click()}
                 onKeyDown={e => e.key === 'Enter' && dockInResumeInlineRef.current && dockInResumeInlineRef.current.click()}
-                style={{ border: '2px dashed #4c82b8', borderRadius: 10, padding: '28px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 16, background: '#f7fbff' }}
+                onDragOver={e => { e.preventDefault(); setDockInResumeDragOver(true); }}
+                onDragLeave={() => setDockInResumeDragOver(false)}
+                onDrop={e => {
+                  e.preventDefault();
+                  setDockInResumeDragOver(false);
+                  const files = Array.from(e.dataTransfer.files || []).filter(f => /\.(pdf|doc|docx)$/i.test(f.name));
+                  if (!files.length) return;
+                  setDockInResumeFiles(files);
+                  const matches = dockInNewRecords.map(rec => ({
+                    record: rec,
+                    file: files.find(f => resumeMatchesRecord(f, rec.name)) || null,
+                  }));
+                  setDockInResumeMatches(matches);
+                  dockInResumeMatchesRef.current = matches;
+                }}
+                style={{ border: `2px dashed ${dockInResumeDragOver ? '#073679' : '#4c82b8'}`, borderRadius: 10, padding: '28px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 16, background: dockInResumeDragOver ? '#e8f1fb' : '#f7fbff', transition: 'background 0.2s, border-color 0.2s' }}
               >
                 <div style={{ fontSize: 36, marginBottom: 8 }}>📎</div>
-                <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to select resume files (PDF / DOC / DOCX)</div>
+                <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click or drag &amp; drop resume files (PDF / DOC / DOCX)</div>
                 <div style={{ fontSize: 12, color: '#87888a' }}>{dockInResumeFiles.length > 0 ? `${dockInResumeFiles.length} file(s) selected` : 'Select one or more resume files'}</div>
               </div>
               {dockInResumeMatches.length > 0 && (
@@ -3744,10 +3806,25 @@ sigSheet +
                   role="button" tabIndex={0}
                   onClick={() => dockInResumeModalRef.current && dockInResumeModalRef.current.click()}
                   onKeyDown={e => e.key === 'Enter' && dockInResumeModalRef.current && dockInResumeModalRef.current.click()}
-                  style={{ border: '2px dashed #4c82b8', borderRadius: 10, padding: '24px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 14, background: '#f7fbff' }}
+                  onDragOver={e => { e.preventDefault(); setDockInResumeDragOver(true); }}
+                  onDragLeave={() => setDockInResumeDragOver(false)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setDockInResumeDragOver(false);
+                    const files = Array.from(e.dataTransfer.files || []).filter(f => /\.(pdf|doc|docx)$/i.test(f.name));
+                    if (!files.length) return;
+                    setDockInResumeFiles(files);
+                    const matches = dockInNewRecords.map(rec => ({
+                      record: rec,
+                      file: files.find(f => resumeMatchesRecord(f, rec.name)) || null,
+                    }));
+                    setDockInResumeMatches(matches);
+                    dockInResumeMatchesRef.current = matches;
+                  }}
+                  style={{ border: `2px dashed ${dockInResumeDragOver ? '#073679' : '#4c82b8'}`, borderRadius: 10, padding: '24px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 14, background: dockInResumeDragOver ? '#e8f1fb' : '#f7fbff', transition: 'background 0.2s, border-color 0.2s' }}
                 >
                   <div style={{ fontSize: 30, marginBottom: 6 }}>📎</div>
-                  <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4, fontSize: 13 }}>Click to select resume files (PDF / DOC / DOCX)</div>
+                  <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4, fontSize: 13 }}>Click or drag &amp; drop resume files (PDF / DOC / DOCX)</div>
                   <div style={{ fontSize: 12, color: '#87888a' }}>{dockInResumeFiles.length > 0 ? `${dockInResumeFiles.length} file(s) selected` : 'Select one or more resume files'}</div>
                 </div>
                 {dockInResumeMatches.length > 0 && (

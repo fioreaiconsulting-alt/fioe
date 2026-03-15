@@ -4799,7 +4799,21 @@ def process_bulk_assess():
                 else:
                     logger.info(f"[BULK_ASSESS] No product data in DB for {linkedinurl[:50]}")
             
-            # Check if CV is uploaded - if not, skip assessment
+            # Check if CV is uploaded - if not, retry briefly in case the CV was just
+            # committed by upload_multiple_cvs moments before this call arrived.
+            if not cv_data and row:
+                for _retry in range(3):
+                    time.sleep(2)
+                    try:
+                        cur.execute("SELECT cv FROM process WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                        _cv_row = cur.fetchone()
+                        if _cv_row and _cv_row[0]:
+                            cv_data = _cv_row[0]
+                            logger.info(f"[BULK_ASSESS] CV found after {(_retry+1)*2}s retry for {linkedinurl[:50]}")
+                            break
+                    except Exception as _e:
+                        logger.debug(f"[BULK_ASSESS] CV retry query error (attempt {_retry+1}): {_e}")
+                        conn.rollback()
             if not cv_data:
                 logger.info(f"[BULK_ASSESS] Skipping {linkedinurl[:50]} - No CV uploaded (Assessment pending)")
                 return {
