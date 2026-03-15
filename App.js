@@ -2230,8 +2230,8 @@ function CandidatesTable({
   const handleDockIn = (file, analyticMode = false) => {
     if (!file) { setDockInError('❌ No file selected. Please choose an Excel file exported via DB Port.'); return; }
     const ext = file.name.split('.').pop().toLowerCase();
-    if (ext !== 'xlsx' && ext !== 'xls') {
-      setDockInError(`❌ Rejected: "${file.name}" is not an Excel file. DB Dock In only accepts .xlsx or .xls files exported via DB Port.`);
+    if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'xml') {
+      setDockInError(`❌ Rejected: "${file.name}" is not an Excel file. DB Dock In only accepts .xlsx, .xls, or .xml (XML Spreadsheet) files exported via DB Port.`);
       return;
     }
     setDockInUploading(true);
@@ -2305,7 +2305,6 @@ function CandidatesTable({
       // DB Copy JSON is supplemental: it fills any field absent from Sheet 1.
       // DB Copy cannot introduce records not present in Sheet 1.
       const MANDATORY_DOCK_FIELDS = ['name', 'company', 'jobtitle', 'country'];
-      const newRecordIdBase = Date.now() + Math.floor(Math.random() * 10000); // unique per dock-in session
       const merged = s1Rows.map((s1Row, i) => {
         const dbRow = dbRows[i] || {};
         const out   = { ...dbRow }; // start with DB Copy metadata as base (userid, supplemental fields, etc.)
@@ -2313,10 +2312,11 @@ function CandidatesTable({
           const v = s1Row[s1Col];
           if (v !== undefined && String(v).trim() !== '') out[dbKey] = v; // Sheet 1 overrides
         }
-        // Generate a unique ID for new records (no userid and no id from DB Copy).
-        // The server accepts explicit IDs and advances the sequence to prevent conflicts.
-        if (!out.userid && !out.id) {
-          out.id = newRecordIdBase + i;
+        // For new records (no userid), remove any client-side generated id to let the server
+        // auto-assign via PostgreSQL sequence. This avoids integer overflow errors when a
+        // timestamp-based id (e.g. 1773586616519) exceeds the 32-bit integer column range.
+        if (!out.userid) {
+          delete out.id;
         }
         return out;
       });
@@ -2834,8 +2834,7 @@ sigSheet +
               {/* Hidden file input for inline wizard */}
               <input
                 type="file"
-                accept=".xlsx,.xls"
-                ref={dockInInlineFileRef}
+                accept=".xlsx,.xls,.xml"
                 style={{ display: 'none' }}
                 onChange={e => {
                   const f = e.target.files[0];
@@ -2850,7 +2849,7 @@ sigSheet +
                   }
                 }}
               />
-              <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>Choose the <strong>DB Port export file</strong> (.xlsx / .xls) to dock.</p>
+              <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>Choose the <strong>DB Port export file</strong> (.xlsx / .xls / .xml) to dock.</p>
               <div
                 role="button" tabIndex={0}
                 onClick={() => dockInInlineFileRef.current && dockInInlineFileRef.current.click()}
@@ -2866,7 +2865,7 @@ sigSheet +
                   <>
                     <div style={{ fontSize: 40, marginBottom: 10 }}>📂</div>
                     <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to browse for a DB Port export</div>
-                    <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx and .xls files only</div>
+                    <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx, .xls, and .xml (XML Spreadsheet) files</div>
                   </>
                 )}
               </div>
@@ -3106,14 +3105,14 @@ sigSheet +
             {/* Hidden file inputs: one for legacy direct import, one for wizard */}
             <input
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xls,.xml"
               ref={dockInRef}
               style={{ display: 'none' }}
               onChange={e => { const f = e.target.files[0]; e.target.value = ''; if (f) handleDockIn(f); }}
             />
             <input
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xls,.xml"
               ref={dockInWizFileRef}
               style={{ display: 'none' }}
               onChange={e => {
@@ -3582,7 +3581,7 @@ sigSheet +
             {dockInWizStep === 2 && (
               <div>
                 <p style={{ margin: '0 0 16px', color: '#444', fontSize: 14 }}>
-                  Choose the <strong>DB Port export file</strong> (.xlsx / .xls) to dock.
+                  Choose the <strong>DB Port export file</strong> (.xlsx / .xls / .xml) to dock.
                 </p>
                 <div
                   role="button"
@@ -3596,18 +3595,7 @@ sigSheet +
                 >
                   <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
                   <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to browse for a DB Port export</div>
-                  <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx and .xls files only</div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button
-                    onClick={() => setDockInWizStep(1)}
-                    style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
-                  >← Back</button>
-                </div>
-              </div>
-            )}
-
-            {/* ── Step 3 (analytic): Role & Skillset Confirmation ── */}
+                  <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx, .xls, and .xml (XML Spreadsheet) files</div>
             {dockInWizStep === 3 && isAnalyticWiz && (
               <div>
                 <p style={{ margin: '0 0 14px', color: '#444', fontSize: 14 }}>
@@ -4674,8 +4662,8 @@ function CandidateUpload({ onUpload }) {
     if (!file) { setError('Please select an Excel file exported via DB Port.'); return; }
     setUploading(true);
     const ext = file.name.split('.').pop().toLowerCase();
-    if (ext !== 'xlsx' && ext !== 'xls') {
-      setError('DB Dock & Deploy only accepts Excel files (.xlsx / .xls) exported via DB Port.');
+    if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'xml') {
+      setError('DB Dock & Deploy only accepts Excel files (.xlsx / .xls / .xml) exported via DB Port.');
       setUploading(false);
       return;
     }
@@ -4761,7 +4749,7 @@ function CandidateUpload({ onUpload }) {
       </div>
       {expanded && (
         <div style={{ padding: '8px 0' }}>
-          <input type="file" accept=".xlsx,.xls" onChange={handleFileChange}/>
+          <input type="file" accept=".xlsx,.xls,.xml" onChange={handleFileChange}/>
           <button
             onClick={handleUpload}
             disabled={uploading}
@@ -4777,7 +4765,7 @@ function CandidateUpload({ onUpload }) {
           >{uploading?'Deploying...':'Deploy'}</button>
           {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
           <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
-            Accepts DB Port exports only (.xlsx / .xls). Column schema is sourced from the DB Copy sheet; values are taken from the Candidate Data tab.
+            Accepts DB Port exports only (.xlsx / .xls / .xml). Column schema is sourced from the DB Copy sheet; values are taken from the Candidate Data tab.
           </div>
         </div>
       )}
