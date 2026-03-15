@@ -2345,11 +2345,26 @@ function CandidatesTable({
             if (analyticMode) { setDockInAnalyticProgress('Uploading matched resumes…'); setDockInAnalyticPct(3); }
             const formData = new FormData();
             matchedResumes.forEach(m => formData.append('files', m.file));
-            await fetch('http://localhost:8091/process/upload_multiple_cvs', {
+            const cvUploadRes = await fetch('http://localhost:8091/process/upload_multiple_cvs', {
               method: 'POST',
               credentials: 'include',
               body: formData,
             });
+            if (cvUploadRes.ok) {
+              try {
+                const cvUploadData = await cvUploadRes.json();
+                if (cvUploadData.uploaded_count === 0) {
+                  console.warn('[Dock In] CV upload returned 0 matches — CVs may not have been linked to process records.', cvUploadData.errors);
+                  if (analyticMode) {
+                    setDockInAnalyticProgress(`⚠️ CV upload: 0 of ${matchedResumes.length} file(s) matched to a record — continuing with analysis…`);
+                  }
+                } else if (cvUploadData.errors && cvUploadData.errors.length > 0) {
+                  console.warn('[Dock In] CV upload partial errors:', cvUploadData.errors);
+                }
+              } catch (jsonErr) {
+                console.warn('[Dock In] CV upload response was not valid JSON:', jsonErr && jsonErr.message);
+              }
+            }
           } catch (resumeErr) {
             console.warn('[Dock In] Resume upload failed (non-fatal):', resumeErr && resumeErr.message);
             if (analyticMode) {

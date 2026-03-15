@@ -2368,6 +2368,30 @@ def process_upload_multiple_cvs():
             }
             candidate_map.setdefault(norm, []).append(entry)
 
+        # Supplement the name map with records from the process table so that
+        # newly docked candidates (inserted by /candidates/bulk but not yet in
+        # sourcing) can still be matched by filename.  Sourcing records take
+        # priority — we only add a process entry when the normalised name is
+        # not already covered by sourcing.  Only include rows without a CV
+        # (cv IS NULL) since records that already have a CV don't need matching.
+        try:
+            cur.execute("SELECT id, name, linkedinurl, company, jobtitle, country, username, userid FROM process WHERE name IS NOT NULL AND name != '' AND cv IS NULL")
+            process_rows = cur.fetchall()
+            for prow in process_rows:
+                pid2, pname, plink, pcomp, pjob, pctry, puname, puid = prow
+                pnorm = normalize_name(pname)
+                if len(pnorm) < 3 or pnorm in candidate_map:
+                    continue  # sourcing entry already covers this name
+                clean_pname = clean_name_for_display(pname)
+                pentry = {
+                    "id": pid2, "name": clean_pname, "linkedinurl": plink,
+                    "company": pcomp, "jobtitle": pjob, "country": pctry,
+                    "username": puname, "userid": puid
+                }
+                candidate_map.setdefault(pnorm, []).append(pentry)
+        except Exception as _proc_map_err:
+            logger.warning(f"[Upload Multiple CVs] Could not supplement name map from process table: {_proc_map_err}")
+
         uploaded_count = 0
         errors = []
         uploaded_profiles = []  # Track successfully uploaded profiles
