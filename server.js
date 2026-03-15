@@ -1400,27 +1400,73 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
       userJskillset = null;
     }
 
-    // Map normalized keys to process table column names
-    const allProcessCols = normKeys.map(k => processColumnMap[k] || k);
+    // Editable column keys (exclude 'id' — never update the primary key)
+    const updateNormKeys = normKeys.filter(k => k !== 'id');
 
-    // Separate rows: those with a valid id (upsert) and those without (plain insert)
-    const upsertRows = normalized.filter(r => r.id != null);
-    const insertRows = normalized.filter(r => r.id == null);
+    // ── Identity matching: fetch existing records by (userid, linkedinurl) ────
+    // Normalise to lowercase so matching is case-insensitive on both sides
+    const incomingLinkedInUrls = normalized
+      .map(r => r.linkedinurl ? r.linkedinurl.trim().toLowerCase() : '')
+      .filter(u => u !== '');
 
-    // Columns for plain insert (exclude 'id' so SERIAL auto-generates)
-    const insertNormKeys = normKeys.filter(k => k !== 'id');
-    const insertProcCols = insertNormKeys.map(k => processColumnMap[k] || k);
-    insertProcCols.push('userid', 'username', 'jskillset');
+    const existingByLinkedin = {};   // lowercase linkedinurl → existing DB row id
+    if (incomingLinkedInUrls.length > 0) {
+      const existingRes = await pool.query(
+        `SELECT id, linkedinurl FROM "process" WHERE userid = $1 AND LOWER(linkedinurl) = ANY($2::text[])`,
+        [req.user.id, incomingLinkedInUrls]
+      );
+      existingRes.rows.forEach(row => {
+        if (row.linkedinurl) existingByLinkedin[row.linkedinurl.trim().toLowerCase()] = row.id;
+      });
+    }
 
-    // Columns for upsert (include 'id')
-    const upsertProcCols = [...allProcessCols, 'userid', 'username', 'jskillset'];
-    // Columns to update on conflict (all except 'id')
-    const updateCols = upsertProcCols.filter(c => c !== 'id');
+    // Split: rows whose linkedinurl matches an existing record → UPDATE (file authoritative)
+    //        rows with no linkedinurl match → INSERT (new records)
+    const updateRows = [];
+    const insertRows = [];
+    normalized.forEach(row => {
+      const key = row.linkedinurl ? row.linkedinurl.trim().toLowerCase() : '';
+      if (key && existingByLinkedin[key] !== undefined) {
+        updateRows.push({ ...row, matchedId: existingByLinkedin[key] });
+      } else {
+        insertRows.push(row);
+      }
+    });
 
     let totalAffected = 0;
 
-    // ── Plain INSERT for rows without id ──────────────────────────────────────
+    // ── UPDATE existing records (authoritative: file values override DB) ──────
+    for (const row of updateRows) {
+      const setClauses = [];
+      const vals = [];
+      let pi = 1;
+      updateNormKeys.forEach(k => {
+        let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
+        if (v === '') v = null;
+        if (k === 'seniority' && v != null && String(v).trim() !== '') {
+          v = standardizeSeniority(v) || null;
+        }
+        setClauses.push(`${processColumnMap[k] || k} = $${pi++}`);
+        vals.push(v);
+      });
+      vals.push(req.user.id);       // WHERE userid
+      vals.push(row.matchedId);     // WHERE id
+      await pool.query(
+        `UPDATE "process" SET ${setClauses.join(', ')} WHERE userid = $${pi} AND id = $${pi + 1}`,
+        vals
+      );
+      totalAffected++;
+      try {
+        await ensureCanonicalFieldsForId(row.matchedId, row.organisation || null, row.role || '', null);
+      } catch (e) { console.warn('[BULK_CANON] update row', e && e.message); }
+    }
+
+    // ── INSERT new records (no matching linkedinurl found in DB) ──────────────
     if (insertRows.length > 0) {
+      const insertNormKeys = normKeys.filter(k => k !== 'id');
+      const insertProcCols = insertNormKeys.map(k => processColumnMap[k] || k);
+      insertProcCols.push('userid', 'username', 'jskillset');
+
       const insertValues = [];
       const insertPlaceholders = insertRows.map((row, i) => {
         const start = i * insertProcCols.length + 1;
@@ -1428,8 +1474,7 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
           let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
           if (v === '') v = null;
           if (k === 'seniority' && v != null && String(v).trim() !== '') {
-            const std = standardizeSeniority(v);
-            v = std || null;
+            v = standardizeSeniority(v) || null;
           }
           insertValues.push(v);
         });
@@ -1449,44 +1494,6 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
           await ensureCanonicalFieldsForId(insResult.rows[i].id, src.organisation || null, src.role || '', null);
         }
       } catch (e) { console.warn('[BULK_CANON] insert rows', e && e.message); }
-    }
-
-    // ── UPSERT for rows with id (ON CONFLICT (id) DO UPDATE) ─────────────────
-    if (upsertRows.length > 0) {
-      const upsertValues = [];
-      const upsertPlaceholders = upsertRows.map((row, i) => {
-        const start = i * upsertProcCols.length + 1;
-        normKeys.forEach(k => {
-          let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
-          if (v === '') v = null;
-          if (k === 'seniority' && v != null && String(v).trim() !== '') {
-            const std = standardizeSeniority(v);
-            v = std || null;
-          }
-          upsertValues.push(v);
-        });
-        upsertValues.push(req.user.id);
-        upsertValues.push(req.user.username);
-        upsertValues.push(userJskillset);
-        return `(${Array.from({ length: upsertProcCols.length }, (_, j) => `$${start + j}`).join(',')})`;
-      }).join(',');
-
-      const updateSetClause = updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ');
-      const upsertSql = `
-        INSERT INTO "process" (${upsertProcCols.join(', ')})
-        VALUES ${upsertPlaceholders}
-        ON CONFLICT (id) DO UPDATE SET ${updateSetClause}
-        RETURNING id
-      `;
-      const upsResult = await pool.query(upsertSql, upsertValues);
-      totalAffected += upsResult.rowCount;
-
-      try {
-        for (let i = 0; i < upsResult.rows.length; i++) {
-          const src = upsertRows[i];
-          await ensureCanonicalFieldsForId(upsResult.rows[i].id, src.organisation || null, src.role || '', null);
-        }
-      } catch (e) { console.warn('[BULK_CANON] upsert rows', e && e.message); }
     }
 
     console.log('Upserted/inserted rows into process:', totalAffected);
