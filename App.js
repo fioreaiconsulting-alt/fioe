@@ -3353,95 +3353,91 @@ function CandidateUpload({ onUpload }) {
 
   const handleFileChange = e => { setFile(e.target.files[0]); setError(''); };
 
-  const handleUpload=()=>{
-    if(!file){ setError('Please select a CSV or Excel file.'); return; }
+  // S1 column names (from Candidate Data tab) mapped to the field name used in the
+  // DB Copy JSON — used to overlay Sheet 1 editable values on top of DB Copy metadata.
+  const S1_TO_DB = {
+    name: 'name', company: 'company', jobtitle: 'jobtitle', country: 'country',
+    linkedinurl: 'linkedinurl', product: 'product', sector: 'sector',
+    jobfamily: 'jobfamily', geographic: 'geographic', seniority: 'seniority',
+    skillset: 'skillset', sourcingstatus: 'sourcingstatus', email: 'email',
+    mobile: 'mobile', office: 'office', comment: 'comment', compensation: 'compensation',
+  };
+
+  const handleUpload = () => {
+    if (!file) { setError('Please select an Excel file exported via DB Port.'); return; }
     setUploading(true);
-    const ext=file.name.split('.').pop().toLowerCase();
-    if(ext==='csv'){
-      Papa.parse(file,{
-        header:true,
-        complete: async results=>{
-          const headers = results.meta.fields || [];
-          const headerErr = validateUploadHeaders(headers);
-          if (headerErr) { setError(headerErr); setUploading(false); return; }
-          const candidates=results.data.filter(r=> r && r.id).map(mapRow);
-          try{
-            const res=await fetch('http://localhost:4000/candidates/bulk',{
-              method:'POST',
-              headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
-              body: JSON.stringify({ candidates }),
-              credentials:'include' // Important for cookie
-            });
-            if(!res.ok) throw new Error();
-            setFile(null); setError(''); onUpload && onUpload();
-          }catch{
-            setError('Failed to upload candidates.');
-          }finally{ setUploading(false); }
-        },
-        error:()=>{ setError('Failed to parse CSV file.'); setUploading(false); }
-      });
-    } else if (ext==='xlsx' || ext==='xls'){
-      file.arrayBuffer().then(data=>{
-        const wb=XLSX.read(data);
-
-        // ── DB Port re-import: detect the hidden "DB Copy" JSON sheet ─────────
-        // When the file was exported via "DB Port", Sheet 2 ("DB Copy") is hidden
-        // and contains one JSON-stringified candidate object per row, with
-        // '__json_export_v1__' as a sentinel in the first cell.
-        const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
-        if (dbCopyName) {
-          const ws2 = wb.Sheets[dbCopyName];
-          const raw = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
-          if (raw.length > 0 && String(raw[0][0]).trim() === '__json_export_v1__') {
-            const candidates = raw.slice(1)
-              .filter(row => row[0])
-              .map(row => {
-                try { return JSON.parse(row[0]); }
-                catch (e) { console.warn('[DB Port re-import] Failed to parse JSON row:', e); return null; }
-              })
-              .filter(c => c && c.id);
-            if (candidates.length > 0) {
-              fetch('http://localhost:4000/candidates/bulk',{
-                method:'POST',
-                headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
-                body: JSON.stringify({ candidates }),
-                credentials:'include'
-              })
-              .then(res=>{ if(!res.ok) throw new Error(`Bulk upload failed with status ${res.status}`); setFile(null); setError(''); onUpload && onUpload(); })
-              .catch(()=> setError('Failed to upload candidates.'))
-              .finally(()=> setUploading(false));
-              return;
-            }
-          }
-        }
-        // ─────────────────────────────────────────────────────────────────────
-
-        const ws=wb.Sheets[wb.SheetNames[0]];
-        const json=XLSX.utils.sheet_to_json(ws);
-        const headers = json.length > 0 ? Object.keys(json[0]) : [];
-        const headerErr = validateUploadHeaders(headers);
-        if (headerErr) { setError(headerErr); setUploading(false); return; }
-        const candidates=json.filter(r=> r && r.id).map(mapRow);
-        fetch('http://localhost:4000/candidates/bulk',{
-          method:'POST',
-          headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
-          body: JSON.stringify({ candidates }),
-          credentials:'include'
-        })
-        .then(res=>{
-          if(!res.ok) throw new Error();
-            setFile(null); setError(''); onUpload && onUpload();
-        })
-        .catch(()=> setError('Failed to upload candidates.'))
-        .finally(()=> setUploading(false));
-      }).catch(()=>{
-        setError('Failed to parse Excel file.');
-        setUploading(false);
-      });
-    } else {
-      setError('Unsupported file type. Please select CSV, XLSX, or XLS.');
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext !== 'xlsx' && ext !== 'xls') {
+      setError('DB Dock & Deploy only accepts Excel files (.xlsx / .xls) exported via DB Port.');
       setUploading(false);
+      return;
     }
+    file.arrayBuffer().then(data => {
+      const wb = XLSX.read(data);
+
+      // ── Require DB Copy sheet with __json_export_v1__ sentinel ───────────────
+      const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
+      if (!dbCopyName) {
+        setError('This file was not exported via DB Port. Please use a DB Port export (must contain a "DB Copy" sheet).');
+        setUploading(false);
+        return;
+      }
+      const ws2  = wb.Sheets[dbCopyName];
+      const raw  = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
+      if (!raw.length || String(raw[0][0]).trim() !== '__json_export_v1__') {
+        setError('DB Copy sheet is missing or unrecognised. Only DB Port exports are accepted.');
+        setUploading(false);
+        return;
+      }
+
+      // Parse DB Copy rows → provides id, userid, vskillset, jskillset, etc.
+      const dbRows = raw.slice(1)
+        .filter(row => row[0])
+        .map(row => {
+          try { return JSON.parse(row[0]); }
+          catch (e) { console.warn('[DB Dock] Failed to parse DB Copy row:', e); return null; }
+        })
+        .filter(c => c && c.id);
+
+      if (!dbRows.length) {
+        setError('No valid candidates found in DB Copy.');
+        setUploading(false);
+        return;
+      }
+
+      // Parse Candidate Data (Sheet 1) → provides editable field values.
+      // Row order matches DB Copy — aligned by index.
+      const ws1       = wb.Sheets[wb.SheetNames[0]];
+      const s1Rows    = XLSX.utils.sheet_to_json(ws1, { defval: '' });
+
+      // Merge: DB Copy supplies metadata; Sheet 1 overrides editable columns.
+      const candidates = dbRows.map((dbRow, i) => {
+        const s1Row  = s1Rows[i] || {};
+        const merged = { ...dbRow };
+        for (const [s1Col, dbKey] of Object.entries(S1_TO_DB)) {
+          const v = s1Row[s1Col];
+          if (v !== undefined && String(v).trim() !== '') merged[dbKey] = v;
+        }
+        return merged;
+      });
+      // ─────────────────────────────────────────────────────────────────────────
+
+      fetch('http://localhost:4000/candidates/bulk', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body:    JSON.stringify({ candidates }),
+        credentials: 'include',
+      })
+      .then(res => {
+        if (!res.ok) throw new Error(`DB Dock & Deploy failed with status ${res.status}`);
+        setFile(null); setError(''); onUpload && onUpload();
+      })
+      .catch(() => setError('Failed to deploy candidates.'))
+      .finally(() => setUploading(false));
+    }).catch(() => {
+      setError('Failed to parse Excel file.');
+      setUploading(false);
+    });
   };
   return (
     <div className="vskillset-section">
@@ -3450,12 +3446,12 @@ function CandidateUpload({ onUpload }) {
         onClick={() => setExpanded(!expanded)}
         style={{ cursor: 'pointer' }}
       >
-        <span className="vskillset-title">Bulk Upload Candidates (CSV/XLSX/XLS)</span>
+        <span className="vskillset-title">DB Dock &amp; Deploy</span>
         <span className="vskillset-arrow">{expanded ? '▼' : '▶'}</span>
       </div>
       {expanded && (
         <div style={{ padding: '8px 0' }}>
-          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange}/>
+          <input type="file" accept=".xlsx,.xls" onChange={handleFileChange}/>
           <button
             onClick={handleUpload}
             disabled={uploading}
@@ -3468,10 +3464,10 @@ function CandidateUpload({ onUpload }) {
               borderRadius:4,
               cursor:uploading?'not-allowed':'pointer'
             }}
-          >{uploading?'Uploading...':'Upload'}</button>
+          >{uploading?'Deploying...':'Deploy'}</button>
           {error && <div style={{ color:'var(--danger)', marginTop:8 }}>{error}</div>}
           <div style={{ fontSize:12, marginTop:8, color: 'var(--argent)' }}>
-            Columns supported: common candidate columns. Project_Title/Project Date variants are accepted but not required.
+            Accepts DB Port exports only (.xlsx / .xls). Column schema is sourced from the DB Copy sheet; values are taken from the Candidate Data tab.
           </div>
         </div>
       )}

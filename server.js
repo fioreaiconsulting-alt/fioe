@@ -1363,7 +1363,7 @@ const processColumnMap = {
 // ========== UPDATED: BULK INGESTIONsupports Project_Title and Project_Date and writes to process table ==========
 app.post('/candidates/bulk', requireLogin, async (req, res) => {
   let candidates = req.body.candidates;
-  console.log('==== Bulk Upload Candidates ====');
+  console.log('==== DB Dock & Deploy ====');
   console.log('Received candidates:', JSON.stringify(candidates, null, 2));
   if (!Array.isArray(candidates) || candidates.length === 0) {
     console.log('No candidates data provided!');
