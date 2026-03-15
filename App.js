@@ -2478,7 +2478,7 @@ function CandidatesTable({
   const peekFileForNewRecords = (file, mode) => {
     setDockInPeeking(true);
     setDockInError('');
-    file.arrayBuffer().then(data => {
+    file.arrayBuffer().then(async data => {
       try {
         const wb = XLSX.read(data);
         const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
@@ -2496,6 +2496,31 @@ function CandidatesTable({
           setDockInWizStep(mode === 'analytic' ? 5 : 4);
           handleDockIn(file, mode === 'analytic');
           return;
+        }
+        // ── Early signature verification ──
+        const sigSheetName = wb.SheetNames.find(n => n === 'Signature');
+        if (sigSheetName) {
+          try {
+            const sigWs  = wb.Sheets[sigSheetName];
+            const sigRaw = XLSX.utils.sheet_to_json(sigWs, { header: 1, defval: '' });
+            const sigB64 = String((sigRaw[0] || [])[0] || '').trim();
+            const pubB64 = String((sigRaw[1] || [])[0] || '').trim();
+            if (!sigB64 || !pubB64) throw new Error('Signature sheet is incomplete — one or both signature fields are missing.');
+            const rawJsonStrings = raw.slice(1)
+              .filter(row => row[0])
+              .map(row => row.filter(c => c != null).join(''));
+            const rawDbContent = rawJsonStrings.join('\n');
+            const valid = await verifyImportData(rawDbContent, sigB64, pubB64);
+            if (!valid) {
+              setDockInError('❌ Rejected: Signature verification failed. The DB Copy data does not match the original export signature — the file may have been tampered with. Only the original signed export file can be imported.');
+              setDockInPeeking(false);
+              return;
+            }
+          } catch (e) {
+            setDockInError('❌ Rejected: Signature verification error — ' + (e && e.message ? e.message : 'Unknown error') + '. Only the original signed DB Port export file can be imported.');
+            setDockInPeeking(false);
+            return;
+          }
         }
         // New records are recognised exclusively from Sheet 1 (Candidate Data tab).
         // DB Copy JSON is supplemental: provides userid to identify existing records
@@ -2835,6 +2860,7 @@ sigSheet +
               <input
                 type="file"
                 accept=".xlsx,.xls,.xml"
+                ref={dockInInlineFileRef}
                 style={{ display: 'none' }}
                 onChange={e => {
                   const f = e.target.files[0];
