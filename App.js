@@ -2285,6 +2285,7 @@ function CandidatesTable({
       // New records are recognised exclusively from Sheet 1 (Candidate Data tab).
       // DB Copy JSON is supplemental: it fills any field absent from Sheet 1.
       // DB Copy cannot introduce records not present in Sheet 1.
+      const MANDATORY_DOCK_FIELDS = ['name', 'company', 'jobtitle', 'country'];
       const merged = s1Rows.map((s1Row, i) => {
         const dbRow = dbRows[i] || {};
         const out   = { ...dbRow }; // start with DB Copy metadata as base (userid, supplemental fields, etc.)
@@ -2294,22 +2295,29 @@ function CandidatesTable({
         }
         return out;
       });
+      // In Analytic DB mode, new records missing mandatory fields are rejected and must not be imported.
+      // Existing records (with a userid) are always imported regardless of mode.
+      const mergedToImport = analyticMode
+        ? merged.filter(cand => {
+            if (cand.userid) return true; // existing record — always import
+            return MANDATORY_DOCK_FIELDS.every(f => String(cand[f] || '').trim() !== ''); // new: must pass mandatory check
+          })
+        : merged;
       if (analyticMode) setDockInAnalyticProgress('Deploying candidates to database…');
       fetch('http://localhost:4000/candidates/bulk', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body:    JSON.stringify({ candidates: merged }),
+        body:    JSON.stringify({ candidates: mergedToImport }),
         credentials: 'include',
       })
       .then(async res => {
         if (!res.ok) throw new Error(`Server returned status ${res.status} — check server logs for details.`);
         setDockInError('');
         if (analyticMode) {
-          // ── Analytic DB: trigger analysis for new records with valid mandatory fields ──
-          // New records: those without a userid (never previously imported)
-          // Eligible: new records that also have name, company, jobtitle, country populated
+          // ── Analytic DB: trigger analysis for new records that passed mandatory-field validation ──
+          // mergedToImport already excludes new records missing mandatory fields (they were rejected).
+          // Eligible for analysis = new (no userid) records in mergedToImport.
           const ANALYTIC_COMPLETION_DISPLAY_MS = 2200;
-          const MANDATORY_ANALYSIS_FIELDS = ['name', 'company', 'jobtitle', 'country'];
           const extractCandidateSkills = (cand) => {
             try {
               const vs = cand.vskillset;
@@ -2322,16 +2330,14 @@ function CandidatesTable({
             const ss = cand.skillset || '';
             return typeof ss === 'string' ? ss.split(/[,;]+/).map(s => s.trim()).filter(Boolean) : [];
           };
-          // Only analyse new (no userid) records that pass mandatory-field validation
-          const eligibleForAnalysis = merged.filter(cand => {
-            if (cand.userid) return false; // existing record — skip
-            return MANDATORY_ANALYSIS_FIELDS.every(f => String(cand[f] || '').trim() !== '');
-          });
-          const ineligibleCount = merged.length - eligibleForAnalysis.length;
-          setDockInAnalyticProgress(`Analysing ${eligibleForAnalysis.length} eligible record(s)${ineligibleCount > 0 ? ` (${ineligibleCount} skipped: existing or missing mandatory fields)` : ''} — this may take a moment…`);
+          // Eligible = new records that were imported (mandatory fields already enforced by mergedToImport filter)
+          const eligibleForAnalysis = mergedToImport.filter(cand => !cand.userid);
+          const existingCount = mergedToImport.length - eligibleForAnalysis.length;
+          setDockInAnalyticProgress(`Analysing ${eligibleForAnalysis.length} eligible record(s)${existingCount > 0 ? ` (${existingCount} existing record(s) skipped)` : ''} — this may take a moment…`);
           let analysed = 0;
           let skipped = 0;
           let failed = 0;
+          // Step 1: Per-record skillset inference via /vskillset/infer
           for (const cand of eligibleForAnalysis) {
             const linkedinurl = cand.linkedinurl || '';
             const skills = extractCandidateSkills(cand);
@@ -2347,14 +2353,36 @@ function CandidatesTable({
               analysed++;
               setDockInAnalyticProgress(`Analysing records… (${analysed + skipped + failed}/${eligibleForAnalysis.length})`);
             } catch (analyticErr) {
-              console.warn('[Analytic DB] Analysis failed for record:', cand.linkedinurl, analyticErr && analyticErr.message);
+              console.warn('[Analytic DB] Skillset analysis failed for record:', cand.linkedinurl, analyticErr && analyticErr.message);
               failed++;
+            }
+          }
+          // Step 2: Bulk inference to populate extended attributes (Seniority, Job Family, Sector,
+          // Product, Tenure, Rating, Skillset, Geographic) via /process/bulk_assess
+          const eligibleLinkedinUrls = eligibleForAnalysis
+            .map(c => c.linkedinurl)
+            .filter(Boolean);
+          if (eligibleLinkedinUrls.length > 0) {
+            try {
+              setDockInAnalyticProgress('Running extended inference (rating, seniority, sector, job family…)');
+              await fetch('http://localhost:8091/process/bulk_assess', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                  linkedinurls: eligibleLinkedinUrls,
+                  assessment_level: 'L2',
+                  async: false,
+                }),
+              });
+            } catch (bulkErr) {
+              console.warn('[Analytic DB] Bulk extended inference failed:', bulkErr && bulkErr.message);
             }
           }
           const summaryParts = [`${analysed} record(s) analysed`];
           if (skipped > 0) summaryParts.push(`${skipped} skipped (missing URL/skills)`);
           if (failed > 0) summaryParts.push(`${failed} failed`);
-          if (ineligibleCount > 0) summaryParts.push(`${ineligibleCount} not analysed (existing or missing fields)`);
+          if (existingCount > 0) summaryParts.push(`${existingCount} existing record(s) not re-analysed`);
           setDockInAnalyticProgress(`Analysis complete — ${summaryParts.join(', ')}.`);
           setTimeout(() => { setDockInAnalyticProgress(''); setDockInWizOpen(false); onDockIn && onDockIn(); }, ANALYTIC_COMPLETION_DISPLAY_MS);
         } else {
@@ -3435,7 +3463,7 @@ sigSheet +
             {rejectedCount > 0 && (
               <div style={{ margin: '0 0 12px', background: '#fff8e1', border: '1px solid #f0c040', borderRadius: 7, padding: '10px 14px' }}>
                 <p style={{ margin: '0 0 6px', fontWeight: 600, color: '#8a6000', fontSize: 13 }}>
-                  ⚠️ {rejectedCount} row{rejectedCount !== 1 ? 's' : ''} rejected — missing mandatory fields (will be imported but NOT analysed):
+                  ⚠️ {rejectedCount} row{rejectedCount !== 1 ? 's' : ''} rejected — missing mandatory fields (will NOT be imported):
                 </p>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {dockInRejectedRows.slice(0, 10).map((r, idx) => (
