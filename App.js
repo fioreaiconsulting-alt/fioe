@@ -1530,6 +1530,7 @@ function CandidatesTable({
   const [dockInWizMode, setDockInWizMode] = useState(''); // 'normal' | 'analytic'
   const [dockInWizFile, setDockInWizFile] = useState(null);
   const [dockInAnalyticProgress, setDockInAnalyticProgress] = useState(''); // analytic stage message
+  const [dockInAnalyticPct, setDockInAnalyticPct] = useState(0); // 0-100 progress bar
   const dockInWizFileRef = useRef(null);   // used by modal wizard (inside hidden table div)
   const dockInInlineFileRef = useRef(null); // used by inline empty-state wizard
   // DB Dock Out state
@@ -1673,6 +1674,7 @@ function CandidatesTable({
       setDockInWizFile(null);
       setDockInError('');
       setDockInAnalyticProgress('');
+      setDockInAnalyticPct(0);
       setDockInAnalyticConfirm(false);
       setDockInNewRecordCount(0);
       setDockInRejectedRows([]);
@@ -2218,6 +2220,7 @@ function CandidatesTable({
     }
     setDockInUploading(true);
     setDockInError('');
+    setDockInAnalyticPct(0);
     if (analyticMode) setDockInAnalyticProgress('Reading file…');
     file.arrayBuffer().then(async data => {
       const wb = XLSX.read(data);
@@ -2303,7 +2306,7 @@ function CandidatesTable({
             return MANDATORY_DOCK_FIELDS.every(f => String(cand[f] || '').trim() !== ''); // new: must pass mandatory check
           })
         : merged;
-      if (analyticMode) setDockInAnalyticProgress('Deploying candidates to database…');
+      if (analyticMode) { setDockInAnalyticProgress('Deploying candidates to database…'); setDockInAnalyticPct(5); }
       fetch('http://localhost:4000/candidates/bulk', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -2334,10 +2337,14 @@ function CandidatesTable({
           const eligibleForAnalysis = mergedToImport.filter(cand => !cand.userid);
           const existingCount = mergedToImport.length - eligibleForAnalysis.length;
           setDockInAnalyticProgress(`Analysing ${eligibleForAnalysis.length} eligible record(s)${existingCount > 0 ? ` (${existingCount} existing record(s) skipped)` : ''} — this may take a moment…`);
+          setDockInAnalyticPct(15);
           let analysed = 0;
           let skipped = 0;
           let failed = 0;
-          // Step 1: Per-record skillset inference via /vskillset/infer
+          const eligibleRecordsCount = eligibleForAnalysis.length || 1;
+          const SKILLSET_START_PCT = 15;  // progress bar % at start of skillset inference
+          const SKILLSET_RANGE_PCT = 55;  // 15% → 70% for per-record skillset phase
+          // Step 1: Per-record skillset inference via /vskillset/infer (15% → 70%)
           for (const cand of eligibleForAnalysis) {
             const linkedinurl = cand.linkedinurl || '';
             const skills = extractCandidateSkills(cand);
@@ -2351,20 +2358,24 @@ function CandidatesTable({
                 body: JSON.stringify({ linkedinurl, skills, assessment_level: 'L2', username: cand.username || '' }),
               });
               analysed++;
-              setDockInAnalyticProgress(`Analysing records… (${analysed + skipped + failed}/${eligibleForAnalysis.length})`);
             } catch (analyticErr) {
               console.warn('[Analytic DB] Skillset analysis failed for record:', cand.linkedinurl, analyticErr && analyticErr.message);
               failed++;
             }
+            const done = analysed + skipped + failed;
+            setDockInAnalyticProgress(`Analysing skillsets… (${done}/${eligibleForAnalysis.length})`);
+            // Progress bar: 15% (start) → 70% (end of skillset pass); bulk_assess gets 70%–95%
+            setDockInAnalyticPct(SKILLSET_START_PCT + Math.round((done / eligibleRecordsCount) * SKILLSET_RANGE_PCT));
           }
           // Step 2: Bulk inference to populate extended attributes (Seniority, Job Family, Sector,
-          // Product, Tenure, Rating, Skillset, Geographic) via /process/bulk_assess
+          // Product, Tenure, Rating, Skillset, Geographic) via /process/bulk_assess (70% → 95%)
           const eligibleLinkedinUrls = eligibleForAnalysis
             .map(c => c.linkedinurl)
             .filter(Boolean);
           if (eligibleLinkedinUrls.length > 0) {
             try {
               setDockInAnalyticProgress('Running extended inference (rating, seniority, sector, job family…)');
+              setDockInAnalyticPct(72);
               await fetch('http://localhost:8091/process/bulk_assess', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2375,16 +2386,21 @@ function CandidatesTable({
                   async: false,
                 }),
               });
+              setDockInAnalyticPct(95);
             } catch (bulkErr) {
               console.warn('[Analytic DB] Bulk extended inference failed:', bulkErr && bulkErr.message);
+              setDockInAnalyticPct(95);
             }
+          } else {
+            setDockInAnalyticPct(95);
           }
           const summaryParts = [`${analysed} record(s) analysed`];
           if (skipped > 0) summaryParts.push(`${skipped} skipped (missing URL/skills)`);
           if (failed > 0) summaryParts.push(`${failed} failed`);
           if (existingCount > 0) summaryParts.push(`${existingCount} existing record(s) not re-analysed`);
+          setDockInAnalyticPct(100);
           setDockInAnalyticProgress(`Analysis complete — ${summaryParts.join(', ')}.`);
-          setTimeout(() => { setDockInAnalyticProgress(''); setDockInWizOpen(false); onDockIn && onDockIn(); }, ANALYTIC_COMPLETION_DISPLAY_MS);
+          setTimeout(() => { setDockInAnalyticProgress(''); setDockInAnalyticPct(0); setDockInWizOpen(false); onDockIn && onDockIn(); }, ANALYTIC_COMPLETION_DISPLAY_MS);
         } else {
           setDockInWizOpen(false);
           onDockIn && onDockIn();
@@ -2772,8 +2788,16 @@ sigSheet +
               {dockInWizFile && <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>📄 <strong>{dockInWizFile.name}</strong></p>}
               {dockInUploading && (
                 <div style={{ margin: '24px 0' }}>
-                  <div style={{ fontSize: 36, marginBottom: 10 }}>⏳</div>
-                  <div style={{ color: '#073679', fontWeight: 600, fontSize: 15 }}>{dockInAnalyticProgress || 'Deploying candidates to database…'}</div>
+                  <div style={{ color: '#073679', fontWeight: 600, fontSize: 15, marginBottom: 14 }}>{dockInAnalyticProgress || 'Deploying candidates to database…'}</div>
+                  {dockInWizMode === 'analytic' && (
+                    <div style={{ width: '100%', maxWidth: 420, margin: '0 auto' }}>
+                      <div style={{ background: '#e2e8f0', borderRadius: 8, height: 14, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', borderRadius: 8, background: 'linear-gradient(90deg, #073679, #4c82b8)', transition: 'width 0.4s ease', width: `${dockInAnalyticPct}%` }} />
+                      </div>
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>{dockInAnalyticPct}%</div>
+                    </div>
+                  )}
+                  {dockInWizMode !== 'analytic' && <div style={{ fontSize: 30, marginTop: 8 }}>⏳</div>}
                 </div>
               )}
               {!dockInUploading && dockInAnalyticProgress && (
@@ -3361,10 +3385,18 @@ sigSheet +
                 </p>
                 {dockInUploading && (
                   <div style={{ margin: '18px 0', textAlign: 'center' }}>
-                    <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>
-                    <div style={{ color: '#073679', fontWeight: 600, fontSize: 14 }}>
+                    <div style={{ color: '#073679', fontWeight: 600, fontSize: 14, marginBottom: 12 }}>
                       {dockInAnalyticProgress || 'Deploying candidates to database…'}
                     </div>
+                    {dockInWizMode === 'analytic' && (
+                      <div style={{ width: '100%', maxWidth: 360, margin: '0 auto' }}>
+                        <div style={{ background: '#e2e8f0', borderRadius: 8, height: 12, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', borderRadius: 8, background: 'linear-gradient(90deg, #073679, #4c82b8)', transition: 'width 0.4s ease', width: `${dockInAnalyticPct}%` }} />
+                        </div>
+                        <div style={{ fontSize: 12, color: '#666', marginTop: 5 }}>{dockInAnalyticPct}%</div>
+                      </div>
+                    )}
+                    {dockInWizMode !== 'analytic' && <div style={{ fontSize: 28, marginTop: 8 }}>⏳</div>}
                   </div>
                 )}
                 {!dockInUploading && dockInAnalyticProgress && (
