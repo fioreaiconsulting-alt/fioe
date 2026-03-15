@@ -1525,6 +1525,8 @@ function CandidatesTable({
   const [dockInError, setDockInError] = useState('');
   // DB Dock Out state
   const [dockOutClearing, setDockOutClearing] = useState(false);
+  const [dockOutConfirmOpen, setDockOutConfirmOpen] = useState(false);
+  const [dockOutNoWarning, setDockOutNoWarning] = useState(() => localStorage.getItem('dockOutSkipWarning') === '1');
 
   // Track newly-added candidate IDs for the "New" badge
   const [newCandidateIds, setNewCandidateIds] = useState(new Set());
@@ -2179,10 +2181,10 @@ function CandidatesTable({
   };
 
   const handleDockIn = (file) => {
-    if (!file) { setDockInError('Please select an Excel file exported via DB Port.'); return; }
+    if (!file) { setDockInError('❌ No file selected. Please choose an Excel file exported via DB Port.'); return; }
     const ext = file.name.split('.').pop().toLowerCase();
     if (ext !== 'xlsx' && ext !== 'xls') {
-      setDockInError('DB Dock In only accepts Excel files (.xlsx / .xls) exported via DB Port.');
+      setDockInError(`❌ Rejected: "${file.name}" is not an Excel file. DB Dock In only accepts .xlsx or .xls files exported via DB Port.`);
       return;
     }
     setDockInUploading(true);
@@ -2191,14 +2193,14 @@ function CandidatesTable({
       const wb = XLSX.read(data);
       const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
       if (!dbCopyName) {
-        setDockInError('This file was not exported via DB Port (no "DB Copy" sheet found).');
+        setDockInError(`❌ Rejected: No "DB Copy" sheet found. This file was not exported via DB Port, has been modified in a way that removed the DB Copy sheet, may be corrupted, or was incompletely downloaded.`);
         setDockInUploading(false);
         return;
       }
       const ws2  = wb.Sheets[dbCopyName];
       const raw  = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
       if (!raw.length || String(raw[0][0]).trim() !== '__json_export_v1__') {
-        setDockInError('DB Copy sheet is missing the export sentinel. Only DB Port exports are accepted.');
+        setDockInError('❌ Rejected: DB Copy sheet is missing the required export sentinel ("__json_export_v1__"). Only original DB Port exports are accepted — the file may have been re-saved or modified.');
         setDockInUploading(false);
         return;
       }
@@ -2211,7 +2213,7 @@ function CandidatesTable({
           const sigRaw = XLSX.utils.sheet_to_json(sigWs, { header: 1, defval: '' });
           const sigB64 = String((sigRaw[0] || [])[0] || '').trim();
           const pubB64 = String((sigRaw[1] || [])[0] || '').trim();
-          if (!sigB64 || !pubB64) throw new Error('Signature sheet is incomplete.');
+          if (!sigB64 || !pubB64) throw new Error('Signature sheet is incomplete — one or both signature fields are missing.');
           // Reconstruct the raw content that was signed: raw JSON strings joined
           const rawJsonStrings = raw.slice(1)
             .filter(row => row[0])
@@ -2219,12 +2221,12 @@ function CandidatesTable({
           const rawDbContent = rawJsonStrings.join('\n');
           const valid = await verifyImportData(rawDbContent, sigB64, pubB64);
           if (!valid) {
-            setDockInError('File signature verification failed. The DB Copy data may have been tampered with. Import rejected.');
+            setDockInError('❌ Rejected: Signature verification failed. The DB Copy data does not match the original export signature — the file may have been tampered with. Only the original signed export file can be imported.');
             setDockInUploading(false);
             return;
           }
         } catch (e) {
-          setDockInError('Signature verification error: ' + (e && e.message ? e.message : 'Unknown error'));
+          setDockInError('❌ Rejected: Signature verification error — ' + (e && e.message ? e.message : 'Unknown error') + '. Only the original signed DB Port export file can be imported.');
           setDockInUploading(false);
           return;
         }
@@ -2239,7 +2241,7 @@ function CandidatesTable({
         })
         .filter(c => c != null);
       if (!dbRows.length) {
-        setDockInError('No valid candidates found in DB Copy.');
+        setDockInError('❌ Rejected: No valid candidate records found in the DB Copy sheet. The export file may be empty or corrupted.');
         setDockInUploading(false);
         return;
       }
@@ -2261,22 +2263,25 @@ function CandidatesTable({
         credentials: 'include',
       })
       .then(res => {
-        if (!res.ok) throw new Error(`DB Dock In failed with status ${res.status}`);
+        if (!res.ok) throw new Error(`Server returned status ${res.status} — check server logs for details.`);
         setDockInError('');
         onDockIn && onDockIn();
       })
-      .catch(err => setDockInError('Failed to deploy candidates: ' + (err && err.message ? err.message : 'Network error')))
+      .catch(err => setDockInError('❌ Deploy failed: ' + (err && err.message ? err.message : 'Network error')))
       .finally(() => setDockInUploading(false));
-    }).catch(() => {
-      setDockInError('Failed to parse Excel file.');
+    }).catch(err => {
+      setDockInError('❌ Failed to read Excel file: ' + (err && err.message ? err.message : 'The file may be corrupt or not a valid Excel workbook.'));
       setDockInUploading(false);
     });
   };
 
   // ── DB Dock Out: export + clear user's process table data ──
-  const handleDockOut = async () => {
+  const executeDockOut = async () => {
+    setDockOutConfirmOpen(false);
     await handleDbPortExport();
     setDockOutClearing(true);
+    // Clear any local candidate cache
+    try { localStorage.removeItem('candidatesCache'); } catch (cacheErr) { console.warn('[DB Dock Out] Failed to clear cache:', cacheErr); }
     fetch('http://localhost:4000/candidates/clear-user', {
       method: 'DELETE',
       headers: { 'X-Requested-With': 'XMLHttpRequest' },
@@ -2286,6 +2291,14 @@ function CandidatesTable({
     .then(() => { onDockIn && onDockIn(); })
     .catch(err => { console.warn('[DB Dock Out] Clear-user failed (export completed):', err); /* non-fatal: export already happened */ })
     .finally(() => setDockOutClearing(false));
+  };
+
+  const handleDockOut = () => {
+    if (dockOutNoWarning) {
+      executeDockOut();
+    } else {
+      setDockOutConfirmOpen(true);
+    }
   };
 
   // ── DB Port: Excel export — SpreadsheetML XML format (native dropdown support) ──
@@ -2795,6 +2808,55 @@ sigSheet +
           if (compModalCandidateId != null) handleEditChange(compModalCandidateId, 'compensation', total);
         }}
       />
+
+      {/* ── DB Dock Out confirmation dialog ── */}
+      {dockOutConfirmOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(34,37,41,0.65)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 10, padding: '28px 32px', maxWidth: 480, width: '90%',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+          }}>
+            <h3 style={{ margin: '0 0 12px', color: '#222529', fontSize: 18 }}>⚠️ DB Dock Out — Confirm</h3>
+            <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444' }}>
+              All candidate data for your account will be <strong>permanently deleted</strong> from the system after export.
+            </p>
+            <p style={{ margin: '0 0 16px', lineHeight: 1.6, color: '#c0392b', fontWeight: 500 }}>
+              Do not lose the exported file — only the original signed export can be re-imported via DB Dock In.
+            </p>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, cursor: 'pointer', fontSize: 14 }}>
+              <input
+                type="checkbox"
+                checked={dockOutNoWarning}
+                onChange={e => {
+                  const v = e.target.checked;
+                  setDockOutNoWarning(v);
+                  if (v) localStorage.setItem('dockOutSkipWarning', '1');
+                  else localStorage.removeItem('dockOutSkipWarning');
+                }}
+              />
+              Don't show this warning again
+            </label>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setDockOutConfirmOpen(false)}
+                style={{ padding: '8px 20px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
+              >
+                Return
+              </button>
+              <button
+                onClick={executeDockOut}
+                style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+              >
+                Proceed with Dock Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
