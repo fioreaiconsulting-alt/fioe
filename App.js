@@ -1549,6 +1549,9 @@ function CandidatesTable({
   const dockInResumeMatchesRef = useRef([]); // ref copy to avoid stale-closure in handleDockIn
   const dockInResumeInlineRef = useRef(null); // hidden resume input – inline wizard
   const dockInResumeModalRef = useRef(null);  // hidden resume input – modal wizard
+  // Step 3 (analytic mode) — Role & Skillset Confirmation
+  const [dockInRoleTagPairs, setDockInRoleTagPairs] = useState([]); // [{roleTag, jskillset}] unique pairs from DB Copy
+  const [dockInSelectedPair, setDockInSelectedPair] = useState(null); // {roleTag, jskillset} confirmed by user
 
   // Track newly-added candidate IDs for the "New" badge
   const [newCandidateIds, setNewCandidateIds] = useState(new Set());
@@ -1689,6 +1692,8 @@ function CandidatesTable({
       setDockInResumeFiles([]);
       setDockInResumeMatches([]);
       dockInResumeMatchesRef.current = [];
+      setDockInRoleTagPairs([]);
+      setDockInSelectedPair(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCandidates?.length]);
@@ -2480,7 +2485,7 @@ function CandidatesTable({
         if (!dbCopyName) {
           // File invalid; let handleDockIn report the proper error
           setDockInPeeking(false);
-          setDockInWizStep(4);
+          setDockInWizStep(mode === 'analytic' ? 5 : 4);
           handleDockIn(file, mode === 'analytic');
           return;
         }
@@ -2488,7 +2493,7 @@ function CandidatesTable({
         const raw = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
         if (!raw.length || String(raw[0][0]).trim() !== '__json_export_v1__') {
           setDockInPeeking(false);
-          setDockInWizStep(4);
+          setDockInWizStep(mode === 'analytic' ? 5 : 4);
           handleDockIn(file, mode === 'analytic');
           return;
         }
@@ -2532,24 +2537,40 @@ function CandidatesTable({
         setDockInNewRecordCount(newCount);
         setDockInRejectedRows(rejected);
         setDockInPeeking(false);
+        // Extract unique (role_tag, jskillset) pairs from DB Copy for Step 3 (analytic mode)
+        const pairsMap = new Map();
+        dbCopyObjects.forEach(obj => {
+          const rt = (obj.role_tag || '').trim();
+          const js = (obj.jskillset || '').trim();
+          if (rt || js) {
+            const key = `${rt}||${js}`;
+            if (!pairsMap.has(key)) pairsMap.set(key, { roleTag: rt, jskillset: js });
+          }
+        });
+        const roleTagPairs = Array.from(pairsMap.values());
+        setDockInRoleTagPairs(roleTagPairs);
+        setDockInSelectedPair(roleTagPairs.length === 1 ? roleTagPairs[0] : null);
         if (mode === 'analytic' && newCount > 0) {
           setDockInAnalyticConfirm(true); // show token-cost confirmation dialog for analytic mode
+        } else if (mode === 'analytic') {
+          // No new records in analytic mode: still show role/skillset confirmation (step 3) before deploy
+          setDockInWizStep(3);
         } else if (newCount > 0) {
           // Normal mode with new records: go to resume upload step
           setDockInWizStep(3);
         } else {
-          // No new records; skip resume step and deploy directly
+          // Normal mode, no new records: skip resume step and deploy directly
           setDockInWizStep(4);
           handleDockIn(file, false);
         }
       } catch (_) {
         setDockInPeeking(false);
-        setDockInWizStep(4);
+        setDockInWizStep(mode === 'analytic' ? 5 : 4);
         handleDockIn(file, mode === 'analytic');
       }
     }).catch(() => {
       setDockInPeeking(false);
-      setDockInWizStep(4);
+      setDockInWizStep(mode === 'analytic' ? 5 : 4);
       handleDockIn(file, mode === 'analytic');
     });
   };
@@ -2726,15 +2747,27 @@ sigSheet +
 
   return (
     <>
-      {/* ── Inline 4-step DB Dock In setup wizard (shown only when candidate list is empty) ── */}
-      {(allCandidates || []).length === 0 && (
+      {/* ── Inline DB Dock In setup wizard (shown only when candidate list is empty) ── */}
+      {(allCandidates || []).length === 0 && (() => {
+        const isAnalyticWiz = dockInWizMode === 'analytic';
+        const totalSteps = isAnalyticWiz ? 5 : 4;
+        const stepLabels = isAnalyticWiz
+          ? ['Choose Mode', 'Select File', 'Role & Skills', 'Upload Resumes', 'Deploy']
+          : ['Choose Mode', 'Select File', 'Upload Resumes', 'Deploy'];
+        const resumeStep = isAnalyticWiz ? 4 : 3;
+        const deployStep = isAnalyticWiz ? 5 : 4;
+        // Helper: value-based pair comparison to avoid stale object-reference issues
+        const isPairSelected = (pair) => dockInSelectedPair !== null &&
+          dockInSelectedPair.roleTag === pair.roleTag && dockInSelectedPair.jskillset === pair.jskillset;
+        const needsPairSelection = dockInRoleTagPairs.length > 1 && !dockInSelectedPair;
+        return (
         <div className="app-card" style={{ width: '100%', maxWidth: 640, margin: '40px auto', padding: '36px 40px' }}>
           <h2 style={{ margin: '0 0 6px', color: 'var(--azure-dragon)', fontSize: 20, fontWeight: 700 }}>📥 DB Dock In — Getting Started</h2>
           <p style={{ margin: '0 0 28px', color: '#666', fontSize: 14 }}>Complete the steps below to load your candidate database.</p>
 
           {/* Step indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 32 }}>
-            {[1, 2, 3, 4].map(n => (
+            {Array.from({ length: totalSteps }, (_, i) => i + 1).map(n => (
               <React.Fragment key={n}>
                 <div style={{
                   width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2745,10 +2778,10 @@ sigSheet +
                 }}>
                   {dockInWizStep > n ? '✓' : n}
                 </div>
-                <div style={{ fontSize: 11, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 5, marginRight: 0, flex: n < 4 ? '1 1 0' : 'none' }}>
-                  {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : n === 3 ? 'Upload Resumes' : 'Deploy'}
+                <div style={{ fontSize: 11, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 5, marginRight: 0, flex: n < totalSteps ? '1 1 0' : 'none' }}>
+                  {stepLabels[n - 1]}
                 </div>
-                {n < 4 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 6px' }} />}
+                {n < totalSteps && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 6px' }} />}
               </React.Fragment>
             ))}
           </div>
@@ -2844,8 +2877,76 @@ sigSheet +
             </div>
           )}
 
-          {/* Step 3 — Upload Resumes */}
-          {dockInWizStep === 3 && (
+          {/* Step 3 (analytic) — Role & Skillset Confirmation */}
+          {dockInWizStep === 3 && isAnalyticWiz && (
+            <div>
+              <p style={{ margin: '0 0 14px', color: '#444', fontSize: 14 }}>
+                Confirm the <strong>role tag &amp; job skillset</strong> to use for bulk assessment. These are read from the DB Copy tab.
+              </p>
+              {dockInRoleTagPairs.length === 0 && (
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 16px', marginBottom: 16, color: '#555', fontSize: 13 }}>
+                  ⚠️ No role_tag / jskillset data found in DB Copy. The system will use your account's default configuration during assessment.
+                </div>
+              )}
+              {dockInRoleTagPairs.length === 1 && (
+                <div style={{ background: '#f0f7ff', border: '1px solid #4c82b8', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+                  <div style={{ fontWeight: 600, color: '#073679', fontSize: 13, marginBottom: 4 }}>✅ Confirmed pair:</div>
+                  <div style={{ fontSize: 13, color: '#333' }}>
+                    <strong>Role Tag:</strong> {dockInRoleTagPairs[0].roleTag || '(none)'}
+                    &nbsp;&nbsp;|&nbsp;&nbsp;
+                    <strong>Job Skillset:</strong> {dockInRoleTagPairs[0].jskillset ? dockInRoleTagPairs[0].jskillset.slice(0, 80) + (dockInRoleTagPairs[0].jskillset.length > 80 ? '…' : '') : '(none)'}
+                  </div>
+                </div>
+              )}
+              {dockInRoleTagPairs.length > 1 && (
+                <div style={{ marginBottom: 16 }}>
+                  <p style={{ margin: '0 0 10px', fontSize: 13, color: '#555' }}>
+                    {dockInRoleTagPairs.length} unique role/skillset pair{dockInRoleTagPairs.length !== 1 ? 's' : ''} detected. Select the one to use for assessment:
+                  </p>
+                  {dockInRoleTagPairs.map((pair, idx) => (
+                    <div
+                      key={idx}
+                      role="button" tabIndex={0}
+                      onClick={() => setDockInSelectedPair(pair)}
+                      onKeyDown={e => e.key === 'Enter' && setDockInSelectedPair(pair)}
+                      style={{
+                        border: `2px solid ${isPairSelected(pair) ? '#073679' : '#d8d8d8'}`,
+                        borderRadius: 8, padding: '10px 14px', marginBottom: 8, cursor: 'pointer',
+                        background: isPairSelected(pair) ? 'rgba(7,54,121,0.07)' : '#fafafa',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ color: isPairSelected(pair) ? '#073679' : '#ccc', fontWeight: 700 }}>
+                          {isPairSelected(pair) ? '●' : '○'}
+                        </span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#073679' }}>
+                            Role: {pair.roleTag || '(none)'}
+                          </div>
+                          <div style={{ fontSize: 12, color: '#555' }}>
+                            Skillset: {pair.jskillset ? pair.jskillset.slice(0, 80) + (pair.jskillset.length > 80 ? '…' : '') : '(none)'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button onClick={() => { setDockInError(''); setDockInWizStep(2); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Back</button>
+                <button
+                  disabled={needsPairSelection}
+                  onClick={() => setDockInWizStep(resumeStep)}
+                  style={{ padding: '10px 24px', background: needsPairSelection ? '#ccc' : 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: needsPairSelection ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+                >
+                  Confirm & Continue →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Resume Upload step (step 3 in normal mode, step 4 in analytic mode) */}
+          {dockInWizStep === resumeStep && (
             <div>
               {/* Hidden resume directory input for inline wizard */}
               <input
@@ -2892,23 +2993,23 @@ sigSheet +
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <button onClick={() => { setDockInError(''); setDockInWizStep(2); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Back</button>
+                <button onClick={() => { setDockInError(''); setDockInWizStep(isAnalyticWiz ? 3 : 2); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Back</button>
                 <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => { setDockInResumeMatches([]); dockInResumeMatchesRef.current = []; setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>Skip Resumes →</button>
-                  <button onClick={() => { setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '10px 24px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>Deploy →</button>
+                  <button onClick={() => { setDockInResumeMatches([]); dockInResumeMatchesRef.current = []; setDockInWizStep(deployStep); handleDockIn(dockInWizFile, isAnalyticWiz); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>Skip Resumes →</button>
+                  <button onClick={() => { setDockInWizStep(deployStep); handleDockIn(dockInWizFile, isAnalyticWiz); }} style={{ padding: '10px 24px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>Deploy →</button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 4 — Deploy (progress) */}
-          {dockInWizStep === 4 && (
+          {/* Deploy step (step 4 in normal mode, step 5 in analytic mode) */}
+          {dockInWizStep === deployStep && (
             <div style={{ textAlign: 'center' }}>
               {dockInWizFile && <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>📄 <strong>{dockInWizFile.name}</strong></p>}
               {dockInUploading && (
                 <div style={{ margin: '24px 0' }}>
                   <div style={{ color: '#073679', fontWeight: 600, fontSize: 15, marginBottom: 14 }}>{dockInAnalyticProgress || 'Deploying candidates to database…'}</div>
-                  {dockInWizMode === 'analytic' && (
+                  {isAnalyticWiz && (
                     <div style={{ width: '100%', maxWidth: 420, margin: '0 auto' }}>
                       <div style={{ background: '#e2e8f0', borderRadius: 8, height: 14, overflow: 'hidden' }}>
                         <div style={{ height: '100%', borderRadius: 8, background: 'linear-gradient(90deg, #073679, #4c82b8)', transition: 'width 0.4s ease', width: `${dockInAnalyticPct}%` }} />
@@ -2916,7 +3017,7 @@ sigSheet +
                       <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>{dockInAnalyticPct}%</div>
                     </div>
                   )}
-                  {dockInWizMode !== 'analytic' && <div style={{ fontSize: 30, marginTop: 8 }}>⏳</div>}
+                  {!isAnalyticWiz && <div style={{ fontSize: 30, marginTop: 8 }}>⏳</div>}
                 </div>
               )}
               {!dockInUploading && dockInAnalyticProgress && (
@@ -2933,7 +3034,8 @@ sigSheet +
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Normal table view (hidden when candidate list is empty) ── */}
       <div className="app-card" style={{
@@ -3335,8 +3437,20 @@ sigSheet +
         }}
       />
 
-      {/* ── DB Dock In — 3-step wizard modal ── */}
-      {dockInWizOpen && (
+      {/* ── DB Dock In wizard modal ── */}
+      {dockInWizOpen && (() => {
+        const isAnalyticWiz = dockInWizMode === 'analytic';
+        const totalSteps = isAnalyticWiz ? 5 : 4;
+        const stepLabels = isAnalyticWiz
+          ? ['Choose Mode', 'Select File', 'Role & Skills', 'Upload Resumes', 'Deploy']
+          : ['Choose Mode', 'Select File', 'Upload Resumes', 'Deploy'];
+        const resumeStep = isAnalyticWiz ? 4 : 3;
+        const deployStep = isAnalyticWiz ? 5 : 4;
+        // Helper: value-based pair comparison to avoid stale object-reference issues
+        const isPairSelected = (pair) => dockInSelectedPair !== null &&
+          dockInSelectedPair.roleTag === pair.roleTag && dockInSelectedPair.jskillset === pair.jskillset;
+        const needsPairSelection = dockInRoleTagPairs.length > 1 && !dockInSelectedPair;
+        return (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,
           background: 'rgba(34,37,41,0.65)',
@@ -3359,7 +3473,7 @@ sigSheet +
 
             {/* ── Step indicator ── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
-              {[1, 2, 3, 4].map(n => (
+              {Array.from({ length: totalSteps }, (_, i) => i + 1).map(n => (
                 <React.Fragment key={n}>
                   <div style={{
                     width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3370,10 +3484,10 @@ sigSheet +
                   }}>
                     {dockInWizStep > n ? '✓' : n}
                   </div>
-                  <div style={{ fontSize: 10, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 4, flex: n < 4 ? '1 1 0' : 'none', minWidth: 0 }}>
-                    {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : n === 3 ? 'Upload Resumes' : 'Deploy'}
+                  <div style={{ fontSize: 10, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 4, flex: n < totalSteps ? '1 1 0' : 'none', minWidth: 0 }}>
+                    {stepLabels[n - 1]}
                   </div>
-                  {n < 4 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 4px' }} />}
+                  {n < totalSteps && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 4px' }} />}
                 </React.Fragment>
               ))}
             </div>
@@ -3493,8 +3607,72 @@ sigSheet +
               </div>
             )}
 
-            {/* ── Step 3: Upload Resumes ── */}
-            {dockInWizStep === 3 && (
+            {/* ── Step 3 (analytic): Role & Skillset Confirmation ── */}
+            {dockInWizStep === 3 && isAnalyticWiz && (
+              <div>
+                <p style={{ margin: '0 0 14px', color: '#444', fontSize: 14 }}>
+                  Confirm the <strong>role tag &amp; job skillset</strong> to use for bulk assessment, read from your DB Copy tab.
+                </p>
+                {dockInRoleTagPairs.length === 0 && (
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 16px', marginBottom: 16, color: '#555', fontSize: 13 }}>
+                    ⚠️ No role_tag / jskillset data found in DB Copy. The system will use your account's default configuration.
+                  </div>
+                )}
+                {dockInRoleTagPairs.length === 1 && (
+                  <div style={{ background: '#f0f7ff', border: '1px solid #4c82b8', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+                    <div style={{ fontWeight: 600, color: '#073679', fontSize: 13, marginBottom: 4 }}>✅ Confirmed pair:</div>
+                    <div style={{ fontSize: 13, color: '#333' }}>
+                      <strong>Role Tag:</strong> {dockInRoleTagPairs[0].roleTag || '(none)'}
+                      &nbsp;&nbsp;|&nbsp;&nbsp;
+                      <strong>Job Skillset:</strong> {dockInRoleTagPairs[0].jskillset ? dockInRoleTagPairs[0].jskillset.slice(0, 80) + (dockInRoleTagPairs[0].jskillset.length > 80 ? '…' : '') : '(none)'}
+                    </div>
+                  </div>
+                )}
+                {dockInRoleTagPairs.length > 1 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <p style={{ margin: '0 0 10px', fontSize: 13, color: '#555' }}>
+                      {dockInRoleTagPairs.length} unique pairs detected — select one for assessment:
+                    </p>
+                    {dockInRoleTagPairs.map((pair, idx) => (
+                      <div
+                        key={idx}
+                        role="button" tabIndex={0}
+                        onClick={() => setDockInSelectedPair(pair)}
+                        onKeyDown={e => e.key === 'Enter' && setDockInSelectedPair(pair)}
+                        style={{
+                          border: `2px solid ${isPairSelected(pair) ? '#073679' : '#d8d8d8'}`,
+                          borderRadius: 8, padding: '8px 12px', marginBottom: 6, cursor: 'pointer',
+                          background: isPairSelected(pair) ? 'rgba(7,54,121,0.07)' : '#fafafa',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ color: isPairSelected(pair) ? '#073679' : '#ccc', fontWeight: 700 }}>
+                            {isPairSelected(pair) ? '●' : '○'}
+                          </span>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#073679' }}>Role: {pair.roleTag || '(none)'}</div>
+                            <div style={{ fontSize: 12, color: '#555' }}>Skillset: {pair.jskillset ? pair.jskillset.slice(0, 80) + (pair.jskillset.length > 80 ? '…' : '') : '(none)'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <button onClick={() => setDockInWizStep(2)} style={{ padding: '8px 16px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>← Back</button>
+                  <button
+                    disabled={needsPairSelection}
+                    onClick={() => setDockInWizStep(resumeStep)}
+                    style={{ padding: '8px 18px', background: needsPairSelection ? '#ccc' : 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: needsPairSelection ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 13 }}
+                  >
+                    Confirm & Continue →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Resume Upload step (step 3 normal / step 4 analytic) ── */}
+            {dockInWizStep === resumeStep && (
               <div>
                 {/* Hidden resume input for modal wizard */}
                 <input
@@ -3540,17 +3718,17 @@ sigSheet +
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <button onClick={() => setDockInWizStep(2)} style={{ padding: '8px 16px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>← Back</button>
+                  <button onClick={() => setDockInWizStep(isAnalyticWiz ? 3 : 2)} style={{ padding: '8px 16px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>← Back</button>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => { setDockInResumeMatches([]); dockInResumeMatchesRef.current = []; setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '8px 14px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>Skip →</button>
-                    <button onClick={() => { setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '8px 18px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Deploy →</button>
+                    <button onClick={() => { setDockInResumeMatches([]); dockInResumeMatchesRef.current = []; setDockInWizStep(deployStep); handleDockIn(dockInWizFile, isAnalyticWiz); }} style={{ padding: '8px 14px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>Skip →</button>
+                    <button onClick={() => { setDockInWizStep(deployStep); handleDockIn(dockInWizFile, isAnalyticWiz); }} style={{ padding: '8px 18px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Deploy →</button>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* ── Step 4: Deploy (progress) ── */}
-            {dockInWizStep === 4 && (
+            {/* ── Deploy step (step 4 normal / step 5 analytic) ── */}
+            {dockInWizStep === deployStep && (
               <div>
                 <p style={{ margin: '0 0 10px', color: '#444', fontSize: 14 }}>
                   {dockInWizFile ? (
@@ -3562,7 +3740,7 @@ sigSheet +
                     <div style={{ color: '#073679', fontWeight: 600, fontSize: 14, marginBottom: 12 }}>
                       {dockInAnalyticProgress || 'Deploying candidates to database…'}
                     </div>
-                    {dockInWizMode === 'analytic' && (
+                    {isAnalyticWiz && (
                       <div style={{ width: '100%', maxWidth: 360, margin: '0 auto' }}>
                         <div style={{ background: '#e2e8f0', borderRadius: 8, height: 12, overflow: 'hidden' }}>
                           <div style={{ height: '100%', borderRadius: 8, background: 'linear-gradient(90deg, #073679, #4c82b8)', transition: 'width 0.4s ease', width: `${dockInAnalyticPct}%` }} />
@@ -3570,7 +3748,7 @@ sigSheet +
                         <div style={{ fontSize: 12, color: '#666', marginTop: 5 }}>{dockInAnalyticPct}%</div>
                       </div>
                     )}
-                    {dockInWizMode !== 'analytic' && <div style={{ fontSize: 28, marginTop: 8 }}>⏳</div>}
+                    {!isAnalyticWiz && <div style={{ fontSize: 28, marginTop: 8 }}>⏳</div>}
                   </div>
                 )}
                 {!dockInUploading && dockInAnalyticProgress && (
@@ -3597,7 +3775,8 @@ sigSheet +
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── DB Dock Out confirmation dialog ── */}
       {dockOutConfirmOpen && (
@@ -3705,7 +3884,7 @@ sigSheet +
               <button
                 onClick={() => {
                   setDockInAnalyticConfirm(false);
-                  setDockInWizStep(3); // → Resume Upload step
+                  setDockInWizStep(3); // → Role & Skillset Confirmation (analytic mode step 3)
                 }}
                 style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
               >
