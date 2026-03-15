@@ -3384,21 +3384,32 @@ sigSheet +
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => dockInWizFileRef.current && dockInWizFileRef.current.click()}
-                  onKeyDown={e => e.key === 'Enter' && dockInWizFileRef.current && dockInWizFileRef.current.click()}
+                  onClick={() => !dockInPeeking && dockInWizFileRef.current && dockInWizFileRef.current.click()}
+                  onKeyDown={e => e.key === 'Enter' && !dockInPeeking && dockInWizFileRef.current && dockInWizFileRef.current.click()}
                   style={{
                     border: '2px dashed #4c82b8', borderRadius: 10, padding: '32px 24px',
-                    textAlign: 'center', cursor: 'pointer', marginBottom: 18, background: '#f7fbff',
+                    textAlign: 'center', cursor: dockInPeeking ? 'wait' : 'pointer', marginBottom: 18, background: '#f7fbff',
                   }}
                 >
-                  <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
-                  <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to browse for a DB Port export</div>
-                  <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx and .xls files only</div>
+                  {dockInPeeking ? (
+                    <>
+                      <div style={{ fontSize: 36, marginBottom: 8 }}>⏳</div>
+                      <div style={{ fontWeight: 600, color: '#073679' }}>Reading file…</div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
+                      <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to browse for a DB Port export</div>
+                      <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx and .xls files only</div>
+                    </>
+                  )}
                 </div>
+                {dockInError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{dockInError}</div>}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                   <button
                     onClick={() => setDockInWizStep(1)}
-                    style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
+                    disabled={dockInPeeking}
+                    style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: dockInPeeking ? 'not-allowed' : 'pointer', fontWeight: 500 }}
                   >← Back</button>
                 </div>
               </div>
@@ -3507,6 +3518,7 @@ sigSheet +
       {dockInAnalyticConfirm && (() => {
         const validNewCount = dockInNewRecordCount - dockInRejectedRows.length;
         const rejectedCount = dockInRejectedRows.length;
+        const noEligible = validNewCount === 0;
         return (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 10000,
@@ -3538,35 +3550,59 @@ sigSheet +
                 </ul>
               </div>
             )}
-            <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444', fontSize: 14 }}>
-              <strong>{validNewCount}</strong> eligible record{validNewCount !== 1 ? 's' : ''} will be analysed (candidate rating, skillset mapping, seniority analysis), consuming <strong>1 token each</strong>.
-            </p>
-            <p style={{ margin: '0 0 20px', lineHeight: 1.6, fontSize: 14 }}>
-              <span style={{ color: '#c0392b', fontWeight: 600 }}>Total token cost: {validNewCount} token{validNewCount !== 1 ? 's' : ''}</span>
-              {' '}(current balance: <strong style={{ color: tokensLeft < validNewCount ? '#c0392b' : '#073679' }}>{tokensLeft}</strong>)
-            </p>
-            {tokensLeft < validNewCount && (
-              <p style={{ margin: '0 0 16px', color: '#c0392b', fontWeight: 500, fontSize: 13 }}>
-                ⚠️ Insufficient tokens. You have {tokensLeft} token{tokensLeft !== 1 ? 's' : ''} but need {validNewCount}. The import will proceed but analysis will be partial.
-              </p>
+            {noEligible ? (
+              <div style={{ margin: '0 0 18px', background: '#fdecea', border: '1px solid #f5c6cb', borderRadius: 7, padding: '10px 14px' }}>
+                <p style={{ margin: 0, color: '#7b1f24', fontWeight: 600, fontSize: 13 }}>
+                  ⛔ No eligible records to analyse — all new rows are missing mandatory fields. Please fix the file and re-upload, or use "Import without Analysis" below.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444', fontSize: 14 }}>
+                  <strong>{validNewCount}</strong> eligible record{validNewCount !== 1 ? 's' : ''} will be analysed (candidate rating, skillset mapping, seniority analysis), consuming <strong>1 token each</strong>.
+                </p>
+                <p style={{ margin: '0 0 20px', lineHeight: 1.6, fontSize: 14 }}>
+                  <span style={{ color: '#c0392b', fontWeight: 600 }}>Total token cost: {validNewCount} token{validNewCount !== 1 ? 's' : ''}</span>
+                  {' '}(current balance: <strong style={{ color: tokensLeft < validNewCount ? '#c0392b' : '#073679' }}>{tokensLeft}</strong>)
+                </p>
+                {tokensLeft < validNewCount && (
+                  <p style={{ margin: '0 0 16px', color: '#c0392b', fontWeight: 500, fontSize: 13 }}>
+                    ⚠️ Insufficient tokens. You have {tokensLeft} token{tokensLeft !== 1 ? 's' : ''} but need {validNewCount}. The import will proceed but analysis will be partial.
+                  </p>
+                )}
+              </>
             )}
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button
-                onClick={() => { setDockInAnalyticConfirm(false); setDockInWizStep(2); setDockInWizFile(null); setDockInRejectedRows([]); }}
+                onClick={() => { setDockInAnalyticConfirm(false); setDockInWizStep(2); }}
                 style={{ padding: '8px 20px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
               >
-                Cancel
+                ← Inspect File
               </button>
-              <button
-                onClick={() => {
-                  setDockInAnalyticConfirm(false);
-                  setDockInWizStep(3);
-                  handleDockIn(dockInWizFile, true);
-                }}
-                style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
-              >
-                Proceed with Analysis
-              </button>
+              {noEligible && (
+                <button
+                  onClick={() => {
+                    setDockInAnalyticConfirm(false);
+                    setDockInWizStep(3);
+                    handleDockIn(dockInWizFile, false);
+                  }}
+                  style={{ padding: '8px 20px', background: '#4c82b8', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
+                >
+                  Import without Analysis
+                </button>
+              )}
+              {!noEligible && (
+                <button
+                  onClick={() => {
+                    setDockInAnalyticConfirm(false);
+                    setDockInWizStep(3);
+                    handleDockIn(dockInWizFile, true);
+                  }}
+                  style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Proceed — Analyse {validNewCount} record{validNewCount !== 1 ? 's' : ''}
+                </button>
+              )}
             </div>
           </div>
         </div>
