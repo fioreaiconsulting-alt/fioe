@@ -1542,6 +1542,13 @@ function CandidatesTable({
   const [dockInNewRecordCount, setDockInNewRecordCount] = useState(0);
   const [dockInRejectedRows, setDockInRejectedRows] = useState([]); // rows failing mandatory field validation
   const [dockInPeeking, setDockInPeeking] = useState(false); // true while parsing file for count
+  // Step 3 — Resume Upload state
+  const [dockInNewRecords, setDockInNewRecords] = useState([]); // [{tempId, name}] new records identified in Step 2
+  const [dockInResumeFiles, setDockInResumeFiles] = useState([]); // File[] selected by user in Step 3
+  const [dockInResumeMatches, setDockInResumeMatches] = useState([]); // [{record, file|null}] after name matching
+  const dockInResumeMatchesRef = useRef([]); // ref copy to avoid stale-closure in handleDockIn
+  const dockInResumeInlineRef = useRef(null); // hidden resume input – inline wizard
+  const dockInResumeModalRef = useRef(null);  // hidden resume input – modal wizard
 
   // Track newly-added candidate IDs for the "New" badge
   const [newCandidateIds, setNewCandidateIds] = useState(new Set());
@@ -1678,6 +1685,10 @@ function CandidatesTable({
       setDockInAnalyticConfirm(false);
       setDockInNewRecordCount(0);
       setDockInRejectedRows([]);
+      setDockInNewRecords([]);
+      setDockInResumeFiles([]);
+      setDockInResumeMatches([]);
+      dockInResumeMatchesRef.current = [];
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCandidates?.length]);
@@ -2289,12 +2300,18 @@ function CandidatesTable({
       // DB Copy JSON is supplemental: it fills any field absent from Sheet 1.
       // DB Copy cannot introduce records not present in Sheet 1.
       const MANDATORY_DOCK_FIELDS = ['name', 'company', 'jobtitle', 'country'];
+      const newRecordIdBase = Date.now() + Math.floor(Math.random() * 10000); // unique per dock-in session
       const merged = s1Rows.map((s1Row, i) => {
         const dbRow = dbRows[i] || {};
         const out   = { ...dbRow }; // start with DB Copy metadata as base (userid, supplemental fields, etc.)
         for (const [s1Col, dbKey] of Object.entries(S1_TO_DB_DOCK)) {
           const v = s1Row[s1Col];
           if (v !== undefined && String(v).trim() !== '') out[dbKey] = v; // Sheet 1 overrides
+        }
+        // Generate a unique ID for new records (no userid and no id from DB Copy).
+        // The server accepts explicit IDs and advances the sequence to prevent conflicts.
+        if (!out.userid && !out.id) {
+          out.id = newRecordIdBase + i;
         }
         return out;
       });
@@ -2316,6 +2333,27 @@ function CandidatesTable({
       .then(async res => {
         if (!res.ok) throw new Error(`Server returned status ${res.status} — check server logs for details.`);
         setDockInError('');
+        // ── Resume upload: upload matched PDF/DOCX resumes to the webbridge ──
+        const matchedResumes = dockInResumeMatchesRef.current.filter(m => m.file);
+        if (matchedResumes.length > 0) {
+          try {
+            if (analyticMode) { setDockInAnalyticProgress('Uploading matched resumes…'); setDockInAnalyticPct(3); }
+            const formData = new FormData();
+            matchedResumes.forEach(m => formData.append('files', m.file));
+            await fetch('http://localhost:8091/process/upload_multiple_cvs', {
+              method: 'POST',
+              credentials: 'include',
+              body: formData,
+            });
+          } catch (resumeErr) {
+            console.warn('[Dock In] Resume upload failed (non-fatal):', resumeErr && resumeErr.message);
+            if (analyticMode) {
+              setDockInAnalyticProgress(`⚠️ Resume upload failed (${resumeErr && resumeErr.message ? resumeErr.message : 'network error'}) — continuing with analysis…`);
+            } else {
+              setDockInError(`⚠️ Resume upload failed: ${resumeErr && resumeErr.message ? resumeErr.message : 'network error'}. Candidate data was imported successfully.`);
+            }
+          }
+        }
         if (analyticMode) {
           // ── Analytic DB: trigger analysis for new records that passed mandatory-field validation ──
           // mergedToImport already excludes new records missing mandatory fields (they were rejected).
@@ -2415,8 +2453,24 @@ function CandidatesTable({
     });
   };
 
+  // ── Resume name matching helper ──
+  // Strips extension and normalises punctuation/case before comparing.
+  // Requires an exact normalized match or that one fully contains the other (min 5 chars).
+  const resumeMatchesRecord = (file, candidateName) => {
+    const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const fn = normalize(file.name.replace(/\.[^.]+$/, ''));
+    const cn = normalize(candidateName);
+    if (!fn || !cn) return false;
+    if (fn === cn) return true;
+    // Substring check: only if the shorter key is ≥5 chars to avoid false positives (e.g. 'john' in 'johnson')
+    const minLen = 5;
+    if (cn.length >= minLen && fn.includes(cn)) return true;
+    if (fn.length >= minLen && cn.includes(fn)) return true;
+    return false;
+  };
+
   // ── Pre-parse file to count records without vskillset (new records needing Analytic DB) ──
-  const peekFileForNewRecords = (file) => {
+  const peekFileForNewRecords = (file, mode) => {
     setDockInPeeking(true);
     setDockInError('');
     file.arrayBuffer().then(data => {
@@ -2426,16 +2480,16 @@ function CandidatesTable({
         if (!dbCopyName) {
           // File invalid; let handleDockIn report the proper error
           setDockInPeeking(false);
-          setDockInWizStep(3);
-          handleDockIn(file, true);
+          setDockInWizStep(4);
+          handleDockIn(file, mode === 'analytic');
           return;
         }
         const ws2 = wb.Sheets[dbCopyName];
         const raw = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
         if (!raw.length || String(raw[0][0]).trim() !== '__json_export_v1__') {
           setDockInPeeking(false);
-          setDockInWizStep(3);
-          handleDockIn(file, true);
+          setDockInWizStep(4);
+          handleDockIn(file, mode === 'analytic');
           return;
         }
         // New records are recognised exclusively from Sheet 1 (Candidate Data tab).
@@ -2446,6 +2500,7 @@ function CandidatesTable({
         const MANDATORY = ['name', 'company', 'jobtitle', 'country'];
         let newCount = 0;
         const rejected = [];
+        const newRecordsList = [];
         // Build DB Copy objects array (index-aligned with Sheet 1) for supplemental lookups
         const dbCopyObjects = raw.slice(1)
           .filter(row => row && row.length && row[0])
@@ -2455,38 +2510,47 @@ function CandidatesTable({
           })
           .filter(Boolean);
         // Iterate over Sheet 1 rows — the authoritative source of new records
+        const peekIdBase = Date.now() + Math.floor(Math.random() * 10000); // unique base per peek session
         s1Rows.forEach((s1Row, i) => {
           const dbObj = dbCopyObjects[i] || {};
           // Existing record: userid is present in the corresponding DB Copy JSON entry
           if (dbObj.userid) return;
           newCount++;
+          const displayName = String(s1Row['name'] || dbObj.name || `Row ${i + 2}`).trim();
+          // Generate a unique numeric ID for this new record (used for tracking through the wizard
+          // and passed to the server as an explicit id so it is stored in the process table).
+          const tempId = peekIdBase + i;
+          newRecordsList.push({ tempId, name: displayName, row: i + 2 });
           // Validate mandatory fields: Sheet 1 is authoritative; DB Copy JSON as fallback
           const missing = MANDATORY.filter(f => String(s1Row[f] || dbObj[f] || '').trim() === '');
           if (missing.length > 0) {
-            const displayName = String(s1Row['name'] || dbObj.name || `Row ${i + 2}`).trim();
             // +2: row 1 is the Sheet 1 header, rows are 1-based, so data row i → spreadsheet row i+2
             rejected.push({ row: i + 2, name: displayName, missing });
           }
         });
+        setDockInNewRecords(newRecordsList);
         setDockInNewRecordCount(newCount);
         setDockInRejectedRows(rejected);
         setDockInPeeking(false);
-        if (newCount > 0) {
-          setDockInAnalyticConfirm(true); // show confirmation dialog
-        } else {
-          // No new records; proceed directly without analysis confirmation
+        if (mode === 'analytic' && newCount > 0) {
+          setDockInAnalyticConfirm(true); // show token-cost confirmation dialog for analytic mode
+        } else if (newCount > 0) {
+          // Normal mode with new records: go to resume upload step
           setDockInWizStep(3);
-          handleDockIn(file, true);
+        } else {
+          // No new records; skip resume step and deploy directly
+          setDockInWizStep(4);
+          handleDockIn(file, false);
         }
       } catch (_) {
         setDockInPeeking(false);
-        setDockInWizStep(3);
-        handleDockIn(file, true);
+        setDockInWizStep(4);
+        handleDockIn(file, mode === 'analytic');
       }
     }).catch(() => {
       setDockInPeeking(false);
-      setDockInWizStep(3);
-      handleDockIn(file, true);
+      setDockInWizStep(4);
+      handleDockIn(file, mode === 'analytic');
     });
   };
 
@@ -2662,29 +2726,29 @@ sigSheet +
 
   return (
     <>
-      {/* ── Inline 3-step DB Dock In setup wizard (shown only when candidate list is empty) ── */}
+      {/* ── Inline 4-step DB Dock In setup wizard (shown only when candidate list is empty) ── */}
       {(allCandidates || []).length === 0 && (
         <div className="app-card" style={{ width: '100%', maxWidth: 640, margin: '40px auto', padding: '36px 40px' }}>
           <h2 style={{ margin: '0 0 6px', color: 'var(--azure-dragon)', fontSize: 20, fontWeight: 700 }}>📥 DB Dock In — Getting Started</h2>
-          <p style={{ margin: '0 0 28px', color: '#666', fontSize: 14 }}>Complete the three steps below to load your candidate database.</p>
+          <p style={{ margin: '0 0 28px', color: '#666', fontSize: 14 }}>Complete the steps below to load your candidate database.</p>
 
           {/* Step indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 32 }}>
-            {[1, 2, 3].map(n => (
+            {[1, 2, 3, 4].map(n => (
               <React.Fragment key={n}>
                 <div style={{
-                  width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 14, fontWeight: 700, flexShrink: 0,
+                  width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 12, fontWeight: 700, flexShrink: 0,
                   background: dockInWizStep > n ? '#073679' : dockInWizStep === n ? '#4c82b8' : '#e2e8f0',
                   color: dockInWizStep >= n ? '#fff' : '#87888a',
                   border: dockInWizStep === n ? '2px solid #073679' : '2px solid transparent',
                 }}>
                   {dockInWizStep > n ? '✓' : n}
                 </div>
-                <div style={{ fontSize: 12, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 8, marginRight: 0, flex: n < 3 ? '1 1 0' : 'none' }}>
-                  {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : 'Deploy'}
+                <div style={{ fontSize: 11, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 5, marginRight: 0, flex: n < 4 ? '1 1 0' : 'none' }}>
+                  {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : n === 3 ? 'Upload Resumes' : 'Deploy'}
                 </div>
-                {n < 3 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 8px' }} />}
+                {n < 4 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 6px' }} />}
               </React.Fragment>
             ))}
           </div>
@@ -2746,12 +2810,10 @@ sigSheet +
                   if (f) {
                     setDockInWizFile(f);
                     setDockInAnalyticConfirm(false);
-                    if (dockInWizMode === 'analytic') {
-                      peekFileForNewRecords(f);
-                    } else {
-                      setDockInWizStep(3);
-                      handleDockIn(f, false);
-                    }
+                    setDockInResumeFiles([]);
+                    setDockInResumeMatches([]);
+                    dockInResumeMatchesRef.current = [];
+                    peekFileForNewRecords(f, dockInWizMode);
                   }
                 }}
               />
@@ -2782,8 +2844,65 @@ sigSheet +
             </div>
           )}
 
-          {/* Step 3 — Deploy (progress) */}
+          {/* Step 3 — Upload Resumes */}
           {dockInWizStep === 3 && (
+            <div>
+              {/* Hidden resume directory input for inline wizard */}
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx"
+                multiple
+                ref={dockInResumeInlineRef}
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const files = Array.from(e.target.files || []);
+                  e.target.value = '';
+                  setDockInResumeFiles(files);
+                  const matches = dockInNewRecords.map(rec => ({
+                    record: rec,
+                    file: files.find(f => resumeMatchesRecord(f, rec.name)) || null,
+                  }));
+                  setDockInResumeMatches(matches);
+                  dockInResumeMatchesRef.current = matches;
+                }}
+              />
+              <p style={{ margin: '0 0 14px', color: '#444', fontSize: 14 }}>
+                <strong>Upload resume files</strong> for the {dockInNewRecords.length} new record{dockInNewRecords.length !== 1 ? 's' : ''} identified.
+                Files are matched to candidates by name. You can skip this step if resumes are not available.
+              </p>
+              <div
+                role="button" tabIndex={0}
+                onClick={() => dockInResumeInlineRef.current && dockInResumeInlineRef.current.click()}
+                onKeyDown={e => e.key === 'Enter' && dockInResumeInlineRef.current && dockInResumeInlineRef.current.click()}
+                style={{ border: '2px dashed #4c82b8', borderRadius: 10, padding: '28px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 16, background: '#f7fbff' }}
+              >
+                <div style={{ fontSize: 36, marginBottom: 8 }}>📎</div>
+                <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to select resume files (PDF / DOC / DOCX)</div>
+                <div style={{ fontSize: 12, color: '#87888a' }}>{dockInResumeFiles.length > 0 ? `${dockInResumeFiles.length} file(s) selected` : 'Select one or more resume files'}</div>
+              </div>
+              {dockInResumeMatches.length > 0 && (
+                <div style={{ marginBottom: 14, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px' }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: '#334155', marginBottom: 8 }}>Match results:</div>
+                  {dockInResumeMatches.map((m, idx) => (
+                    <div key={idx} style={{ fontSize: 13, color: m.file ? '#15803d' : '#6b7280', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>{m.file ? '✅' : '⚪'}</span>
+                      <span><strong>{m.record.name}</strong> {m.file ? `→ ${m.file.name}` : '— no match'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button onClick={() => { setDockInError(''); setDockInWizStep(2); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Back</button>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button onClick={() => { setDockInResumeMatches([]); dockInResumeMatchesRef.current = []; setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>Skip Resumes →</button>
+                  <button onClick={() => { setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '10px 24px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>Deploy →</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4 — Deploy (progress) */}
+          {dockInWizStep === 4 && (
             <div style={{ textAlign: 'center' }}>
               {dockInWizFile && <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>📄 <strong>{dockInWizFile.name}</strong></p>}
               {dockInUploading && (
@@ -2901,13 +3020,12 @@ sigSheet +
                 if (f) {
                   setDockInWizFile(f);
                   setDockInAnalyticConfirm(false);
-                  if (dockInWizMode === 'analytic') {
-                    // Pre-parse to count new records and ask for confirmation
-                    peekFileForNewRecords(f);
-                  } else {
-                    setDockInWizStep(3);
-                    handleDockIn(f, false);
-                  }
+                  setDockInResumeFiles([]);
+                  setDockInResumeMatches([]);
+                  dockInResumeMatchesRef.current = [];
+                  // Pre-parse for both normal and analytic modes:
+                  // identifies new records, generates temp IDs, then routes to Step 3 (resume)
+                  peekFileForNewRecords(f, dockInWizMode);
                 }
               }}
             />
@@ -3241,21 +3359,21 @@ sigSheet +
 
             {/* ── Step indicator ── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
-              {[1, 2, 3].map(n => (
+              {[1, 2, 3, 4].map(n => (
                 <React.Fragment key={n}>
                   <div style={{
-                    width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 700, flexShrink: 0,
+                    width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 11, fontWeight: 700, flexShrink: 0,
                     background: dockInWizStep > n ? '#073679' : dockInWizStep === n ? '#4c82b8' : '#e2e8f0',
                     color: dockInWizStep >= n ? '#fff' : '#87888a',
                     border: dockInWizStep === n ? '2px solid #073679' : '2px solid transparent',
                   }}>
                     {dockInWizStep > n ? '✓' : n}
                   </div>
-                  <div style={{ fontSize: 11, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 6, marginRight: n < 3 ? 0 : 0, flex: n < 3 ? '1 1 0' : 'none', minWidth: n < 3 ? 0 : undefined }}>
-                    {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : 'Deploy'}
+                  <div style={{ fontSize: 10, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 4, flex: n < 4 ? '1 1 0' : 'none', minWidth: 0 }}>
+                    {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : n === 3 ? 'Upload Resumes' : 'Deploy'}
                   </div>
-                  {n < 3 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 6px' }} />}
+                  {n < 4 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 4px' }} />}
                 </React.Fragment>
               ))}
             </div>
@@ -3375,8 +3493,64 @@ sigSheet +
               </div>
             )}
 
-            {/* ── Step 3: Deploy (progress) ── */}
+            {/* ── Step 3: Upload Resumes ── */}
             {dockInWizStep === 3 && (
+              <div>
+                {/* Hidden resume input for modal wizard */}
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  multiple
+                  ref={dockInResumeModalRef}
+                  style={{ display: 'none' }}
+                  onChange={e => {
+                    const files = Array.from(e.target.files || []);
+                    e.target.value = '';
+                    setDockInResumeFiles(files);
+                    const matches = dockInNewRecords.map(rec => ({
+                      record: rec,
+                      file: files.find(f => resumeMatchesRecord(f, rec.name)) || null,
+                    }));
+                    setDockInResumeMatches(matches);
+                    dockInResumeMatchesRef.current = matches;
+                  }}
+                />
+                <p style={{ margin: '0 0 12px', color: '#444', fontSize: 14 }}>
+                  <strong>Upload resume files</strong> for the {dockInNewRecords.length} new record{dockInNewRecords.length !== 1 ? 's' : ''} identified.
+                  Files are matched to candidates by name.
+                </p>
+                <div
+                  role="button" tabIndex={0}
+                  onClick={() => dockInResumeModalRef.current && dockInResumeModalRef.current.click()}
+                  onKeyDown={e => e.key === 'Enter' && dockInResumeModalRef.current && dockInResumeModalRef.current.click()}
+                  style={{ border: '2px dashed #4c82b8', borderRadius: 10, padding: '24px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 14, background: '#f7fbff' }}
+                >
+                  <div style={{ fontSize: 30, marginBottom: 6 }}>📎</div>
+                  <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4, fontSize: 13 }}>Click to select resume files (PDF / DOC / DOCX)</div>
+                  <div style={{ fontSize: 12, color: '#87888a' }}>{dockInResumeFiles.length > 0 ? `${dockInResumeFiles.length} file(s) selected` : 'Select one or more resume files'}</div>
+                </div>
+                {dockInResumeMatches.length > 0 && (
+                  <div style={{ marginBottom: 12, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, padding: '8px 12px', maxHeight: 140, overflowY: 'auto' }}>
+                    {dockInResumeMatches.map((m, idx) => (
+                      <div key={idx} style={{ fontSize: 12, color: m.file ? '#15803d' : '#6b7280', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span>{m.file ? '✅' : '⚪'}</span>
+                        <span><strong>{m.record.name}</strong> {m.file ? `→ ${m.file.name}` : '— no match'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <button onClick={() => setDockInWizStep(2)} style={{ padding: '8px 16px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>← Back</button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => { setDockInResumeMatches([]); dockInResumeMatchesRef.current = []; setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '8px 14px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13 }}>Skip →</button>
+                    <button onClick={() => { setDockInWizStep(4); handleDockIn(dockInWizFile, dockInWizMode === 'analytic'); }} style={{ padding: '8px 18px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Deploy →</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 4: Deploy (progress) ── */}
+            {dockInWizStep === 4 && (
               <div>
                 <p style={{ margin: '0 0 10px', color: '#444', fontSize: 14 }}>
                   {dockInWizFile ? (
@@ -3531,8 +3705,7 @@ sigSheet +
               <button
                 onClick={() => {
                   setDockInAnalyticConfirm(false);
-                  setDockInWizStep(3);
-                  handleDockIn(dockInWizFile, true);
+                  setDockInWizStep(3); // → Resume Upload step
                 }}
                 style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
               >
