@@ -1539,6 +1539,7 @@ function CandidatesTable({
   // Analytic DB: pre-file-parse confirmation state
   const [dockInAnalyticConfirm, setDockInAnalyticConfirm] = useState(false);
   const [dockInNewRecordCount, setDockInNewRecordCount] = useState(0);
+  const [dockInRejectedRows, setDockInRejectedRows] = useState([]); // rows failing mandatory field validation
   const [dockInPeeking, setDockInPeeking] = useState(false); // true while parsing file for count
 
   // Track newly-added candidate IDs for the "New" badge
@@ -1674,6 +1675,7 @@ function CandidatesTable({
       setDockInAnalyticProgress('');
       setDockInAnalyticConfirm(false);
       setDockInNewRecordCount(0);
+      setDockInRejectedRows([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCandidates?.length]);
@@ -2300,8 +2302,11 @@ function CandidatesTable({
         if (!res.ok) throw new Error(`Server returned status ${res.status} — check server logs for details.`);
         setDockInError('');
         if (analyticMode) {
-          // ── Analytic DB: trigger analysis for each imported record ──
-          const ANALYTIC_COMPLETION_DISPLAY_MS = 2200; // Show completion message before closing
+          // ── Analytic DB: trigger analysis for new records with valid mandatory fields ──
+          // New records: those without a userid (never previously imported)
+          // Eligible: new records that also have name, company, jobtitle, country populated
+          const ANALYTIC_COMPLETION_DISPLAY_MS = 2200;
+          const MANDATORY_ANALYSIS_FIELDS = ['name', 'company', 'jobtitle', 'country'];
           const extractCandidateSkills = (cand) => {
             try {
               const vs = cand.vskillset;
@@ -2314,11 +2319,17 @@ function CandidatesTable({
             const ss = cand.skillset || '';
             return typeof ss === 'string' ? ss.split(/[,;]+/).map(s => s.trim()).filter(Boolean) : [];
           };
-          setDockInAnalyticProgress(`Analysing ${merged.length} record(s) — this may take a moment…`);
+          // Only analyse new (no userid) records that pass mandatory-field validation
+          const eligibleForAnalysis = merged.filter(cand => {
+            if (cand.userid) return false; // existing record — skip
+            return MANDATORY_ANALYSIS_FIELDS.every(f => String(cand[f] || '').trim() !== '');
+          });
+          const ineligibleCount = merged.length - eligibleForAnalysis.length;
+          setDockInAnalyticProgress(`Analysing ${eligibleForAnalysis.length} eligible record(s)${ineligibleCount > 0 ? ` (${ineligibleCount} skipped: existing or missing mandatory fields)` : ''} — this may take a moment…`);
           let analysed = 0;
           let skipped = 0;
           let failed = 0;
-          for (const cand of merged) {
+          for (const cand of eligibleForAnalysis) {
             const linkedinurl = cand.linkedinurl || '';
             const skills = extractCandidateSkills(cand);
             if (!linkedinurl || skills.length === 0) { skipped++; continue; }
@@ -2331,16 +2342,16 @@ function CandidatesTable({
                 body: JSON.stringify({ linkedinurl, skills, assessment_level: 'L2', username: cand.username || '' }),
               });
               analysed++;
-              setDockInAnalyticProgress(`Analysing records… (${analysed + skipped + failed}/${merged.length})`);
+              setDockInAnalyticProgress(`Analysing records… (${analysed + skipped + failed}/${eligibleForAnalysis.length})`);
             } catch (analyticErr) {
               console.warn('[Analytic DB] Analysis failed for record:', cand.linkedinurl, analyticErr && analyticErr.message);
               failed++;
             }
           }
-          const totalProcessed = analysed + skipped + failed;
           const summaryParts = [`${analysed} record(s) analysed`];
           if (skipped > 0) summaryParts.push(`${skipped} skipped (missing URL/skills)`);
           if (failed > 0) summaryParts.push(`${failed} failed`);
+          if (ineligibleCount > 0) summaryParts.push(`${ineligibleCount} not analysed (existing or missing fields)`);
           setDockInAnalyticProgress(`Analysis complete — ${summaryParts.join(', ')}.`);
           setTimeout(() => { setDockInAnalyticProgress(''); setDockInWizOpen(false); onDockIn && onDockIn(); }, ANALYTIC_COMPLETION_DISPLAY_MS);
         } else {
@@ -2380,24 +2391,38 @@ function CandidatesTable({
           handleDockIn(file, true);
           return;
         }
+        // Parse Sheet 1 (Candidate Data) for mandatory field validation
+        const ws1 = wb.Sheets[wb.SheetNames[0]];
+        const s1Rows = ws1 ? XLSX.utils.sheet_to_json(ws1, { defval: '' }) : [];
+        const MANDATORY = ['name', 'company', 'jobtitle', 'country'];
         let newCount = 0;
-        for (let i = 1; i < raw.length; i++) {
-          const row = raw[i];
-          if (!row || !row.length || !row[0]) continue;
+        const rejected = [];
+        // Collect all DB Copy rows (index-aligned with Sheet 1)
+        const dbCopyDataRows = raw.slice(1).filter(row => row && row.length && row[0]);
+        dbCopyDataRows.forEach((row, i) => {
           const jsonStr = row.filter(c => c != null && String(c) !== '').join('');
-          try {
-            const obj = JSON.parse(jsonStr);
-            const vs = obj.vskillset;
-            const isEmpty = !vs || (Array.isArray(vs) && vs.length === 0) || (typeof vs === 'string' && vs.trim() === '' || vs === '[]');
-            if (isEmpty) newCount++;
-          } catch (_) { newCount++; } // unparseable = treat as new
-        }
+          let obj = null;
+          try { obj = JSON.parse(jsonStr); } catch (_) { return; }
+          if (!obj) return;
+          // New record = no userid in DB Copy JSON
+          if (obj.userid) return; // existing record — not counted for analysis
+          newCount++;
+                    // Validate mandatory fields: Sheet 1 is authoritative; fall back to DB Copy JSON value
+          const s1Row = s1Rows[i] || {};
+          const missing = MANDATORY.filter(f => String(s1Row[f] || obj[f] || '').trim() === '');
+          if (missing.length > 0) {
+            const displayName = String(s1Row['name'] || obj.name || `Row ${i + 2}`).trim();
+            // +2 accounts for: 1 (sentinel row in DB Copy) + 1 (1-based row number)
+            rejected.push({ row: i + 2, name: displayName, missing });
+          }
+        });
         setDockInNewRecordCount(newCount);
+        setDockInRejectedRows(rejected);
         setDockInPeeking(false);
         if (newCount > 0) {
           setDockInAnalyticConfirm(true); // show confirmation dialog
         } else {
-          // All records already have vskillset; proceed directly
+          // No new records; proceed directly without analysis confirmation
           setDockInWizStep(3);
           handleDockIn(file, true);
         }
@@ -3382,35 +3407,55 @@ sigSheet +
       )}
 
       {/* ── Analytic DB — token cost confirmation dialog ── */}
-      {dockInAnalyticConfirm && (
+      {dockInAnalyticConfirm && (() => {
+        const validNewCount = dockInNewRecordCount - dockInRejectedRows.length;
+        const rejectedCount = dockInRejectedRows.length;
+        return (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 10000,
           background: 'rgba(34,37,41,0.65)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
-            background: '#fff', borderRadius: 12, padding: '28px 32px', maxWidth: 460, width: '92%',
-            boxShadow: '0 8px 40px rgba(0,0,0,0.28)',
+            background: '#fff', borderRadius: 12, padding: '28px 32px', maxWidth: 500, width: '92%',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.28)', maxHeight: '85vh', overflowY: 'auto',
           }}>
             <h3 style={{ margin: '0 0 14px', color: '#073679', fontSize: 17, fontWeight: 700 }}>🤖 Analytic DB — Confirm Analysis</h3>
             <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444', fontSize: 14 }}>
-              <strong>{dockInNewRecordCount}</strong> new record{dockInNewRecordCount !== 1 ? 's' : ''} without an existing AI analysis were found in this file.
+              <strong>{dockInNewRecordCount}</strong> new record{dockInNewRecordCount !== 1 ? 's' : ''} (rows without a user ID) were found in this file.
             </p>
+            {rejectedCount > 0 && (
+              <div style={{ margin: '0 0 12px', background: '#fff8e1', border: '1px solid #f0c040', borderRadius: 7, padding: '10px 14px' }}>
+                <p style={{ margin: '0 0 6px', fontWeight: 600, color: '#8a6000', fontSize: 13 }}>
+                  ⚠️ {rejectedCount} row{rejectedCount !== 1 ? 's' : ''} rejected — missing mandatory fields (will be imported but NOT analysed):
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {dockInRejectedRows.slice(0, 10).map((r, idx) => (
+                    <li key={idx} style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>
+                      Row {r.row}: <strong>{r.name}</strong> — missing: {r.missing.join(', ')}
+                    </li>
+                  ))}
+                  {dockInRejectedRows.length > 10 && (
+                    <li style={{ fontSize: 12, color: '#888' }}>…and {dockInRejectedRows.length - 10} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
             <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444', fontSize: 14 }}>
-              Each record will be analysed (candidate rating, skillset mapping, seniority analysis), consuming <strong>1 token per record</strong>.
+              <strong>{validNewCount}</strong> eligible record{validNewCount !== 1 ? 's' : ''} will be analysed (candidate rating, skillset mapping, seniority analysis), consuming <strong>1 token each</strong>.
             </p>
             <p style={{ margin: '0 0 20px', lineHeight: 1.6, fontSize: 14 }}>
-              <span style={{ color: '#c0392b', fontWeight: 600 }}>Total token cost: {dockInNewRecordCount} token{dockInNewRecordCount !== 1 ? 's' : ''}</span>
-              {' '}(current balance: <strong style={{ color: tokensLeft < dockInNewRecordCount ? '#c0392b' : '#073679' }}>{tokensLeft}</strong>)
+              <span style={{ color: '#c0392b', fontWeight: 600 }}>Total token cost: {validNewCount} token{validNewCount !== 1 ? 's' : ''}</span>
+              {' '}(current balance: <strong style={{ color: tokensLeft < validNewCount ? '#c0392b' : '#073679' }}>{tokensLeft}</strong>)
             </p>
-            {tokensLeft < dockInNewRecordCount && (
+            {tokensLeft < validNewCount && (
               <p style={{ margin: '0 0 16px', color: '#c0392b', fontWeight: 500, fontSize: 13 }}>
-                ⚠️ Insufficient tokens. You have {tokensLeft} token{tokensLeft !== 1 ? 's' : ''} but need {dockInNewRecordCount}. The import will proceed but analysis will be partial.
+                ⚠️ Insufficient tokens. You have {tokensLeft} token{tokensLeft !== 1 ? 's' : ''} but need {validNewCount}. The import will proceed but analysis will be partial.
               </p>
             )}
             <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
               <button
-                onClick={() => { setDockInAnalyticConfirm(false); setDockInWizStep(2); setDockInWizFile(null); }}
+                onClick={() => { setDockInAnalyticConfirm(false); setDockInWizStep(2); setDockInWizFile(null); setDockInRejectedRows([]); }}
                 style={{ padding: '8px 20px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
               >
                 Cancel
@@ -3428,7 +3473,8 @@ sigSheet +
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </>
   );
 }
