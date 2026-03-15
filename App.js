@@ -2454,6 +2454,7 @@ function CandidatesTable({
                   linkedinurls: eligibleLinkedinUrls,
                   assessment_level: 'L2',
                   async: true,
+                  role_tag: (dockInSelectedPair && dockInSelectedPair.roleTag) ? dockInSelectedPair.roleTag : '',
                 }),
               });
               if (bulkRes.ok) {
