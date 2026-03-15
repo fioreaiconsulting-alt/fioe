@@ -5312,8 +5312,22 @@ def process_bulk_assess():
 
 @app.get("/process/bulk_assess_status/<job_id>")
 def process_bulk_status(job_id):
-    with JOBS_LOCK: job = JOBS.get(job_id)
-    if not job: return jsonify({"error": "Job not found"}), 404
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            # Fallback: load from persisted job file when not in memory (e.g., after server restart).
+            # Done inside the lock to prevent concurrent requests from racing to restore the same job.
+            job_file = os.path.join(OUTPUT_DIR, f"job_{job_id}.json")
+            if os.path.exists(job_file):
+                try:
+                    with open(job_file, "r", encoding="utf-8") as fh:
+                        job = json.load(fh)
+                    JOBS[job_id] = job
+                    logger.info(f"[BulkAssessStatus] Restored job {job_id} from persisted file")
+                except Exception as e:
+                    logger.warning(f"[BulkAssessStatus] Failed to load persisted job {job_id}: {e}")
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
     
     # Calculate progress percentage
     job_response = dict(job)
