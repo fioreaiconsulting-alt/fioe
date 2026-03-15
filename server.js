@@ -936,6 +936,9 @@ async function ensureProcessTable() {
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS education TEXT`);
     // Ensure comment column exists
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS comment TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS vskillset TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS experience TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS tenure TEXT`);
   } catch (err) {
     console.error('[INIT] Failed to ensure process table/columns exist:', err);
   }
@@ -1333,7 +1336,28 @@ function normalizeIncomingRow(c) {
     sourcing_status: firstVal(c, ['sourcingstatus', 'sourcing_status', 'Sourcing Status']) || '',
     product: firstVal(c, ['product', 'Product', 'type']) || null,
     linkedinurl: firstVal(c, ['linkedinurl', 'linkedin', 'LinkedIn', 'URL']) || '', // Added for capture
-    cv: firstVal(c, ['cv', 'CV', 'resume', 'Resume']) || ''
+    cv: firstVal(c, ['cv', 'CV', 'resume', 'Resume']) || '',
+    // Additional process-table columns preserved from DB Copy when not overridden by Sheet 1
+    comment: firstVal(c, ['comment', 'Comment']) || null,
+    lskillset: firstVal(c, ['lskillset']) || null,
+    vskillset: (() => {
+      const v = firstVal(c, ['vskillset']);
+      if (v == null) return null;
+      if (typeof v === 'object') return JSON.stringify(v);
+      const s = String(v).trim();
+      return s || null;
+    })(),
+    education: firstVal(c, ['education', 'Education']) || null,
+    experience: firstVal(c, ['experience', 'Experience']) || null,
+    tenure: firstVal(c, ['tenure', 'Tenure']) || null,
+    rating: (() => {
+      const v = firstVal(c, ['rating', 'Rating']);
+      if (v == null) return null;
+      if (typeof v === 'object') return null; // complex rating object — skip for INTEGER column
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    })(),
+    jskillset: firstVal(c, ['jskillset']) || null,
   };
 }
 
@@ -1356,7 +1380,16 @@ const processColumnMap = {
   seniority: 'seniority',
   sourcing_status: 'sourcingstatus',
   product: 'product',
-  linkedinurl: 'linkedinurl'
+  linkedinurl: 'linkedinurl',
+  // DB Copy passthrough fields
+  comment: 'comment',
+  lskillset: 'lskillset',
+  vskillset: 'vskillset',
+  education: 'education',
+  experience: 'experience',
+  tenure: 'tenure',
+  rating: 'rating',
+  jskillset: 'jskillset',
 };
 
 // ========== UPDATED: BULK INGESTIONsupports Project_Title and Project_Date and writes to process table ==========
@@ -1386,7 +1419,10 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
     'id', 'name', 'role', 'organisation', 'sector', 'job_family',
     'role_tag', 'skillset', 'geographic', 'country',
     'email', 'mobile', 'office', 'compensation',
-    'seniority', 'sourcing_status', 'product', 'linkedinurl'
+    'seniority', 'sourcing_status', 'product', 'linkedinurl',
+    // DB Copy passthrough: preserved from export JSON, overridden by Sheet 1 where applicable
+    'comment', 'lskillset', 'vskillset', 'education', 'experience', 'tenure',
+    'rating', 'jskillset',
   ];
 
   try {
@@ -1465,7 +1501,7 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
     if (insertRows.length > 0) {
       const insertNormKeys = normKeys.filter(k => k !== 'id');
       const insertProcCols = insertNormKeys.map(k => processColumnMap[k] || k);
-      insertProcCols.push('userid', 'username', 'jskillset');
+      insertProcCols.push('userid', 'username');
 
       const insertValues = [];
       const insertPlaceholders = insertRows.map((row, i) => {
@@ -1476,11 +1512,15 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
           if (k === 'seniority' && v != null && String(v).trim() !== '') {
             v = standardizeSeniority(v) || null;
           }
+          // jskillset: normalizeIncomingRow extracts it from DB Copy, but falls back to the
+          // user's current JD skill set (userJskillset) here if null — userJskillset is only
+          // available in the request handler scope, so the fallback must live here rather than
+          // in normalizeIncomingRow.
+          if (k === 'jskillset' && v == null) v = userJskillset;
           insertValues.push(v);
         });
         insertValues.push(req.user.id);
         insertValues.push(req.user.username);
-        insertValues.push(userJskillset);
         return `(${Array.from({ length: insertProcCols.length }, (_, j) => `$${start + j}`).join(',')})`;
       }).join(',');
 
