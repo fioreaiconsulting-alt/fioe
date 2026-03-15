@@ -3393,7 +3393,7 @@ function CandidateUpload({ onUpload }) {
         return;
       }
 
-      // Parse DB Copy rows → provides id, userid, vskillset, jskillset, etc.
+      // Parse DB Copy rows → provides id, userid, vskillset, jskillset, experience, etc.
       // JSON may be chunked across multiple cells (each ≤32767 chars) — join all
       // non-empty cells in the row before parsing to reconstruct the full string.
       const dbRows = raw.slice(1)
@@ -3403,7 +3403,7 @@ function CandidateUpload({ onUpload }) {
           try { return JSON.parse(fullJson); }
           catch (e) { console.warn('[DB Dock] Failed to parse DB Copy row:', e); return null; }
         })
-        .filter(c => c && c.id);
+        .filter(c => c != null);  // keep all parseable rows (id may be null for new records)
 
       if (!dbRows.length) {
         setError('No valid candidates found in DB Copy.');

@@ -1436,11 +1436,13 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
       userJskillset = null;
     }
 
-    // Editable column keys (exclude 'id' — never update the primary key)
+    // Editable column keys (exclude 'id' — never update the primary key via SET)
     const updateNormKeys = normKeys.filter(k => k !== 'id');
 
-    // ── Identity matching: fetch existing records by (userid, linkedinurl) ────
-    // Normalise to lowercase so matching is case-insensitive on both sides
+    // ── Identity matching ─────────────────────────────────────────────────────
+    // Primary:   (userid, LOWER(linkedinurl)) → UPDATE existing record
+    // Secondary: (userid, id from DB Copy)    → UPDATE (handles changed/missing linkedinurl)
+    // Fallback:  INSERT preserving original id from DB Copy when valid
     const incomingLinkedInUrls = normalized
       .map(r => r.linkedinurl ? r.linkedinurl.trim().toLowerCase() : '')
       .filter(u => u !== '');
@@ -1456,14 +1458,30 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
       });
     }
 
-    // Split: rows whose linkedinurl matches an existing record → UPDATE (file authoritative)
-    //        rows with no linkedinurl match → INSERT (new records)
+    // Secondary match by id from DB Copy (catches records with changed/missing linkedinurl)
+    const incomingDbIds = normalized
+      .filter(r => r.id != null && Number.isFinite(r.id) && r.id > 0)
+      .map(r => r.id);
+    const existingDbIds = new Set();
+    if (incomingDbIds.length > 0) {
+      const idRes = await pool.query(
+        `SELECT id FROM "process" WHERE userid = $1 AND id = ANY($2::int[])`,
+        [req.user.id, incomingDbIds]
+      );
+      idRes.rows.forEach(row => existingDbIds.add(row.id));
+    }
+
+    // Split: matched → UPDATE; unmatched → INSERT
     const updateRows = [];
     const insertRows = [];
     normalized.forEach(row => {
       const key = row.linkedinurl ? row.linkedinurl.trim().toLowerCase() : '';
       if (key && existingByLinkedin[key] !== undefined) {
+        // Primary match by linkedinurl
         updateRows.push({ ...row, matchedId: existingByLinkedin[key] });
+      } else if (row.id && existingDbIds.has(row.id)) {
+        // Secondary match by id from DB Copy
+        updateRows.push({ ...row, matchedId: row.id });
       } else {
         insertRows.push(row);
       }
@@ -1497,43 +1515,63 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
       } catch (e) { console.warn('[BULK_CANON] update row', e && e.message); }
     }
 
-    // ── INSERT new records (no matching linkedinurl found in DB) ──────────────
+    // ── INSERT new records ────────────────────────────────────────────────────
+    // Rows with a valid id from DB Copy get inserted with that id preserved
+    // (enables backup/restore round-trips). Rows without an id get an
+    // auto-generated id. After any id-specific inserts the sequence is
+    // advanced past MAX(id) to avoid future conflicts.
     if (insertRows.length > 0) {
-      const insertNormKeys = normKeys.filter(k => k !== 'id');
-      const insertProcCols = insertNormKeys.map(k => processColumnMap[k] || k);
-      insertProcCols.push('userid', 'username');
+      const rowsWithId    = insertRows.filter(r => r.id != null);
+      const rowsWithoutId = insertRows.filter(r => r.id == null);
 
-      const insertValues = [];
-      const insertPlaceholders = insertRows.map((row, i) => {
-        const start = i * insertProcCols.length + 1;
-        insertNormKeys.forEach(k => {
-          let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
-          if (v === '') v = null;
-          if (k === 'seniority' && v != null && String(v).trim() !== '') {
-            v = standardizeSeniority(v) || null;
+      const runInsert = async (rows, includeId) => {
+        if (!rows.length) return 0;
+        const iKeys      = includeId ? normKeys : normKeys.filter(k => k !== 'id');
+        const iProcCols  = iKeys.map(k => processColumnMap[k] || k);
+        iProcCols.push('userid', 'username');
+
+        const iValues = [];
+        const iPlaceholders = rows.map((row, i) => {
+          const start = i * iProcCols.length + 1;
+          iKeys.forEach(k => {
+            let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
+            if (v === '') v = null;
+            if (k === 'seniority' && v != null && String(v).trim() !== '') {
+              v = standardizeSeniority(v) || null;
+            }
+            if (k === 'jskillset' && v == null) v = userJskillset;
+            iValues.push(v);
+          });
+          iValues.push(req.user.id);
+          iValues.push(req.user.username);
+          return `(${Array.from({ length: iProcCols.length }, (_, j) => `$${start + j}`).join(',')})`;
+        }).join(',');
+
+        const iSql = `INSERT INTO "process" (${iProcCols.join(', ')}) VALUES ${iPlaceholders} RETURNING id`;
+        const iRes = await pool.query(iSql, iValues);
+        try {
+          for (let i = 0; i < iRes.rows.length; i++) {
+            await ensureCanonicalFieldsForId(iRes.rows[i].id, rows[i].organisation || null, rows[i].role || '', null);
           }
-          // jskillset: normalizeIncomingRow extracts it from DB Copy, but falls back to the
-          // user's current JD skill set (userJskillset) here if null — userJskillset is only
-          // available in the request handler scope, so the fallback must live here rather than
-          // in normalizeIncomingRow.
-          if (k === 'jskillset' && v == null) v = userJskillset;
-          insertValues.push(v);
-        });
-        insertValues.push(req.user.id);
-        insertValues.push(req.user.username);
-        return `(${Array.from({ length: insertProcCols.length }, (_, j) => `$${start + j}`).join(',')})`;
-      }).join(',');
+        } catch (e) { console.warn('[BULK_CANON] insert rows', e && e.message); }
+        return iRes.rowCount;
+      };
 
-      const insertSql = `INSERT INTO "process" (${insertProcCols.join(', ')}) VALUES ${insertPlaceholders} RETURNING id`;
-      const insResult = await pool.query(insertSql, insertValues);
-      totalAffected += insResult.rowCount;
+      const n1 = await runInsert(rowsWithId, true);
+      const n2 = await runInsert(rowsWithoutId, false);
+      totalAffected += n1 + n2;
 
-      try {
-        for (let i = 0; i < insResult.rows.length; i++) {
-          const src = insertRows[i];
-          await ensureCanonicalFieldsForId(insResult.rows[i].id, src.organisation || null, src.role || '', null);
-        }
-      } catch (e) { console.warn('[BULK_CANON] insert rows', e && e.message); }
+      // Advance the sequence past any explicitly-inserted ids to prevent
+      // future auto-generated ids from colliding with restored originals.
+      if (rowsWithId.length > 0) {
+        try {
+          await pool.query(
+            `SELECT setval(pg_get_serial_sequence('"process"', 'id'),
+                           (SELECT MAX(id) FROM "process"))
+             WHERE EXISTS (SELECT 1 FROM "process")`
+          );
+        } catch (e) { console.warn('[BULK] sequence advance failed', e && e.message); }
+      }
     }
 
     console.log('Upserted/inserted rows into process:', totalAffected);
