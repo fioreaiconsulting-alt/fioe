@@ -4722,7 +4722,7 @@ export default function App() {
                 onViewProfile={handleViewProfile}
                 statusOptions={statusOptions}
                 onOpenStatusModal={() => setStatusModalOpen(true)}
-                allCandidates={filteredCandidates}
+                allCandidates={candidates}
                 user={user}
               />
           }

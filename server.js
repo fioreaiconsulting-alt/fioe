@@ -1307,10 +1307,9 @@ function toISODate(value) {
 
 function normalizeIncomingRow(c) {
   return {
+    id: (c.id != null && !isNaN(Number(c.id)) && Number(c.id) > 0) ? Number(c.id) : null,
     name: firstVal(c, ['name', 'Name']) || '',
-    role: firstVal(c, ['role', 'Role']) || '',
-    // Accept multiple job title keys (some inputs use 'jobtitle' already)
-    jobtitle: firstVal(c, ['jobtitle', 'job_title', 'Job Title', 'role', 'Role']) || '',
+    role: firstVal(c, ['jobtitle', 'job_title', 'Job Title', 'role', 'Role']) || '',
     // Accept exact process table column name 'company' as well as legacy 'organisation'
     organisation: firstVal(c, ['company', 'organisation', 'Organisation']) || '',
     sector: firstVal(c, ['sector', 'Sector']) || '',
@@ -1340,9 +1339,9 @@ function normalizeIncomingRow(c) {
 
 // Mapping from normalized candidate-style keys to process table columns
 const processColumnMap = {
+  id: 'id',
   name: 'name',
   role: 'jobtitle',
-  jobtitle: 'jobtitle',
   organisation: 'company',
   sector: 'sector',
   job_family: 'jobfamily',
@@ -1361,7 +1360,7 @@ const processColumnMap = {
 };
 
 // ========== UPDATED: BULK INGESTIONsupports Project_Title and Project_Date and writes to process table ==========
-app.post('/candidates/bulk', requireLogin, async (req, res) => {
+app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (req, res) => {
   let candidates = req.body.candidates;
   console.log('==== DB Dock & Deploy ====');
   console.log('Received candidates:', JSON.stringify(candidates, null, 2));
@@ -1382,9 +1381,9 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
   // Normalize each row to include canonical and legacy fields
   const normalized = candidates.map(normalizeIncomingRow);
 
-  // Canonical + legacy insertion keys (normalized)
+  // Canonical + legacy insertion keys (normalized) — 'role' maps to jobtitle; no duplicate
   const normKeys = [
-    'name', 'role', 'jobtitle', 'organisation', 'sector', 'job_family',
+    'id', 'name', 'role', 'organisation', 'sector', 'job_family',
     'role_tag', 'skillset', 'geographic', 'country',
     'email', 'mobile', 'office', 'compensation',
     'seniority', 'sourcing_status', 'product', 'linkedinurl'
@@ -1402,69 +1401,103 @@ app.post('/candidates/bulk', requireLogin, async (req, res) => {
     }
 
     // Map normalized keys to process table column names
-    const processCols = normKeys.map(k => processColumnMap[k] || k);
-    
-    // ADD userid/username from session
-    processCols.push('userid');
-    processCols.push('username');
+    const allProcessCols = normKeys.map(k => processColumnMap[k] || k);
 
-    // NEW: push jskillset into columns so it will be stored per inserted row
-    processCols.push('jskillset');
+    // Separate rows: those with a valid id (upsert) and those without (plain insert)
+    const upsertRows = normalized.filter(r => r.id != null);
+    const insertRows = normalized.filter(r => r.id == null);
 
-    const values = [];
-    const placeholders = normalized.map((row, i) => {
-      const start = i * processCols.length + 1;
-      // existing per-row values (normKeys -> processCols except last three we handled)
-      processCols.slice(0, -3).forEach((col, idx) => {
-        const k = normKeys[idx];
-        let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
-        if (v === '') v = null;
-	if (k === 'seniority' && v != null && String(v).trim() !== '') {
-	 const std = standardizeSeniority(v);
-	 v = std || null;
-	}
-        values.push(v);
-      });
-      // Add user info
-      values.push(req.user.id);
-      values.push(req.user.username);
-      
-      // Add jskillset value for this user (same for each row)
-      values.push(userJskillset);
-      
-      return `(${Array.from({ length: processCols.length }, (_, j) => `$${start + j}`).join(',')})`;
-    }).join(',');
+    // Columns for plain insert (exclude 'id' so SERIAL auto-generates)
+    const insertNormKeys = normKeys.filter(k => k !== 'id');
+    const insertProcCols = insertNormKeys.map(k => processColumnMap[k] || k);
+    insertProcCols.push('userid', 'username', 'jskillset');
 
-    const sql = `
-      INSERT INTO "process" (${processCols.join(', ')})
-      VALUES ${placeholders}
-      RETURNING id
-    `;
+    // Columns for upsert (include 'id')
+    const upsertProcCols = [...allProcessCols, 'userid', 'username', 'jskillset'];
+    // Columns to update on conflict (all except 'id')
+    const updateCols = upsertProcCols.filter(c => c !== 'id');
 
-    const result = await pool.query(sql, values);
-    console.log('Inserted rows into process:', result.rowCount);
+    let totalAffected = 0;
 
-    // Persist canonical company for each inserted row (use returned ids & normalized inputs)
-    try {
-      const returnedRows = result.rows || [];
-      for (let i = 0; i < returnedRows.length; i++) {
-        const insertedId = returnedRows[i].id;
-        const src = normalized[i];
-        const currentCompany = src.organisation || src.company || null;
-        const currentJobTitle = src.jobtitle || src.role || '';
-        await ensureCanonicalFieldsForId(insertedId, currentCompany, currentJobTitle, null);
-      }
-    } catch (e) {
-      console.warn('[BULK_CANON] failed to persist canonical fields for inserted rows', e && e.message);
+    // ── Plain INSERT for rows without id ──────────────────────────────────────
+    if (insertRows.length > 0) {
+      const insertValues = [];
+      const insertPlaceholders = insertRows.map((row, i) => {
+        const start = i * insertProcCols.length + 1;
+        insertNormKeys.forEach(k => {
+          let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
+          if (v === '') v = null;
+          if (k === 'seniority' && v != null && String(v).trim() !== '') {
+            const std = standardizeSeniority(v);
+            v = std || null;
+          }
+          insertValues.push(v);
+        });
+        insertValues.push(req.user.id);
+        insertValues.push(req.user.username);
+        insertValues.push(userJskillset);
+        return `(${Array.from({ length: insertProcCols.length }, (_, j) => `$${start + j}`).join(',')})`;
+      }).join(',');
+
+      const insertSql = `INSERT INTO "process" (${insertProcCols.join(', ')}) VALUES ${insertPlaceholders} RETURNING id`;
+      const insResult = await pool.query(insertSql, insertValues);
+      totalAffected += insResult.rowCount;
+
+      try {
+        for (let i = 0; i < insResult.rows.length; i++) {
+          const src = insertRows[i];
+          await ensureCanonicalFieldsForId(insResult.rows[i].id, src.organisation || null, src.role || '', null);
+        }
+      } catch (e) { console.warn('[BULK_CANON] insert rows', e && e.message); }
     }
 
-    // Notify clients that new candidates were inserted (clients can choose to refetch)
+    // ── UPSERT for rows with id (ON CONFLICT (id) DO UPDATE) ─────────────────
+    if (upsertRows.length > 0) {
+      const upsertValues = [];
+      const upsertPlaceholders = upsertRows.map((row, i) => {
+        const start = i * upsertProcCols.length + 1;
+        normKeys.forEach(k => {
+          let v = Object.prototype.hasOwnProperty.call(row, k) ? row[k] : null;
+          if (v === '') v = null;
+          if (k === 'seniority' && v != null && String(v).trim() !== '') {
+            const std = standardizeSeniority(v);
+            v = std || null;
+          }
+          upsertValues.push(v);
+        });
+        upsertValues.push(req.user.id);
+        upsertValues.push(req.user.username);
+        upsertValues.push(userJskillset);
+        return `(${Array.from({ length: upsertProcCols.length }, (_, j) => `$${start + j}`).join(',')})`;
+      }).join(',');
+
+      const updateSetClause = updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ');
+      const upsertSql = `
+        INSERT INTO "process" (${upsertProcCols.join(', ')})
+        VALUES ${upsertPlaceholders}
+        ON CONFLICT (id) DO UPDATE SET ${updateSetClause}
+        RETURNING id
+      `;
+      const upsResult = await pool.query(upsertSql, upsertValues);
+      totalAffected += upsResult.rowCount;
+
+      try {
+        for (let i = 0; i < upsResult.rows.length; i++) {
+          const src = upsertRows[i];
+          await ensureCanonicalFieldsForId(upsResult.rows[i].id, src.organisation || null, src.role || '', null);
+        }
+      } catch (e) { console.warn('[BULK_CANON] upsert rows', e && e.message); }
+    }
+
+    console.log('Upserted/inserted rows into process:', totalAffected);
+
+    // Notify clients that candidates were changed (clients can choose to refetch)
     try {
-      broadcastSSE('candidates_changed', { action: 'bulk_insert', count: result.rowCount });
+      broadcastSSE('candidates_changed', { action: 'bulk_upsert', count: totalAffected });
     } catch (_) { /* ignore emit errors */ }
 
-    res.json({ rowsInserted: result.rowCount });
-    _writeApprovalLog({ action: 'bulk_candidates_insert', username: req.user.username, userid: req.user.id, detail: `Bulk inserted ${result.rowCount} candidates`, source: 'server.js' });
+    res.json({ rowsInserted: totalAffected });
+    _writeApprovalLog({ action: 'bulk_candidates_upsert', username: req.user.username, userid: req.user.id, detail: `DB Dock & Deploy upserted/inserted ${totalAffected} candidates`, source: 'server.js' });
   } catch (err) {
     console.error('Bulk insert error:', err);
     res.status(500).json({ error: err.message || 'Bulk insert failed.' });
