@@ -2331,7 +2331,7 @@ function CandidatesTable({
 `  </WorksheetOptions>\n` +
 `  ${validationXml}\n` +
 ` </Worksheet>\n` +
-` <Worksheet ss:Name="DB Copy" ss:Visibility="Hidden">\n` +
+` <Worksheet ss:Name="DB Copy" ss:Visible="SheetHidden">\n` +
 `  <Table>${jsonHeaderRow}${jsonRows}</Table>\n` +
 ` </Worksheet>\n` +
 `</Workbook>`;
@@ -2397,7 +2397,7 @@ function CandidatesTable({
             onClick={handleSaveAll}
             disabled={savingAll}
             className="btn-primary"
-            style={{ padding: '8px 16px', marginLeft: 'auto' }}
+            style={{ padding: '8px 16px' }}
           >{savingAll ? 'Saving  ' : 'Save'}</button>
 
           <button
@@ -4815,7 +4815,6 @@ export default function App() {
 
       <div style={{ display: activeTab === 'list' ? 'block' : 'none' }}>
         <div style={{ marginTop:32 }}>
-          <h2 style={{ fontSize:24, fontWeight:700, margin:'0 0 16px', color:'var(--azure-dragon)' }}>Candidate List</h2>
           {loading
             ? <p>Loading candidates...</p>
             : <CandidatesTable
