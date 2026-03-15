@@ -4682,6 +4682,9 @@ def process_bulk_assess():
     assessment_level = (payload.get("assessment_level") or payload.get("assessmentLevel") or "L2").strip().upper()
     username = (payload.get("username") or "").strip()
     force_reassess = bool(payload.get("force_reassess") or False)
+    # role_tag override: explicitly selected by the user in Step 3 of the Dock In wizard.
+    # Used as a high-priority fallback when the record is not in the sourcing table (newly docked).
+    override_role_tag = (payload.get("role_tag") or "").strip()
 
     # helper for single assess + persist
     def _assess_and_persist(linkedinurl):
@@ -4876,8 +4879,15 @@ def process_bulk_assess():
             if _sourcing_role_tag_direct:
                 role_tag = _sourcing_role_tag_direct
                 logger.info(f"[BULK_ASSESS] role_tag='{role_tag}' sourced from sourcing table for {linkedinurl[:50]}")
+            elif override_role_tag:
+                # Use the role_tag explicitly selected by the user in the Dock In wizard Step 3.
+                # This takes priority over username-based DB lookups (which may return a stale
+                # role from a previous session) when the record is not in the sourcing table.
+                role_tag = override_role_tag
+                logger.info(f"[BULK_ASSESS] role_tag='{role_tag}' applied from request override for {linkedinurl[:50]}")
             elif not role_tag:
                 # Only fall back to process/username lookups when sourcing table has no role_tag
+                # AND no override was provided in the request payload.
                 if username_db:
                     try:
                         cur.execute("SELECT role_tag FROM sourcing WHERE username = %s AND role_tag IS NOT NULL AND role_tag != '' LIMIT 1", (username_db,))
@@ -5312,8 +5322,22 @@ def process_bulk_assess():
 
 @app.get("/process/bulk_assess_status/<job_id>")
 def process_bulk_status(job_id):
-    with JOBS_LOCK: job = JOBS.get(job_id)
-    if not job: return jsonify({"error": "Job not found"}), 404
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            # Fallback: load from persisted job file when not in memory (e.g., after server restart).
+            # Done inside the lock to prevent concurrent requests from racing to restore the same job.
+            job_file = os.path.join(OUTPUT_DIR, f"job_{job_id}.json")
+            if os.path.exists(job_file):
+                try:
+                    with open(job_file, "r", encoding="utf-8") as fh:
+                        job = json.load(fh)
+                    JOBS[job_id] = job
+                    logger.info(f"[BulkAssessStatus] Restored job {job_id} from persisted file")
+                except Exception as e:
+                    logger.warning(f"[BulkAssessStatus] Failed to load persisted job {job_id}: {e}")
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
     
     # Calculate progress percentage
     job_response = dict(job)

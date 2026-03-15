@@ -2454,16 +2454,21 @@ function CandidatesTable({
                   linkedinurls: eligibleLinkedinUrls,
                   assessment_level: 'L2',
                   async: true,
+                  role_tag: (dockInSelectedPair && dockInSelectedPair.roleTag) ? dockInSelectedPair.roleTag : '',
                 }),
               });
               if (bulkRes.ok) {
                 const bulkData = await bulkRes.json();
                 const jobId = bulkData && bulkData.job_id;
                 if (jobId) {
-                  // Poll until the server-side job finishes
+                  // Poll until the server-side job reports 'done' or 'error'.
+                  // Max 150 polls × 2 s = 5 minutes; HTTP errors are retried (not treated as done).
+                  const POLL_MAX = 150;
                   let pollDone = false;
-                  while (!pollDone) {
+                  let pollAttempts = 0;
+                  while (!pollDone && pollAttempts < POLL_MAX) {
                     await new Promise(r => setTimeout(r, 2000));
+                    pollAttempts++;
                     try {
                       const statusRes = await fetch(`http://localhost:8091/process/bulk_assess_status/${jobId}`, {
                         credentials: 'include',
@@ -2476,13 +2481,17 @@ function CandidatesTable({
                         if (statusData.status === 'done' || statusData.status === 'error') {
                           pollDone = true;
                         }
-                      } else {
-                        pollDone = true; // non-2xx status — stop polling
+                        // status 'running' → keep polling
                       }
+                      // Non-2xx (e.g. 404, 502) → keep retrying; do NOT exit early
                     } catch (pollErr) {
-                      console.warn('[Analytic DB] Polling bulk_assess status failed:', pollErr && pollErr.message);
-                      pollDone = true;
+                      // Network error → keep retrying
+                      console.warn('[Analytic DB] Polling bulk_assess status failed (will retry):', pollErr && pollErr.message);
                     }
+                  }
+                  if (!pollDone) {
+                    console.warn('[Analytic DB] Polling timed out after', POLL_MAX, 'attempts — proceeding with finalisation.');
+                    setDockInAnalyticProgress('Assessment may still be running — proceeding to finalise…');
                   }
                 }
               }
@@ -2506,7 +2515,7 @@ function CandidatesTable({
             try {
               const tokenRes = await fetch('http://localhost:4000/candidates/token-deduct', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 credentials: 'include',
                 body: JSON.stringify({ count: tokenCost }),
               });
