@@ -897,7 +897,7 @@ async function ensureProcessTable() {
         lskillset TEXT,
         linkedinurl TEXT,
         jskillset TEXT,
-	rating INTEGER,
+	rating TEXT,
         pic BYTEA,
         education TEXT,
         comment TEXT
@@ -929,7 +929,11 @@ async function ensureProcessTable() {
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS linkedinurl TEXT`);
     // Ensure jskillset column exists
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS jskillset TEXT`);
-    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS rating INTEGER`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS rating TEXT`);
+    // Migrate rating column from INTEGER to TEXT if needed (for complex JSON rating objects)
+    try {
+      await pool.query(`ALTER TABLE "process" ALTER COLUMN rating TYPE TEXT USING rating::TEXT`);
+    } catch (_) { /* Column may already be TEXT — safe to ignore */ }
     // Ensure pic column exists for candidate images
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS pic BYTEA`);
     // Ensure education column exists
@@ -1358,9 +1362,10 @@ function normalizeIncomingRow(c) {
     rating: (() => {
       const v = firstVal(c, ['rating', 'Rating']);
       if (v == null) return null;
-      if (typeof v === 'object') return null; // complex rating object — skip for INTEGER column
-      const n = Number(v);
-      return isNaN(n) ? null : n;
+      // Serialize complex rating objects (e.g. assessment_level objects) to JSON string for TEXT column
+      if (typeof v === 'object') return JSON.stringify(v);
+      const s = String(v).trim();
+      return s || null;
     })(),
     jskillset: firstVal(c, ['jskillset']) || null,
     // Additional DB-only fields from DB Copy JSON
