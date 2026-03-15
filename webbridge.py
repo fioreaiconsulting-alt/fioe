@@ -477,7 +477,7 @@ def admin_update_token():
             return jsonify({"error": "User not found"}), 404
         token_after = int(row[0])
         # Log the admin credit adjustment
-        if _LOGGER_AVAILABLE:
+        if _APP_LOGGER_AVAILABLE:
             delta = token_after - token_before if token_before is not None else None
             if delta is None:
                 txn_type = "adjustment"
@@ -4675,7 +4675,7 @@ def user_token_update():
             if not row:
                 return jsonify({"error": "user not found"}), 404
             new_token, _uname = int(row[0]), (row[1] or "")
-            if _LOGGER_AVAILABLE:
+            if _APP_LOGGER_AVAILABLE:
                 log_financial(
                     username=_uname, userid=userid, feature="token_update",
                     transaction_type="credit" if delta_int > 0 else "spend",
@@ -4854,7 +4854,7 @@ def user_token_update():
             return jsonify({"error": "user not found"}), 404
         new_token = int(row[0])
         # Log token spend/credit transaction
-        if _LOGGER_AVAILABLE:
+        if _APP_LOGGER_AVAILABLE:
             delta = (new_token - _token_before_tx) if _token_before_tx is not None else None
             if delta is None:
                 txn_type = "adjustment"
