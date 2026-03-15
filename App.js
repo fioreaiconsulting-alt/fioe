@@ -2402,8 +2402,37 @@ function CandidatesTable({
           setDockInAnalyticProgress(`Analysis complete — ${summaryParts.join(', ')}.`);
           setTimeout(() => { setDockInAnalyticProgress(''); setDockInAnalyticPct(0); setDockInWizOpen(false); onDockIn && onDockIn(); }, ANALYTIC_COMPLETION_DISPLAY_MS);
         } else {
-          setDockInWizOpen(false);
-          onDockIn && onDockIn();
+          // Normal mode: trigger lightweight backend inference for any new records
+          const newRecordsForInference = mergedToImport.filter(cand => !cand.userid);
+          const newLinkedinUrlsForInference = newRecordsForInference.map(c => c.linkedinurl).filter(Boolean);
+          if (newLinkedinUrlsForInference.length > 0) {
+            const NORMAL_COMPLETION_DISPLAY_MS = 1500;
+            setDockInAnalyticProgress('Running inference on new records…');
+            setDockInAnalyticPct(10);
+            try {
+              const inferRes = await fetch('http://localhost:8091/process/bulk_assess', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                  linkedinurls: newLinkedinUrlsForInference,
+                  assessment_level: 'L2',
+                  async: false,
+                }),
+              });
+              if (!inferRes.ok) {
+                console.warn(`[DB Dock In] Inference returned HTTP ${inferRes.status} — inference may be incomplete.`);
+              }
+            } catch (inferErr) {
+              console.warn('[DB Dock In] Inference failed:', inferErr?.message || String(inferErr));
+            }
+            setDockInAnalyticPct(100);
+            setDockInAnalyticProgress('Import and inference complete.');
+            setTimeout(() => { setDockInAnalyticProgress(''); setDockInAnalyticPct(0); setDockInWizOpen(false); onDockIn && onDockIn(); }, NORMAL_COMPLETION_DISPLAY_MS);
+          } else {
+            setDockInWizOpen(false);
+            onDockIn && onDockIn();
+          }
         }
       })
       .catch(err => setDockInError('❌ Deploy failed: ' + (err && err.message ? err.message : 'Network error')))
@@ -2789,15 +2818,15 @@ sigSheet +
               {dockInUploading && (
                 <div style={{ margin: '24px 0' }}>
                   <div style={{ color: '#073679', fontWeight: 600, fontSize: 15, marginBottom: 14 }}>{dockInAnalyticProgress || 'Deploying candidates to database…'}</div>
-                  {dockInWizMode === 'analytic' && (
+                  {(dockInWizMode === 'analytic' || dockInAnalyticPct > 0) && (
                     <div style={{ width: '100%', maxWidth: 420, margin: '0 auto' }}>
-                      <div style={{ background: '#e2e8f0', borderRadius: 8, height: 14, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', borderRadius: 8, background: 'linear-gradient(90deg, #073679, #4c82b8)', transition: 'width 0.4s ease', width: `${dockInAnalyticPct}%` }} />
+                      <div className="dock-in-progress-bar-bg">
+                        <div className="dock-in-progress-bar-fill" style={{ width: `${dockInAnalyticPct}%` }} />
                       </div>
                       <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>{dockInAnalyticPct}%</div>
                     </div>
                   )}
-                  {dockInWizMode !== 'analytic' && <div style={{ fontSize: 30, marginTop: 8 }}>⏳</div>}
+                  {dockInWizMode !== 'analytic' && dockInAnalyticPct === 0 && <div style={{ fontSize: 30, marginTop: 8 }}>⏳</div>}
                 </div>
               )}
               {!dockInUploading && dockInAnalyticProgress && (
@@ -3388,15 +3417,15 @@ sigSheet +
                     <div style={{ color: '#073679', fontWeight: 600, fontSize: 14, marginBottom: 12 }}>
                       {dockInAnalyticProgress || 'Deploying candidates to database…'}
                     </div>
-                    {dockInWizMode === 'analytic' && (
+                    {(dockInWizMode === 'analytic' || dockInAnalyticPct > 0) && (
                       <div style={{ width: '100%', maxWidth: 360, margin: '0 auto' }}>
-                        <div style={{ background: '#e2e8f0', borderRadius: 8, height: 12, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', borderRadius: 8, background: 'linear-gradient(90deg, #073679, #4c82b8)', transition: 'width 0.4s ease', width: `${dockInAnalyticPct}%` }} />
+                        <div className="dock-in-progress-bar-bg">
+                          <div className="dock-in-progress-bar-fill" style={{ width: `${dockInAnalyticPct}%` }} />
                         </div>
                         <div style={{ fontSize: 12, color: '#666', marginTop: 5 }}>{dockInAnalyticPct}%</div>
                       </div>
                     )}
-                    {dockInWizMode !== 'analytic' && <div style={{ fontSize: 28, marginTop: 8 }}>⏳</div>}
+                    {dockInWizMode !== 'analytic' && dockInAnalyticPct === 0 && <div style={{ fontSize: 28, marginTop: 8 }}>⏳</div>}
                   </div>
                 )}
                 {!dockInUploading && dockInAnalyticProgress && (
