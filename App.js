@@ -3596,6 +3596,20 @@ sigSheet +
                   <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
                   <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to browse for a DB Port export</div>
                   <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx, .xls, and .xml (XML Spreadsheet) files</div>
+                </div>
+                {dockInWizFile && (
+                  <div style={{ fontSize: 13, color: '#444', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    📄 <strong>{dockInWizFile.name}</strong>
+                  </div>
+                )}
+                {dockInError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{dockInError}</div>}
+                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                  <button onClick={() => { setDockInError(''); setDockInWizStep(1); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Back</button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 3 (Analytic): Role & Skillset Confirmation ── */}
             {dockInWizStep === 3 && isAnalyticWiz && (
               <div>
                 <p style={{ margin: '0 0 14px', color: '#444', fontSize: 14 }}>
