@@ -2368,6 +2368,30 @@ def process_upload_multiple_cvs():
             }
             candidate_map.setdefault(norm, []).append(entry)
 
+        # Supplement the name map with records from the process table so that
+        # newly docked candidates (inserted by /candidates/bulk but not yet in
+        # sourcing) can still be matched by filename.  Sourcing records take
+        # priority — we only add a process entry when the normalised name is
+        # not already covered by sourcing.  Only include rows without a CV
+        # (cv IS NULL) since records that already have a CV don't need matching.
+        try:
+            cur.execute("SELECT id, name, linkedinurl, company, jobtitle, country, username, userid FROM process WHERE name IS NOT NULL AND name != '' AND cv IS NULL")
+            process_rows = cur.fetchall()
+            for prow in process_rows:
+                pid2, pname, plink, pcomp, pjob, pctry, puname, puid = prow
+                pnorm = normalize_name(pname)
+                if len(pnorm) < 3 or pnorm in candidate_map:
+                    continue  # sourcing entry already covers this name
+                clean_pname = clean_name_for_display(pname)
+                pentry = {
+                    "id": pid2, "name": clean_pname, "linkedinurl": plink,
+                    "company": pcomp, "jobtitle": pjob, "country": pctry,
+                    "username": puname, "userid": puid
+                }
+                candidate_map.setdefault(pnorm, []).append(pentry)
+        except Exception as _proc_map_err:
+            logger.warning(f"[Upload Multiple CVs] Could not supplement name map from process table: {_proc_map_err}")
+
         uploaded_count = 0
         errors = []
         uploaded_profiles = []  # Track successfully uploaded profiles
@@ -2417,11 +2441,13 @@ def process_upload_multiple_cvs():
                         r_id = cur.fetchone()
                         if r_id: pid = r_id[0]
                         
-                    # 2. Try match by LinkedIn URL if no ID match
+                    # 2. Try match by LinkedIn URL if no ID match (case-insensitive, trailing-slash tolerant)
                     if not pid:
-                        cur.execute("SELECT id FROM process WHERE linkedinurl=%s", (m_link,))
-                        r_link = cur.fetchone()
-                        if r_link: pid = r_link[0]
+                        norm_m_link = m_link.rstrip('/').lower() if m_link else ''
+                        if norm_m_link:
+                            cur.execute("SELECT id FROM process WHERE LOWER(RTRIM(linkedinurl, '/')) = LOWER(%s)", (norm_m_link,))
+                            r_link = cur.fetchone()
+                            if r_link: pid = r_link[0]
 
                     if pid:
                         # Update existing record - also update name to clean any special characters
@@ -4775,7 +4801,23 @@ def process_bulk_assess():
                 else:
                     logger.info(f"[BULK_ASSESS] No product data in DB for {linkedinurl[:50]}")
             
-            # Check if CV is uploaded - if not, skip assessment
+            # Check if CV is uploaded - if not, retry briefly in case the CV was just
+            # committed by upload_multiple_cvs moments before this call arrived.
+            # Allow up to 5 retries × 3 seconds = 15 seconds to accommodate the
+            # analyze_cv_background thread which writes back to the process table.
+            if not cv_data and row:
+                for _retry in range(5):
+                    time.sleep(3)
+                    try:
+                        cur.execute("SELECT cv FROM process WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
+                        _cv_row = cur.fetchone()
+                        if _cv_row and _cv_row[0]:
+                            cv_data = _cv_row[0]
+                            logger.info(f"[BULK_ASSESS] CV found after {(_retry+1)*3}s retry for {linkedinurl[:50]}")
+                            break
+                    except Exception as _e:
+                        logger.debug(f"[BULK_ASSESS] CV retry query error (attempt {_retry+1}): {_e}")
+                        conn.rollback()
             if not cv_data:
                 logger.info(f"[BULK_ASSESS] Skipping {linkedinurl[:50]} - No CV uploaded (Assessment pending)")
                 return {
