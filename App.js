@@ -2282,12 +2282,15 @@ function CandidatesTable({
       }
       const ws1    = wb.Sheets[wb.SheetNames[0]];
       const s1Rows = XLSX.utils.sheet_to_json(ws1, { defval: '' });
-      const merged = dbRows.map((dbRow, i) => {
-        const s1Row = s1Rows[i] || {};
-        const out   = { ...dbRow };
+      // New records are recognised exclusively from Sheet 1 (Candidate Data tab).
+      // DB Copy JSON is supplemental: it fills any field absent from Sheet 1.
+      // DB Copy cannot introduce records not present in Sheet 1.
+      const merged = s1Rows.map((s1Row, i) => {
+        const dbRow = dbRows[i] || {};
+        const out   = { ...dbRow }; // start with DB Copy metadata as base (userid, supplemental fields, etc.)
         for (const [s1Col, dbKey] of Object.entries(S1_TO_DB_DOCK)) {
           const v = s1Row[s1Col];
-          if (v !== undefined && String(v).trim() !== '') out[dbKey] = v;
+          if (v !== undefined && String(v).trim() !== '') out[dbKey] = v; // Sheet 1 overrides
         }
         return out;
       });
@@ -2391,28 +2394,33 @@ function CandidatesTable({
           handleDockIn(file, true);
           return;
         }
-        // Parse Sheet 1 (Candidate Data) for mandatory field validation
+        // New records are recognised exclusively from Sheet 1 (Candidate Data tab).
+        // DB Copy JSON is supplemental: provides userid to identify existing records
+        // and fallback values for any field absent in Sheet 1.
         const ws1 = wb.Sheets[wb.SheetNames[0]];
         const s1Rows = ws1 ? XLSX.utils.sheet_to_json(ws1, { defval: '' }) : [];
         const MANDATORY = ['name', 'company', 'jobtitle', 'country'];
         let newCount = 0;
         const rejected = [];
-        // Collect all DB Copy rows (index-aligned with Sheet 1)
-        const dbCopyDataRows = raw.slice(1).filter(row => row && row.length && row[0]);
-        dbCopyDataRows.forEach((row, i) => {
-          const jsonStr = row.filter(c => c != null && String(c) !== '').join('');
-          let obj = null;
-          try { obj = JSON.parse(jsonStr); } catch (_) { return; }
-          if (!obj) return;
-          // New record = no userid in DB Copy JSON
-          if (obj.userid) return; // existing record — not counted for analysis
+        // Build DB Copy objects array (index-aligned with Sheet 1) for supplemental lookups
+        const dbCopyObjects = raw.slice(1)
+          .filter(row => row && row.length && row[0])
+          .map(row => {
+            const jsonStr = row.filter(c => c != null && String(c) !== '').join('');
+            try { return JSON.parse(jsonStr); } catch (_) { return null; }
+          })
+          .filter(Boolean);
+        // Iterate over Sheet 1 rows — the authoritative source of new records
+        s1Rows.forEach((s1Row, i) => {
+          const dbObj = dbCopyObjects[i] || {};
+          // Existing record: userid is present in the corresponding DB Copy JSON entry
+          if (dbObj.userid) return;
           newCount++;
-                    // Validate mandatory fields: Sheet 1 is authoritative; fall back to DB Copy JSON value
-          const s1Row = s1Rows[i] || {};
-          const missing = MANDATORY.filter(f => String(s1Row[f] || obj[f] || '').trim() === '');
+          // Validate mandatory fields: Sheet 1 is authoritative; DB Copy JSON as fallback
+          const missing = MANDATORY.filter(f => String(s1Row[f] || dbObj[f] || '').trim() === '');
           if (missing.length > 0) {
-            const displayName = String(s1Row['name'] || obj.name || `Row ${i + 2}`).trim();
-            // +2 accounts for: 1 (sentinel row in DB Copy) + 1 (1-based row number)
+            const displayName = String(s1Row['name'] || dbObj.name || `Row ${i + 2}`).trim();
+            // +2: row 1 is the Sheet 1 header, rows are 1-based, so data row i → spreadsheet row i+2
             rejected.push({ row: i + 2, name: displayName, missing });
           }
         });
