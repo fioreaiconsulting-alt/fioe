@@ -1237,6 +1237,26 @@ app.post('/deduct-tokens', requireLogin, async (req, res) => {
   }
 });
 
+// POST /candidates/token-deduct - Deduct N tokens after Analytic DB Dock In (1 token per new record)
+app.post('/candidates/token-deduct', requireLogin, userRateLimit('bulk_upload'), async (req, res) => {
+  try {
+    const count = parseInt((req.body && req.body.count) || 0, 10);
+    if (!count || count <= 0) return res.json({ tokensLeft: 0, accountTokens: 0 });
+    const username = req.user.username;
+    const result = await pool.query(
+      'UPDATE login SET token = GREATEST(0, COALESCE(token, 0) - $2) WHERE username = $1 RETURNING token',
+      [username, count]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const remaining = result.rows[0].token;
+    _writeApprovalLog({ action: 'token_deduct_dock_in', username, userid: req.user.id, detail: `Deducted ${count} token(s) for Analytic DB Dock In. Remaining: ${remaining}`, source: 'server.js' });
+    res.json({ tokensLeft: remaining, accountTokens: remaining });
+  } catch (err) {
+    console.error('Error deducting dock-in tokens:', err);
+    res.status(500).json({ error: 'Failed to deduct tokens' });
+  }
+});
+
 // ========================= END AUTH ROUTES =========================
 
 app.get('/', (req, res) => {
@@ -1462,21 +1482,24 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
     const updateNormKeys = normKeys.filter(k => k !== 'id');
 
     // ── Identity matching ─────────────────────────────────────────────────────
-    // Primary:   (userid, LOWER(linkedinurl)) → UPDATE existing record
-    // Secondary: (userid, id from DB Copy)    → UPDATE (handles changed/missing linkedinurl)
+    // Primary:   (userid, LOWER(RTRIM('/',linkedinurl))) → UPDATE existing record
+    // Secondary: (userid, id from DB Copy)               → UPDATE (handles changed/missing linkedinurl)
     // Fallback:  INSERT preserving original id from DB Copy when valid
+    // Normalize a LinkedIn URL to lowercase without trailing slash for robust matching
+    const normalizeLinkedInUrl = u => u ? u.trim().toLowerCase().replace(/\/+$/, '') : '';
+
     const incomingLinkedInUrls = normalized
-      .map(r => r.linkedinurl ? r.linkedinurl.trim().toLowerCase() : '')
+      .map(r => normalizeLinkedInUrl(r.linkedinurl))
       .filter(u => u !== '');
 
-    const existingByLinkedin = {};   // lowercase linkedinurl → existing DB row id
+    const existingByLinkedin = {};   // normalised linkedinurl → existing DB row id
     if (incomingLinkedInUrls.length > 0) {
       const existingRes = await pool.query(
-        `SELECT id, linkedinurl FROM "process" WHERE userid = $1 AND LOWER(linkedinurl) = ANY($2::text[])`,
+        `SELECT id, linkedinurl FROM "process" WHERE userid = $1 AND LOWER(RTRIM(linkedinurl, '/')) = ANY($2::text[])`,
         [req.user.id, incomingLinkedInUrls]
       );
       existingRes.rows.forEach(row => {
-        if (row.linkedinurl) existingByLinkedin[row.linkedinurl.trim().toLowerCase()] = row.id;
+        if (row.linkedinurl) existingByLinkedin[normalizeLinkedInUrl(row.linkedinurl)] = row.id;
       });
     }
 
@@ -1497,9 +1520,9 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
     const updateRows = [];
     const insertRows = [];
     normalized.forEach(row => {
-      const key = row.linkedinurl ? row.linkedinurl.trim().toLowerCase() : '';
+      const key = normalizeLinkedInUrl(row.linkedinurl);
       if (key && existingByLinkedin[key] !== undefined) {
-        // Primary match by linkedinurl
+        // Primary match by linkedinurl (trailing-slash normalised, case-insensitive)
         updateRows.push({ ...row, matchedId: existingByLinkedin[key] });
       } else if (row.id && existingDbIds.has(row.id)) {
         // Secondary match by id from DB Copy

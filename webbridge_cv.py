@@ -2441,11 +2441,13 @@ def process_upload_multiple_cvs():
                         r_id = cur.fetchone()
                         if r_id: pid = r_id[0]
                         
-                    # 2. Try match by LinkedIn URL if no ID match
+                    # 2. Try match by LinkedIn URL if no ID match (case-insensitive, trailing-slash tolerant)
                     if not pid:
-                        cur.execute("SELECT id FROM process WHERE linkedinurl=%s", (m_link,))
-                        r_link = cur.fetchone()
-                        if r_link: pid = r_link[0]
+                        norm_m_link = m_link.rstrip('/').lower() if m_link else ''
+                        if norm_m_link:
+                            cur.execute("SELECT id FROM process WHERE LOWER(RTRIM(linkedinurl, '/')) = LOWER(%s)", (norm_m_link,))
+                            r_link = cur.fetchone()
+                            if r_link: pid = r_link[0]
 
                     if pid:
                         # Update existing record - also update name to clean any special characters
@@ -4801,15 +4803,17 @@ def process_bulk_assess():
             
             # Check if CV is uploaded - if not, retry briefly in case the CV was just
             # committed by upload_multiple_cvs moments before this call arrived.
+            # Allow up to 5 retries × 3 seconds = 15 seconds to accommodate the
+            # analyze_cv_background thread which writes back to the process table.
             if not cv_data and row:
-                for _retry in range(3):
-                    time.sleep(2)
+                for _retry in range(5):
+                    time.sleep(3)
                     try:
                         cur.execute("SELECT cv FROM process WHERE linkedinurl = %s LIMIT 1", (linkedinurl,))
                         _cv_row = cur.fetchone()
                         if _cv_row and _cv_row[0]:
                             cv_data = _cv_row[0]
-                            logger.info(f"[BULK_ASSESS] CV found after {(_retry+1)*2}s retry for {linkedinurl[:50]}")
+                            logger.info(f"[BULK_ASSESS] CV found after {(_retry+1)*3}s retry for {linkedinurl[:50]}")
                             break
                     except Exception as _e:
                         logger.debug(f"[BULK_ASSESS] CV retry query error (attempt {_retry+1}): {_e}")

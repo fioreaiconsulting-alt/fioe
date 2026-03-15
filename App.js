@@ -1506,6 +1506,7 @@ function CandidatesTable({
   user, // Logged-in user for template tags
   onDockIn, // Callback to refresh candidates after DB Dock In import
   tokensLeft = 0, // Current token balance from parent App
+  onTokensUpdated, // Callback to update parent token balance after deduction
 }) {
   const DEFAULT_WIDTH = 140;
   const MIN_WIDTH = 90;
@@ -2383,7 +2384,10 @@ function CandidatesTable({
           // ── Analytic DB: trigger analysis for new records that passed mandatory-field validation ──
           // mergedToImport already excludes new records missing mandatory fields (they were rejected).
           // Eligible for analysis = new (no userid) records in mergedToImport.
-          const ANALYTIC_COMPLETION_DISPLAY_MS = 2200;
+          // ANALYTIC_POST_ASSESS_BUFFER_MS: extra wait after bulk_assess job is 'done' to allow
+          // the analyze_cv_background thread (started by upload_multiple_cvs) to finish writing
+          // its enriched fields back to the process table before the Candidate List is refreshed.
+          const ANALYTIC_POST_ASSESS_BUFFER_MS = 10000;
           const extractCandidateSkills = (cand) => {
             try {
               const vs = cand.vskillset;
@@ -2496,7 +2500,34 @@ function CandidatesTable({
           if (existingCount > 0) summaryParts.push(`${existingCount} existing record(s) not re-analysed`);
           setDockInAnalyticPct(100);
           setDockInAnalyticProgress(`Analysis complete — ${summaryParts.join(', ')}.`);
-          setTimeout(() => { setDockInAnalyticProgress(''); setDockInAnalyticPct(0); setDockInWizOpen(false); onDockIn && onDockIn(); }, ANALYTIC_COMPLETION_DISPLAY_MS);
+          // Deduct 1 token per eligible new record once assessment is complete.
+          const tokenCost = eligibleForAnalysis.length;
+          if (tokenCost > 0) {
+            try {
+              const tokenRes = await fetch('http://localhost:4000/candidates/token-deduct', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ count: tokenCost }),
+              });
+              if (tokenRes.ok) {
+                const tokenData = await tokenRes.json();
+                if (tokenData.tokensLeft !== undefined && typeof onTokensUpdated === 'function') {
+                  onTokensUpdated(tokenData.tokensLeft);
+                }
+              }
+            } catch (tokenErr) {
+              console.warn('[Analytic DB] Token deduction failed:', tokenErr && tokenErr.message);
+            }
+          }
+          // Wait for analyze_cv_background threads (started by upload_multiple_cvs) to finish
+          // writing enriched data back to the process table before refreshing the Candidate List.
+          setDockInAnalyticProgress(`Finalising — enriching candidate data… please wait`);
+          await new Promise(r => setTimeout(r, ANALYTIC_POST_ASSESS_BUFFER_MS));
+          setDockInAnalyticProgress('');
+          setDockInAnalyticPct(0);
+          setDockInWizOpen(false);
+          onDockIn && onDockIn();
         } else {
           setDockInWizOpen(false);
           onDockIn && onDockIn();
@@ -6147,6 +6178,7 @@ export default function App() {
                 user={user}
                 onDockIn={fetchCandidates}
                 tokensLeft={tokensLeft}
+                onTokensUpdated={setTokensLeft}
               />
           }
         </div>
