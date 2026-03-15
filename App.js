@@ -1530,11 +1530,16 @@ function CandidatesTable({
   const [dockInWizMode, setDockInWizMode] = useState(''); // 'normal' | 'analytic'
   const [dockInWizFile, setDockInWizFile] = useState(null);
   const [dockInAnalyticProgress, setDockInAnalyticProgress] = useState(''); // analytic stage message
-  const dockInWizFileRef = useRef(null);
+  const dockInWizFileRef = useRef(null);   // used by modal wizard (inside hidden table div)
+  const dockInInlineFileRef = useRef(null); // used by inline empty-state wizard
   // DB Dock Out state
   const [dockOutClearing, setDockOutClearing] = useState(false);
   const [dockOutConfirmOpen, setDockOutConfirmOpen] = useState(false);
   const [dockOutNoWarning, setDockOutNoWarning] = useState(() => localStorage.getItem('dockOutSkipWarning') === '1');
+  // Analytic DB: pre-file-parse confirmation state
+  const [dockInAnalyticConfirm, setDockInAnalyticConfirm] = useState(false);
+  const [dockInNewRecordCount, setDockInNewRecordCount] = useState(0);
+  const [dockInPeeking, setDockInPeeking] = useState(false); // true while parsing file for count
 
   // Track newly-added candidate IDs for the "New" badge
   const [newCandidateIds, setNewCandidateIds] = useState(new Set());
@@ -1658,6 +1663,20 @@ function CandidatesTable({
 
   // Helper: remove a set of IDs from the newCandidateIds Set
   const dismissNewBadges = ids => setNewCandidateIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
+
+  // When candidate list becomes empty, reset inline wizard to Step 1
+  useEffect(() => {
+    if (!allCandidates || allCandidates.length === 0) {
+      setDockInWizStep(1);
+      setDockInWizMode('');
+      setDockInWizFile(null);
+      setDockInError('');
+      setDockInAnalyticProgress('');
+      setDockInAnalyticConfirm(false);
+      setDockInNewRecordCount(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCandidates?.length]);
 
   // Detect newly added candidates and show "New" badge for 8 seconds
   useEffect(() => {
@@ -2338,6 +2357,62 @@ function CandidatesTable({
     });
   };
 
+  // ── Pre-parse file to count records without vskillset (new records needing Analytic DB) ──
+  const peekFileForNewRecords = (file) => {
+    setDockInPeeking(true);
+    setDockInError('');
+    file.arrayBuffer().then(data => {
+      try {
+        const wb = XLSX.read(data);
+        const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
+        if (!dbCopyName) {
+          // File invalid; let handleDockIn report the proper error
+          setDockInPeeking(false);
+          setDockInWizStep(3);
+          handleDockIn(file, true);
+          return;
+        }
+        const ws2 = wb.Sheets[dbCopyName];
+        const raw = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
+        if (!raw.length || String(raw[0][0]).trim() !== '__json_export_v1__') {
+          setDockInPeeking(false);
+          setDockInWizStep(3);
+          handleDockIn(file, true);
+          return;
+        }
+        let newCount = 0;
+        for (let i = 1; i < raw.length; i++) {
+          const row = raw[i];
+          if (!row || !row.length || !row[0]) continue;
+          const jsonStr = row.filter(c => c != null && String(c) !== '').join('');
+          try {
+            const obj = JSON.parse(jsonStr);
+            const vs = obj.vskillset;
+            const isEmpty = !vs || (Array.isArray(vs) && vs.length === 0) || (typeof vs === 'string' && vs.trim() === '' || vs === '[]');
+            if (isEmpty) newCount++;
+          } catch (_) { newCount++; } // unparseable = treat as new
+        }
+        setDockInNewRecordCount(newCount);
+        setDockInPeeking(false);
+        if (newCount > 0) {
+          setDockInAnalyticConfirm(true); // show confirmation dialog
+        } else {
+          // All records already have vskillset; proceed directly
+          setDockInWizStep(3);
+          handleDockIn(file, true);
+        }
+      } catch (_) {
+        setDockInPeeking(false);
+        setDockInWizStep(3);
+        handleDockIn(file, true);
+      }
+    }).catch(() => {
+      setDockInPeeking(false);
+      setDockInWizStep(3);
+      handleDockIn(file, true);
+    });
+  };
+
   // ── DB Dock Out: export + clear user's process table data ──
   const executeDockOut = async () => {
     setDockOutConfirmOpen(false);
@@ -2500,10 +2575,166 @@ sigSheet +
     URL.revokeObjectURL(url);
   };
 
+  // ── Step-card shared style helper for inline wizard ──
+  const wizCardStyle = (selected) => ({
+    flex: 1, border: `2px solid ${selected ? '#4c82b8' : '#d8d8d8'}`,
+    borderRadius: 10, padding: '16px 14px', cursor: 'pointer', transition: 'border-color 0.15s',
+    background: selected ? 'rgba(76,130,184,0.07)' : '#fafafa',
+    position: 'relative',
+  });
+
   return (
     <>
+      {/* ── Inline 3-step DB Dock In setup wizard (shown only when candidate list is empty) ── */}
+      {(allCandidates || []).length === 0 && (
+        <div className="app-card" style={{ width: '100%', maxWidth: 640, margin: '40px auto', padding: '36px 40px' }}>
+          <h2 style={{ margin: '0 0 6px', color: 'var(--azure-dragon)', fontSize: 20, fontWeight: 700 }}>📥 DB Dock In — Getting Started</h2>
+          <p style={{ margin: '0 0 28px', color: '#666', fontSize: 14 }}>Complete the three steps below to load your candidate database.</p>
+
+          {/* Step indicator */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 32 }}>
+            {[1, 2, 3].map(n => (
+              <React.Fragment key={n}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 14, fontWeight: 700, flexShrink: 0,
+                  background: dockInWizStep > n ? '#073679' : dockInWizStep === n ? '#4c82b8' : '#e2e8f0',
+                  color: dockInWizStep >= n ? '#fff' : '#87888a',
+                  border: dockInWizStep === n ? '2px solid #073679' : '2px solid transparent',
+                }}>
+                  {dockInWizStep > n ? '✓' : n}
+                </div>
+                <div style={{ fontSize: 12, color: dockInWizStep === n ? '#073679' : '#87888a', fontWeight: dockInWizStep === n ? 600 : 400, marginLeft: 8, marginRight: 0, flex: n < 3 ? '1 1 0' : 'none' }}>
+                  {n === 1 ? 'Choose Mode' : n === 2 ? 'Select File' : 'Deploy'}
+                </div>
+                {n < 3 && <div style={{ flex: 1, height: 2, background: dockInWizStep > n ? '#073679' : '#e2e8f0', margin: '0 8px' }} />}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Step 1 — Choose Mode */}
+          {dockInWizStep === 1 && (
+            <div>
+              <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>Select how you want to import your DB Port export:</p>
+              <div style={{ display: 'flex', gap: 14, marginBottom: 24 }}>
+                <div role="button" tabIndex={0} onClick={() => setDockInWizMode('normal')} onKeyDown={e => e.key === 'Enter' && setDockInWizMode('normal')} style={wizCardStyle(dockInWizMode === 'normal')}>
+                  {dockInWizMode === 'normal' && <div style={{ position: 'absolute', top: 8, right: 10, color: '#4c82b8', fontWeight: 700, fontSize: 15 }}>✓</div>}
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
+                  <div style={{ fontWeight: 700, color: '#073679', marginBottom: 4 }}>Normal DB Dock In</div>
+                  <div style={{ fontSize: 12, color: '#666', lineHeight: 1.5 }}>Import candidate data directly. Merges with existing records using the DB Copy schema.</div>
+                </div>
+                <div role="button" tabIndex={0} onClick={() => setDockInWizMode('analytic')} onKeyDown={e => e.key === 'Enter' && setDockInWizMode('analytic')} style={{ ...wizCardStyle(dockInWizMode === 'analytic'), border: `2px solid ${dockInWizMode === 'analytic' ? '#073679' : '#d8d8d8'}`, background: dockInWizMode === 'analytic' ? 'rgba(7,54,121,0.07)' : '#fafafa' }}>
+                  {dockInWizMode === 'analytic' && <div style={{ position: 'absolute', top: 8, right: 10, color: '#073679', fontWeight: 700, fontSize: 15 }}>✓</div>}
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>🤖</div>
+                  <div style={{ fontWeight: 700, color: '#073679', marginBottom: 4 }}>Analytic DB</div>
+                  <div style={{ fontSize: 12, color: '#666', lineHeight: 1.5, marginBottom: 8 }}>Import and run advanced AI analysis on new records. Recommended for full Consulting Dashboard functions.</div>
+                  <div style={{ fontSize: 11, color: '#444', lineHeight: 1.6, background: 'rgba(7,54,121,0.05)', borderRadius: 6, padding: '6px 8px' }}>
+                    <div>📊 <strong>Candidate rating</strong> per record</div>
+                    <div>🧠 <strong>Inferred skillset mapping</strong></div>
+                    <div>📈 <strong>Seniority analysis</strong></div>
+                    <div style={{ marginTop: 4, color: '#c0392b', fontWeight: 500 }}>⚡ 1 token consumed per new record</div>
+                  </div>
+                </div>
+              </div>
+              {dockInWizMode === 'analytic' && (
+                <div style={{ fontSize: 13, color: '#666', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>Your token balance:</span>
+                  <strong style={{ color: tokensLeft < 5 ? '#c0392b' : '#073679' }}>{tokensLeft} token{tokensLeft !== 1 ? 's' : ''}</strong>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  disabled={!dockInWizMode}
+                  onClick={() => setDockInWizStep(2)}
+                  style={{ padding: '10px 28px', background: dockInWizMode ? 'var(--azure-dragon)' : '#ccc', color: '#fff', border: 'none', borderRadius: 6, cursor: dockInWizMode ? 'pointer' : 'not-allowed', fontWeight: 600, fontSize: 15 }}
+                >
+                  Next: Select File →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2 — Select File */}
+          {dockInWizStep === 2 && (
+            <div>
+              {/* Hidden file input for inline wizard */}
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                ref={dockInInlineFileRef}
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files[0];
+                  e.target.value = '';
+                  if (f) {
+                    setDockInWizFile(f);
+                    setDockInAnalyticConfirm(false);
+                    if (dockInWizMode === 'analytic') {
+                      peekFileForNewRecords(f);
+                    } else {
+                      setDockInWizStep(3);
+                      handleDockIn(f, false);
+                    }
+                  }
+                }}
+              />
+              <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>Choose the <strong>DB Port export file</strong> (.xlsx / .xls) to dock.</p>
+              <div
+                role="button" tabIndex={0}
+                onClick={() => dockInInlineFileRef.current && dockInInlineFileRef.current.click()}
+                onKeyDown={e => e.key === 'Enter' && dockInInlineFileRef.current && dockInInlineFileRef.current.click()}
+                style={{ border: '2px dashed #4c82b8', borderRadius: 10, padding: '40px 24px', textAlign: 'center', cursor: dockInPeeking ? 'wait' : 'pointer', marginBottom: 20, background: '#f7fbff' }}
+              >
+                {dockInPeeking ? (
+                  <>
+                    <div style={{ fontSize: 36, marginBottom: 10 }}>⏳</div>
+                    <div style={{ fontWeight: 600, color: '#073679' }}>Reading file…</div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 40, marginBottom: 10 }}>📂</div>
+                    <div style={{ fontWeight: 600, color: '#073679', marginBottom: 4 }}>Click to browse for a DB Port export</div>
+                    <div style={{ fontSize: 12, color: '#87888a' }}>Accepts .xlsx and .xls files only</div>
+                  </>
+                )}
+              </div>
+              {dockInError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{dockInError}</div>}
+              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <button onClick={() => { setDockInError(''); setDockInWizStep(1); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Back</button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3 — Deploy (progress) */}
+          {dockInWizStep === 3 && (
+            <div style={{ textAlign: 'center' }}>
+              {dockInWizFile && <p style={{ margin: '0 0 18px', color: '#444', fontSize: 14 }}>📄 <strong>{dockInWizFile.name}</strong></p>}
+              {dockInUploading && (
+                <div style={{ margin: '24px 0' }}>
+                  <div style={{ fontSize: 36, marginBottom: 10 }}>⏳</div>
+                  <div style={{ color: '#073679', fontWeight: 600, fontSize: 15 }}>{dockInAnalyticProgress || 'Deploying candidates to database…'}</div>
+                </div>
+              )}
+              {!dockInUploading && dockInAnalyticProgress && (
+                <div style={{ margin: '24px 0', color: '#27ae60', fontWeight: 600, fontSize: 15 }}>✅ {dockInAnalyticProgress}</div>
+              )}
+              {dockInError && (
+                <div style={{ color: 'var(--danger)', fontSize: 13, margin: '16px 0', lineHeight: 1.5, textAlign: 'left' }}>{dockInError}</div>
+              )}
+              {!dockInUploading && dockInError && (
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 16 }}>
+                  <button onClick={() => { setDockInError(''); setDockInWizStep(2); }} style={{ padding: '8px 18px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>← Try Another File</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Normal table view (hidden when candidate list is empty) ── */}
       <div className="app-card" style={{
-        width: '100%', maxWidth: '100%', position: 'relative', padding: 16
+        width: '100%', maxWidth: '100%', position: 'relative', padding: 16,
+        display: (allCandidates || []).length === 0 ? 'none' : undefined,
       }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           {selectedIds.length > 0 && (
@@ -2584,8 +2815,14 @@ sigSheet +
                 e.target.value = '';
                 if (f) {
                   setDockInWizFile(f);
-                  setDockInWizStep(3);
-                  handleDockIn(f, dockInWizMode === 'analytic');
+                  setDockInAnalyticConfirm(false);
+                  if (dockInWizMode === 'analytic') {
+                    // Pre-parse to count new records and ask for confirmation
+                    peekFileForNewRecords(f);
+                  } else {
+                    setDockInWizStep(3);
+                    handleDockIn(f, false);
+                  }
                 }
               }}
             />
@@ -3138,6 +3375,55 @@ sigSheet +
                 style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
               >
                 Proceed with Dock Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Analytic DB — token cost confirmation dialog ── */}
+      {dockInAnalyticConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 10000,
+          background: 'rgba(34,37,41,0.65)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 12, padding: '28px 32px', maxWidth: 460, width: '92%',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.28)',
+          }}>
+            <h3 style={{ margin: '0 0 14px', color: '#073679', fontSize: 17, fontWeight: 700 }}>🤖 Analytic DB — Confirm Analysis</h3>
+            <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444', fontSize: 14 }}>
+              <strong>{dockInNewRecordCount}</strong> new record{dockInNewRecordCount !== 1 ? 's' : ''} without an existing AI analysis were found in this file.
+            </p>
+            <p style={{ margin: '0 0 10px', lineHeight: 1.6, color: '#444', fontSize: 14 }}>
+              Each record will be analysed (candidate rating, skillset mapping, seniority analysis), consuming <strong>1 token per record</strong>.
+            </p>
+            <p style={{ margin: '0 0 20px', lineHeight: 1.6, fontSize: 14 }}>
+              <span style={{ color: '#c0392b', fontWeight: 600 }}>Total token cost: {dockInNewRecordCount} token{dockInNewRecordCount !== 1 ? 's' : ''}</span>
+              {' '}(current balance: <strong style={{ color: tokensLeft < dockInNewRecordCount ? '#c0392b' : '#073679' }}>{tokensLeft}</strong>)
+            </p>
+            {tokensLeft < dockInNewRecordCount && (
+              <p style={{ margin: '0 0 16px', color: '#c0392b', fontWeight: 500, fontSize: 13 }}>
+                ⚠️ Insufficient tokens. You have {tokensLeft} token{tokensLeft !== 1 ? 's' : ''} but need {dockInNewRecordCount}. The import will proceed but analysis will be partial.
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setDockInAnalyticConfirm(false); setDockInWizStep(2); setDockInWizFile(null); }}
+                style={{ padding: '8px 20px', background: '#e2e8f0', color: '#333', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setDockInAnalyticConfirm(false);
+                  setDockInWizStep(3);
+                  handleDockIn(dockInWizFile, true);
+                }}
+                style={{ padding: '8px 20px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+              >
+                Proceed with Analysis
               </button>
             </div>
           </div>
