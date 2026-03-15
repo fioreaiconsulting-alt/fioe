@@ -2201,14 +2201,17 @@ function CandidatesTable({
       makeValidation(stCol,  ST_VALS),
     ].filter(Boolean).join('\n');
 
-    // Sheet 2: full candidate JSON rows — one JSON object per row in column A.
+    // Sheet 2: full candidate JSON rows — one JSON object per row, split across
+    // multiple cells when the string exceeds the 32767-char cell limit.
+    // The upload handler joins all cells in each row before JSON.parse.
     // The sheet is hidden so it doesn't clutter the workbook view.
-    // The upload handler detects '__json_export_v1__' in A1 for seamless re-import.
     const jsonHeaderRow = `<Row><Cell><Data ss:Type="String">__json_export_v1__</Data></Cell></Row>`;
     const jsonRows = (allCandidates || []).map(c => {
       let s; try { s = JSON.stringify(c); } catch { s = '{}'; }
-      if (s.length > MAX_LEN) s = s.slice(0, MAX_LEN);
-      return `<Row><Cell><Data ss:Type="String">${ex(s)}</Data></Cell></Row>`;
+      const chunks = [];
+      for (let i = 0; i < s.length; i += MAX_LEN) chunks.push(s.slice(i, i + MAX_LEN));
+      const cells = chunks.map(ch => `<Cell><Data ss:Type="String">${ex(ch)}</Data></Cell>`).join('');
+      return `<Row>${cells}</Row>`;
     }).join('');
 
     const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n` +
@@ -3391,10 +3394,13 @@ function CandidateUpload({ onUpload }) {
       }
 
       // Parse DB Copy rows → provides id, userid, vskillset, jskillset, etc.
+      // JSON may be chunked across multiple cells (each ≤32767 chars) — join all
+      // non-empty cells in the row before parsing to reconstruct the full string.
       const dbRows = raw.slice(1)
         .filter(row => row[0])
         .map(row => {
-          try { return JSON.parse(row[0]); }
+          const fullJson = row.filter(c => c != null && String(c) !== '').join('');
+          try { return JSON.parse(fullJson); }
           catch (e) { console.warn('[DB Dock] Failed to parse DB Copy row:', e); return null; }
         })
         .filter(c => c && c.id);
