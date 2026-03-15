@@ -1798,6 +1798,25 @@ function serveCV(res, cv) {
     res.status(500).send('Unknown CV format');
 }
 
+// DELETE /candidates/clear-user — remove all process rows for the logged-in user
+// Used by DB Dock Out after export to clear the user's data.
+// Must be defined BEFORE the /:id route so Express matches the literal path first.
+app.delete('/candidates/clear-user', requireLogin, userRateLimit('bulk_delete'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      'DELETE FROM "process" WHERE userid = $1 RETURNING id',
+      [String(req.user.id)]
+    );
+    try {
+      broadcastSSE('candidates_changed', { action: 'clear_user', userid: req.user.id });
+    } catch (_) { /* ignore */ }
+    res.json({ deleted: result.rowCount });
+  } catch (err) {
+    console.error('Clear-user delete error:', err);
+    res.status(500).json({ error: 'Failed to clear user data.' });
+  }
+});
+
 app.delete('/candidates/:id', requireLogin, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {

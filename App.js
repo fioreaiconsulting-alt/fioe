@@ -1469,7 +1469,8 @@ function CandidatesTable({
   statusOptions, // Prop for status options
   onOpenStatusModal, // Prop to open status modal
   allCandidates, // Passed for bulk verification/sync
-  user // Logged-in user for template tags
+  user, // Logged-in user for template tags
+  onDockIn, // Callback to refresh candidates after DB Dock In import
 }) {
   const COLUMN_WIDTHS_KEY = 'candidateTableColumnWidths';
   const DEFAULT_WIDTH = 140;
@@ -1483,6 +1484,13 @@ function CandidatesTable({
   const [savingAll, setSavingAll] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
+
+  // DB Dock In state
+  const dockInRef = useRef(null);
+  const [dockInUploading, setDockInUploading] = useState(false);
+  const [dockInError, setDockInError] = useState('');
+  // DB Dock Out state
+  const [dockOutClearing, setDockOutClearing] = useState(false);
 
   // Track newly-added candidate IDs for the "New" badge
   const [newCandidateIds, setNewCandidateIds] = useState(new Set());
@@ -2127,6 +2135,97 @@ function CandidatesTable({
     );
   };
 
+  // ── DB Dock In: import a DB Port export file and deploy ──
+  const S1_TO_DB_DOCK = {
+    name: 'name', company: 'company', jobtitle: 'jobtitle', country: 'country',
+    linkedinurl: 'linkedinurl', product: 'product', sector: 'sector',
+    jobfamily: 'jobfamily', geographic: 'geographic', seniority: 'seniority',
+    skillset: 'skillset', sourcingstatus: 'sourcingstatus', email: 'email',
+    mobile: 'mobile', office: 'office', comment: 'comment', compensation: 'compensation',
+  };
+
+  const handleDockIn = (file) => {
+    if (!file) { setDockInError('Please select an Excel file exported via DB Port.'); return; }
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext !== 'xlsx' && ext !== 'xls') {
+      setDockInError('DB Dock In only accepts Excel files (.xlsx / .xls) exported via DB Port.');
+      return;
+    }
+    setDockInUploading(true);
+    setDockInError('');
+    file.arrayBuffer().then(data => {
+      const wb = XLSX.read(data);
+      const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
+      if (!dbCopyName) {
+        setDockInError('This file was not exported via DB Port (no "DB Copy" sheet found).');
+        setDockInUploading(false);
+        return;
+      }
+      const ws2  = wb.Sheets[dbCopyName];
+      const raw  = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
+      if (!raw.length || String(raw[0][0]).trim() !== '__json_export_v1__') {
+        setDockInError('DB Copy sheet is missing the export sentinel. Only DB Port exports are accepted.');
+        setDockInUploading(false);
+        return;
+      }
+      const dbRows = raw.slice(1)
+        .filter(row => row[0])
+        .map(row => {
+          const fullJson = row.filter(c => c != null && String(c) !== '').join('');
+          try { return JSON.parse(fullJson); }
+          catch (e) { console.warn('[DB Dock In] Failed to parse DB Copy row:', e); return null; }
+        })
+        .filter(c => c != null);
+      if (!dbRows.length) {
+        setDockInError('No valid candidates found in DB Copy.');
+        setDockInUploading(false);
+        return;
+      }
+      const ws1    = wb.Sheets[wb.SheetNames[0]];
+      const s1Rows = XLSX.utils.sheet_to_json(ws1, { defval: '' });
+      const merged = dbRows.map((dbRow, i) => {
+        const s1Row = s1Rows[i] || {};
+        const out   = { ...dbRow };
+        for (const [s1Col, dbKey] of Object.entries(S1_TO_DB_DOCK)) {
+          const v = s1Row[s1Col];
+          if (v !== undefined && String(v).trim() !== '') out[dbKey] = v;
+        }
+        return out;
+      });
+      fetch('http://localhost:4000/candidates/bulk', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body:    JSON.stringify({ candidates: merged }),
+        credentials: 'include',
+      })
+      .then(res => {
+        if (!res.ok) throw new Error(`DB Dock In failed with status ${res.status}`);
+        setDockInError('');
+        onDockIn && onDockIn();
+      })
+      .catch(err => setDockInError('Failed to deploy candidates: ' + (err && err.message ? err.message : 'Network error')))
+      .finally(() => setDockInUploading(false));
+    }).catch(() => {
+      setDockInError('Failed to parse Excel file.');
+      setDockInUploading(false);
+    });
+  };
+
+  // ── DB Dock Out: export + clear user's process table data ──
+  const handleDockOut = () => {
+    handleDbPortExport();
+    setDockOutClearing(true);
+    fetch('http://localhost:4000/candidates/clear-user', {
+      method: 'DELETE',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'include',
+    })
+    .then(res => res.ok ? res.json() : Promise.reject())
+    .then(() => { onDockIn && onDockIn(); })
+    .catch(err => { console.warn('[DB Dock Out] Clear-user failed (export completed):', err); /* non-fatal: export already happened */ })
+    .finally(() => setDockOutClearing(false));
+  };
+
   // ── DB Port: Excel export — SpreadsheetML XML format (native dropdown support) ──
   const handleDbPortExport = () => {
     // Max cell length (SpreadsheetML / OOXML spec).
@@ -2309,14 +2408,35 @@ function CandidatesTable({
             Configure SMTP
           </button>
 
+          {/* DB Dock In / DB Dock Out — replaces the old DB Port button */}
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            ref={dockInRef}
+            style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files[0]; e.target.value = ''; if (f) handleDockIn(f); }}
+          />
           <button
-            onClick={handleDbPortExport}
-            id="exportExcelBtn"
-            title="Export to Excel: Sheet 1 = User-facing data with dropdowns; Sheet 2 = Full DB copy"
-            style={{ padding: '8px 16px' }}
+            onClick={() => dockInRef.current && dockInRef.current.click()}
+            disabled={dockInUploading}
+            id="dockInBtn"
+            title="Import a DB Port export file and deploy candidates"
+            style={{ padding: '8px 16px', background: 'var(--cool-blue)', color: '#fff', border: 'none', borderRadius: 4, cursor: dockInUploading ? 'not-allowed' : 'pointer' }}
           >
-            📥 DB Port
+            {dockInUploading ? 'Deploying…' : '📥 DB Dock In'}
           </button>
+          {(allCandidates || []).length > 0 && (
+            <button
+              onClick={handleDockOut}
+              disabled={dockOutClearing}
+              id="dockOutBtn"
+              title="Export all candidates and clear this user's data from the system"
+              style={{ padding: '8px 16px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 4, cursor: dockOutClearing ? 'not-allowed' : 'pointer' }}
+            >
+              {dockOutClearing ? 'Clearing…' : '📤 DB Dock Out'}
+            </button>
+          )}
+          {dockInError && <div style={{ color: 'var(--danger)', fontSize: 13, marginLeft: 4 }}>{dockInError}</div>}
           
           {deleteError && <div style={{ color: 'var(--danger)', fontSize: 14 }}>{deleteError}</div>}
           {saveError && <div style={{ color: 'var(--danger)', fontSize: 14 }}>{saveError}</div>}
@@ -4694,8 +4814,6 @@ export default function App() {
       </div>
 
       <div style={{ display: activeTab === 'list' ? 'block' : 'none' }}>
-        <CandidateUpload onUpload={fetchCandidates} />
-
         <div style={{ marginTop:32 }}>
           <h2 style={{ fontSize:24, fontWeight:700, margin:'0 0 16px', color:'var(--azure-dragon)' }}>Candidate List</h2>
           {loading
@@ -4724,6 +4842,7 @@ export default function App() {
                 onOpenStatusModal={() => setStatusModalOpen(true)}
                 allCandidates={candidates}
                 user={user}
+                onDockIn={fetchCandidates}
               />
           }
         </div>
