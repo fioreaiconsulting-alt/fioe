@@ -16,6 +16,40 @@ const SSE_RECONNECT_MAX_DELAY_MS = 30000;
 const SSE_MAX_RECONNECT_ATTEMPTS = 5;
 const API_PORT = 4000;
 
+/* ========================= CRYPTO SIGNING UTILITIES ========================= */
+// Sign content with a fresh ECDSA P-256 key and return signature + public key (both base64).
+async function signExportData(content) {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']
+  );
+  const encoder = new TextEncoder();
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: { name: 'SHA-256' } }, keyPair.privateKey, encoder.encode(content)
+  );
+  const pubJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  const sigB64 = btoa(Array.from(new Uint8Array(sig), b => String.fromCharCode(b)).join(''));
+  const pubB64 = btoa(JSON.stringify(pubJwk));
+  return { signature: sigB64, publicKey: pubB64 };
+}
+
+// Verify a signature produced by signExportData. Returns true/false.
+async function verifyImportData(content, sigB64, pubB64) {
+  try {
+    const pubJwk = JSON.parse(atob(pubB64));
+    const publicKey = await crypto.subtle.importKey(
+      'jwk', pubJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']
+    );
+    const sigBin = Uint8Array.from(atob(sigB64), c => c.charCodeAt(0));
+    const encoder = new TextEncoder();
+    return await crypto.subtle.verify(
+      { name: 'ECDSA', hash: { name: 'SHA-256' } }, publicKey, sigBin, encoder.encode(content)
+    );
+  } catch (e) {
+    console.error('[Signature] Verification error:', e);
+    return false;
+  }
+}
+
 /* ========================= HELPERS ========================= */
 function isHumanName(name) {
   if (!name || typeof name !== 'string') return false;
@@ -2153,7 +2187,7 @@ function CandidatesTable({
     }
     setDockInUploading(true);
     setDockInError('');
-    file.arrayBuffer().then(data => {
+    file.arrayBuffer().then(async data => {
       const wb = XLSX.read(data);
       const dbCopyName = wb.SheetNames.find(n => n === 'DB Copy');
       if (!dbCopyName) {
@@ -2168,6 +2202,34 @@ function CandidatesTable({
         setDockInUploading(false);
         return;
       }
+
+      // ── Signature verification ──
+      const sigSheetName = wb.SheetNames.find(n => n === 'Signature');
+      if (sigSheetName) {
+        try {
+          const sigWs  = wb.Sheets[sigSheetName];
+          const sigRaw = XLSX.utils.sheet_to_json(sigWs, { header: 1, defval: '' });
+          const sigB64 = String((sigRaw[0] || [])[0] || '').trim();
+          const pubB64 = String((sigRaw[1] || [])[0] || '').trim();
+          if (!sigB64 || !pubB64) throw new Error('Signature sheet is incomplete.');
+          // Reconstruct the raw content that was signed: raw JSON strings joined
+          const rawJsonStrings = raw.slice(1)
+            .filter(row => row[0])
+            .map(row => row.filter(c => c != null).join(''));
+          const rawDbContent = rawJsonStrings.join('\n');
+          const valid = await verifyImportData(rawDbContent, sigB64, pubB64);
+          if (!valid) {
+            setDockInError('File signature verification failed. The DB Copy data may have been tampered with. Import rejected.');
+            setDockInUploading(false);
+            return;
+          }
+        } catch (e) {
+          setDockInError('Signature verification error: ' + (e && e.message ? e.message : 'Unknown error'));
+          setDockInUploading(false);
+          return;
+        }
+      }
+
       const dbRows = raw.slice(1)
         .filter(row => row[0])
         .map(row => {
@@ -2212,8 +2274,8 @@ function CandidatesTable({
   };
 
   // ── DB Dock Out: export + clear user's process table data ──
-  const handleDockOut = () => {
-    handleDbPortExport();
+  const handleDockOut = async () => {
+    await handleDbPortExport();
     setDockOutClearing(true);
     fetch('http://localhost:4000/candidates/clear-user', {
       method: 'DELETE',
@@ -2227,7 +2289,7 @@ function CandidatesTable({
   };
 
   // ── DB Port: Excel export — SpreadsheetML XML format (native dropdown support) ──
-  const handleDbPortExport = () => {
+  const handleDbPortExport = async () => {
     // Max cell length (SpreadsheetML / OOXML spec).
     const MAX_LEN = 32767;
     const cellStr = v => {
@@ -2305,13 +2367,28 @@ function CandidatesTable({
     // The upload handler joins all cells in each row before JSON.parse.
     // The sheet is hidden so it doesn't clutter the workbook view.
     const jsonHeaderRow = `<Row><Cell><Data ss:Type="String">__json_export_v1__</Data></Cell></Row>`;
-    const jsonRows = (allCandidates || []).map(c => {
-      let s; try { s = JSON.stringify(c); } catch { s = '{}'; }
+    // Raw JSON strings (before chunking) — signed for tamper-detection
+    const rawJsonStrings = (allCandidates || []).map(c => {
+      try { return JSON.stringify(c); } catch { return '{}'; }
+    });
+    const jsonRows = rawJsonStrings.map(s => {
       const chunks = [];
       for (let i = 0; i < s.length; i += MAX_LEN) chunks.push(s.slice(i, i + MAX_LEN));
       const cells = chunks.map(ch => `<Cell><Data ss:Type="String">${ex(ch)}</Data></Cell>`).join('');
       return `<Row>${cells}</Row>`;
     }).join('');
+
+    // Sign the DB Copy content so Dock In can verify it hasn't been tampered with.
+    const rawDbContent = rawJsonStrings.join('\n');
+    const { signature: sigB64, publicKey: pubB64 } = await signExportData(rawDbContent);
+    const sigSheet =
+`<Worksheet ss:Name="Signature" ss:Visible="SheetHidden">\n` +
+` <Table>\n` +
+`  <Row><Cell><Data ss:Type="String">${ex(sigB64)}</Data></Cell></Row>\n` +
+`  <Row><Cell><Data ss:Type="String">${ex(pubB64)}</Data></Cell></Row>\n` +
+` </Table>\n` +
+` <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><Visible>SheetHidden</Visible></WorksheetOptions>\n` +
+`</Worksheet>\n`;
 
     const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n` +
 `<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n` +
@@ -2333,7 +2410,9 @@ function CandidatesTable({
 ` </Worksheet>\n` +
 ` <Worksheet ss:Name="DB Copy" ss:Visible="SheetHidden">\n` +
 `  <Table>${jsonHeaderRow}${jsonRows}</Table>\n` +
+`  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><Visible>SheetHidden</Visible></WorksheetOptions>\n` +
 ` </Worksheet>\n` +
+sigSheet +
 `</Workbook>`;
 
     const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
@@ -2400,42 +2479,47 @@ function CandidatesTable({
             style={{ padding: '8px 16px' }}
           >{savingAll ? 'Saving  ' : 'Save'}</button>
 
-          <button
-            onClick={() => setSmtpModalOpen(true)}
-            className="btn-secondary"
-            style={{ padding: '8px 16px', marginLeft: 0 }}
-          >
-            Configure SMTP
-          </button>
-
-          {/* DB Dock In / DB Dock Out — replaces the old DB Port button */}
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            ref={dockInRef}
-            style={{ display: 'none' }}
-            onChange={e => { const f = e.target.files[0]; e.target.value = ''; if (f) handleDockIn(f); }}
-          />
-          <button
-            onClick={() => dockInRef.current && dockInRef.current.click()}
-            disabled={dockInUploading}
-            id="dockInBtn"
-            title="Import a DB Port export file and deploy candidates"
-            style={{ padding: '8px 16px', background: 'var(--cool-blue)', color: '#fff', border: 'none', borderRadius: 4, cursor: dockInUploading ? 'not-allowed' : 'pointer' }}
-          >
-            {dockInUploading ? 'Deploying…' : '📥 DB Dock In'}
-          </button>
-          {(allCandidates || []).length > 0 && (
+          {/* Right-aligned group: Configure SMTP, DB Dock In, DB Dock Out */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
-              onClick={handleDockOut}
-              disabled={dockOutClearing}
-              id="dockOutBtn"
-              title="Export all candidates and clear this user's data from the system"
-              style={{ padding: '8px 16px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 4, cursor: dockOutClearing ? 'not-allowed' : 'pointer' }}
+              onClick={() => setSmtpModalOpen(true)}
+              className="btn-secondary"
+              style={{ padding: '8px 16px' }}
             >
-              {dockOutClearing ? 'Clearing…' : '📤 DB Dock Out'}
+              Configure SMTP
             </button>
-          )}
+
+            {/* DB Dock In / DB Dock Out — replaces the old DB Port button */}
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              ref={dockInRef}
+              style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files[0]; e.target.value = ''; if (f) handleDockIn(f); }}
+            />
+            {selectedIds.length === 0 && (
+              <button
+                onClick={() => dockInRef.current && dockInRef.current.click()}
+                disabled={dockInUploading}
+                id="dockInBtn"
+                title="Import a DB Port export file and deploy candidates"
+                style={{ padding: '8px 16px', background: 'var(--cool-blue)', color: '#fff', border: 'none', borderRadius: 4, cursor: dockInUploading ? 'not-allowed' : 'pointer' }}
+              >
+                {dockInUploading ? 'Deploying…' : '📥 DB Dock In'}
+              </button>
+            )}
+            {(allCandidates || []).length > 0 && (
+              <button
+                onClick={handleDockOut}
+                disabled={dockOutClearing}
+                id="dockOutBtn"
+                title="Export all candidates and clear this user's data from the system"
+                style={{ padding: '8px 16px', background: 'var(--azure-dragon)', color: '#fff', border: 'none', borderRadius: 4, cursor: dockOutClearing ? 'not-allowed' : 'pointer' }}
+              >
+                {dockOutClearing ? 'Clearing…' : '📤 DB Dock Out'}
+              </button>
+            )}
+          </div>
           {dockInError && <div style={{ color: 'var(--danger)', fontSize: 13, marginLeft: 4 }}>{dockInError}</div>}
           
           {deleteError && <div style={{ color: 'var(--danger)', fontSize: 14 }}>{deleteError}</div>}
