@@ -939,6 +939,11 @@ async function ensureProcessTable() {
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS vskillset TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS experience TEXT`);
     await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS tenure TEXT`);
+    // Additional DB-only rating/scoring fields
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS exp TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS rating_level TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS rating_updated_at TEXT`);
+    await pool.query(`ALTER TABLE "process" ADD COLUMN IF NOT EXISTS rating_version TEXT`);
   } catch (err) {
     console.error('[INIT] Failed to ensure process table/columns exist:', err);
   }
@@ -1358,6 +1363,11 @@ function normalizeIncomingRow(c) {
       return isNaN(n) ? null : n;
     })(),
     jskillset: firstVal(c, ['jskillset']) || null,
+    // Additional DB-only fields from DB Copy JSON
+    exp: firstVal(c, ['exp']) || null,
+    rating_level: firstVal(c, ['rating_level']) || null,
+    rating_updated_at: firstVal(c, ['rating_updated_at']) || null,
+    rating_version: firstVal(c, ['rating_version']) || null,
   };
 }
 
@@ -1390,6 +1400,11 @@ const processColumnMap = {
   tenure: 'tenure',
   rating: 'rating',
   jskillset: 'jskillset',
+  // Additional DB-only fields
+  exp: 'exp',
+  rating_level: 'rating_level',
+  rating_updated_at: 'rating_updated_at',
+  rating_version: 'rating_version',
 };
 
 // ========== UPDATED: BULK INGESTIONsupports Project_Title and Project_Date and writes to process table ==========
@@ -1423,6 +1438,8 @@ app.post('/candidates/bulk', requireLogin, userRateLimit('bulk_upload'), async (
     // DB Copy passthrough: preserved from export JSON, overridden by Sheet 1 where applicable
     'comment', 'lskillset', 'vskillset', 'education', 'experience', 'tenure',
     'rating', 'jskillset',
+    // Additional DB-only rating/scoring fields from DB Copy
+    'exp', 'rating_level', 'rating_updated_at', 'rating_version',
   ];
 
   try {
